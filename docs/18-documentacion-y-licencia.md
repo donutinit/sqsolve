@@ -30,18 +30,18 @@ Reglas:
 - Capturas propias de sqsolve. De Resolve, solo las imprescindibles, hechas por el proyecto y
   usadas para ilustrar la interoperabilidad.
 
-## 2. Licencia del código: AGPL-3.0-or-later
+## 2. Licencia del código: AGPL-3.0-only
 
 | Opción | A favor | En contra |
 |---|---|---|
-| **AGPL-3.0-or-later** | Garantiza que versiones modificadas ofrecidas por red (un fabricante de NAS, un servicio hospedado) publiquen su código; coherente con "100 % libre" | Algunas empresas evitan la AGPL |
+| **AGPL-3.0-only** | Garantiza que versiones modificadas ofrecidas por red (un fabricante de NAS, un servicio hospedado) publiquen su código; coherente con "100 % libre" | Algunas empresas evitan la AGPL |
 | GPL-3.0-or-later | Copyleft conocido | No cubre el uso por red, que es justamente el caso de un servidor con panel web |
 | Apache-2.0 o MIT | Adopción máxima | Permite versiones cerradas derivadas, que es lo que el proyecto quiere evitar |
 | MPL-2.0 | Copyleft por archivo | Débil para una aplicación completa |
 
 Decisión en ADR 0001. Consecuencias:
 
-- Cada archivo fuente lleva `SPDX-License-Identifier: AGPL-3.0-or-later`.
+- Cada archivo fuente lleva `SPDX-License-Identifier: AGPL-3.0-only`.
 - El panel muestra en "Acerca de" un enlace al código fuente de la versión exacta en ejecución
   (requisito de la sección 13 de la AGPL).
 - Dependencias permitidas: licencias compatibles con AGPLv3 (MIT, BSD, ISC, Apache-2.0, MPL-2.0,

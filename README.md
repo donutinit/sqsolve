@@ -34,7 +34,7 @@ Empieza por [`docs/README.md`](docs/README.md). Los agentes de programación lee
 
 ## Licencia
 
-Código: AGPL-3.0-or-later. Documentación: CC BY-SA 4.0. Ver
+Código: AGPL-3.0-only. Documentación: CC BY-SA 4.0. Ver
 [`docs/adr/0001-licencia.md`](docs/adr/0001-licencia.md).
 
 DaVinci Resolve y Blackmagic Design son marcas de Blackmagic Design Pty. Ltd. sqsolve es un

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Package pg is sqsolve's control client for PostgreSQL. It connects only
 // through the local Unix socket, as sqsolve_admin for daily work and as the

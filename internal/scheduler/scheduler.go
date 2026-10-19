@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Package scheduler turns cron schedules into jobs, with a fixed per-target
 // offset and a policy for runs missed while the server was down.

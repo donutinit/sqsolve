@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Package events records business events for people (persisted in SQLite)
 // and fans out live updates to the browser through an in-memory bus.

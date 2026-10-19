@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Package testpg starts a throwaway PostgreSQL cluster for integration tests,
 // configured exactly like production (sqsolve's postgresql.conf and

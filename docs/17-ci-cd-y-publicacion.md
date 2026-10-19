@@ -60,7 +60,7 @@ lo que hace CI también se puede hacer en local con `make`.
 - Imagen: Dockerfile multietapa; etapa de compilación `golang:<versión>-trixie@<digest>`; etapa
   final `postgres:18.x-trixie@<digest>` más el binario, usuario sin privilegios por defecto,
   `ENTRYPOINT ["sqsolve"]`. Etiquetas OCI (`org.opencontainers.image.source`, `.revision`,
-  `.version`, `.licenses=AGPL-3.0-or-later`).
+  `.version`, `.licenses=AGPL-3.0-only`).
 - `go mod vendor` permite compilar sin red; `make vendor-check` comprueba que `vendor/` coincide.
 
 ## 6. Publicación

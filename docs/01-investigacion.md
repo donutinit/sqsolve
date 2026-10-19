@@ -193,7 +193,7 @@ funcionales públicas.
 | Hooks | Scripts BASH dentro del contenedor del servidor | Webhooks en 1.0; hooks en un contenedor aparte sin secretos en 1.1 |
 | Auditoría y acceso por persona | Edición de pago (v3) | Incluidos y libres |
 | Puerto 50059 | Publicado | No se publica (la colaboración va entre estaciones) |
-| Licencia | Cerrada | AGPL-3.0-or-later |
+| Licencia | Cerrada | AGPL-3.0-only |
 
 ## 11. Otros proyectos libres
 

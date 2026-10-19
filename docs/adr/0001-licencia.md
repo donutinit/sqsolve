@@ -5,7 +5,7 @@
 **Contexto.** El proyecto debe ser 100 % libre, autohospedable y evitar derivados cerrados. Es
 un servidor con interfaz web, así que el caso típico de uso de una versión modificada es por red.
 
-**Decisión.** Código bajo AGPL-3.0-or-later. Documentación bajo CC BY-SA 4.0. Sin CLA;
+**Decisión.** Código bajo AGPL-3.0-only. Documentación bajo CC BY-SA 4.0. Sin CLA;
 contribuciones bajo la misma licencia. El panel enlaza al código fuente de la versión en
 ejecución.
 

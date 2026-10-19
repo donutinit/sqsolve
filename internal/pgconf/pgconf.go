@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Package pgconf generates the PostgreSQL configuration that sqsolve owns:
 // postgresql.conf (written by sqsolve init) and pg_hba.conf (rewritten by

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Package auth handles panel accounts, sessions, second factor, API tokens
 // and the authorization policy shared by the web UI, the API and the CLI.

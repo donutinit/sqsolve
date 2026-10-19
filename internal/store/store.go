@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Package store opens the SQLite database of the control plane, applies
 // migrations and offers small helpers shared by the domain packages.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Package execx runs the few external programs sqsolve needs (pg_dump,
 // pg_restore, vacuumdb). No shell is ever involved, arguments are passed as

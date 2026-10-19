@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Package secrets handles secret files, random credentials and the
 // encryption of secrets that sqsolve must be able to show again.

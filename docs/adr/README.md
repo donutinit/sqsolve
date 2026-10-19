@@ -6,7 +6,7 @@ Formato: contexto, decisión, alternativas, consecuencias. Estados: **Propuesto*
 
 | ADR | Decisión | Estado |
 |---|---|---|
-| [0001](0001-licencia.md) | AGPL-3.0-or-later para el código, CC BY-SA 4.0 para la documentación | Aceptado |
+| [0001](0001-licencia.md) | AGPL-3.0-only para el código, CC BY-SA 4.0 para la documentación | Aceptado |
 | [0002](0002-topologia.md) | Dos contenedores (PostgreSQL oficial y sqsolve) más uno de inicialización, con Docker Compose | Aceptado |
 | [0003](0003-go.md) | Backend en Go, binario único | Aceptado |
 | [0004](0004-interfaz-servidor.md) | Interfaz renderizada en el servidor con htmx, sin Node | Aceptado |

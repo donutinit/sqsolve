@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-or-later
+-- SPDX-License-Identifier: AGPL-3.0-only
 -- Esquema inicial del plano de control de sqsolve.
 
 CREATE TABLE settings (

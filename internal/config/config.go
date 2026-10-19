@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Package config reads the SQSOLVE_* environment variables that configure
 // startup. Everything else lives in the settings table and is edited in the UI.
