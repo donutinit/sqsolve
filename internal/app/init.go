@@ -151,14 +151,21 @@ func Init(c *config.Config, out io.Writer) error {
 	// PGDATA is prepared here, like the permissions container of TrueNAS
 	// apps, so the postgres container runs as its own user and never needs
 	// root on the volume.
-	if err := os.MkdirAll(filepath.Dir(c.PGDataDir), 0o755); err != nil {
-		return fmt.Errorf("SQS-C050 no se pudo crear %s: %w", filepath.Dir(c.PGDataDir), err)
+	pgdata := func() error {
+		if err := os.MkdirAll(filepath.Dir(c.PGDataDir), 0o755); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(c.PGDataDir, 0o700); err != nil {
+			return err
+		}
+		if err := os.Chmod(c.PGDataDir, 0o700); err != nil {
+			return err
+		}
+		chown(c.PGDataDir, c.PGUID, c.PGGID)
+		return dataDirCheck(c.PGDataDir)
 	}
-	if err := mkdir(c.PGDataDir, 0o700, c.PGUID, c.PGGID); err != nil {
-		return err
-	}
-	if err := dataDirCheck(c.PGDataDir); err != nil {
-		return fmt.Errorf("SQS-C054 el volumen de la base de datos no conserva los permisos que pide PostgreSQL (%v). "+
+	if err := pgdata(); err != nil {
+		return fmt.Errorf("SQS-C054 PostgreSQL no podrá usar el volumen de la base de datos (%v). "+
 			"Pasa con carpetas que usan ACL de tipo NFSv4: en TrueNAS, crea el dataset con el preset Generic", err)
 	}
 	if err := mkdir(conf, 0o750, c.UID, c.PGGID); err != nil {
