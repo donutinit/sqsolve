@@ -21,8 +21,10 @@ de color.**
   pestaña de respaldos (30 días), siempre con leyenda y descripción accesible.
 - **Tipografía del sistema** para la interfaz y monoespaciada para valores técnicos
   (identificadores, IP, hashes, nombres de pista); cifras tabulares en todo el panel.
-- La marca es la misma pista en miniatura (tres marcadores sobre un carril); no hay logotipo
-  repetido.
+- **La marca es el imagotipo "Nodo"** (ADR 0020, `docs/identidad`): nodo y palabra en el color
+  del texto, puertos en los dos colores de marca (`--brand-in`, `--brand-out`). Esos dos colores
+  no aparecen en ningún otro elemento salvo el puerto de cada ícono de navegación. Hasta el
+  2026-10-19 la marca era la pista en miniatura.
 
 Contraste medido (WCAG 2.x):
 
@@ -55,7 +57,8 @@ flowchart LR
   A --> AC["Acerca de: versiones, licencias, compatibilidad"]
 ```
 
-Escritorio: barra lateral fija con las 7 secciones. Móvil (menos de 768 px): barra superior con
+Escritorio: barra lateral fija con las 7 secciones, cada una con su ícono de
+`docs/identidad/iconos` (18 px, trazo en el color del texto, un puerto de color). Móvil (menos de 768 px): barra superior con
 menú desplegable y acciones primarias al pie. Una barra de estado global muestra tareas en curso
 y alertas abiertas en todas las páginas.
 

@@ -61,7 +61,9 @@ licencia del código para poder copiarse en instalaciones).
 
 - "DaVinci Resolve", "Blackmagic Design", "Blackmagic Cloud" y "Fusion" son marcas de Blackmagic
   Design Pty. Ltd. Se usan solo para describir la interoperabilidad.
-- El nombre "sqsolve", el logotipo y la interfaz no imitan a Blackmagic ni a WireBear.
+- El nombre "sqsolve", el logotipo (`docs/identidad`, ADR 0020) y la interfaz no imitan a
+  Blackmagic ni a WireBear. El símbolo evoca un nodo de la página de color como forma
+  genérica, sin reproducir ningún elemento de la interfaz de Resolve.
 - Aviso en el README y en "Acerca de": proyecto independiente, sin relación ni aval de Blackmagic
   Design ni de WireBear.
 - No se distribuyen binarios, esquemas, plantillas, manuales ni capturas de Blackmagic.

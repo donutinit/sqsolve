@@ -64,7 +64,8 @@ Es una foto: si esta lista y el código no coinciden, manda el código y se vuel
       "Fallido" para resultados, "la dirección que usan las estaciones". Corregido el 2026-10-18
       tras la revisión.
 - [ ] Valores: colores solo por las variables de `:root` en `app.css` (`--text`, `--muted`,
-      `--ok`, `--warn`, `--bad`, `--run`, `--on-run`, `--on-danger`), que también definen el
+      `--ok`, `--warn`, `--bad`, `--run`, `--on-run`, `--on-danger`, y `--brand-in` y `--brand-out`
+      solo para los puertos de la marca y de los íconos de navegación), que también definen el
       tema oscuro; tres colores literales pasaron a variables el 2026-10-18. Sin estilos en
       línea, que la CSP bloquea: 0 `style=`. El espaciado no tiene base (literales de 1 a
       56 px): reutiliza los ya escritos, sobre todo 8, 10, 12 y 16 px. Tipografía en `rem`:

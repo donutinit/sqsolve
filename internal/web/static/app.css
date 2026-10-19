@@ -3,7 +3,8 @@
    - Grises estrictamente neutros (R = G = B): el panel puede estar abierto junto a un monitor
      de referencia y no debe teñir la percepción.
    - El color solo aparece cuando un estado significa algo: correcto, aviso, error, en curso.
-     No hay color de marca; la acción principal es un botón invertido.
+     Los dos colores de marca (ADR 0020) viven solo en los puertos del imagotipo y de los íconos
+     de navegación; la acción principal es un botón invertido.
    - El tema sigue al sistema (claro u oscuro). Sin interruptor propio.
    - El elemento distintivo es la línea de tiempo de protección (pistas con marcadores). */
 
@@ -27,6 +28,8 @@
   --on-run: #ffffff;
   --on-danger: #ffffff;
   --focus: #000000;
+  --brand-in: #178F84;
+  --brand-out: #D9692A;
   --radius: 5px;
   --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Ubuntu, Cantarell, sans-serif;
@@ -54,6 +57,8 @@
     --primary-text: #1c1c1c;
     --on-run: #0d1a29;
     --focus: #ffffff;
+    --brand-in: #3FB8AC;
+    --brand-out: #E8884D;
   }
 }
 
@@ -95,10 +100,22 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 .nav .count { background: var(--run); color: var(--on-run); border-radius: 10px; font-size: 0.78rem; padding: 0 7px; font-weight: 600; }
 .who { margin-top: auto; display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--line); padding: 12px 10px 0; }
 .who a { text-decoration: none; font-weight: 600; }
-.brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 650; font-size: 1.07rem; letter-spacing: 0.01em; text-decoration: none; padding: 0 10px; }
-.brand svg { width: 22px; height: 16px; flex: none; }
-.brand.big { font-size: 1.4rem; justify-content: center; margin: 56px 0 28px; }
-.brand.big svg { width: 30px; height: 22px; }
+/* Marca (ADR 0020): el imagotipo "Nodo" en trazos. Nodo y palabra toman el color del texto; los
+   puertos llevan los dos colores de marca, que no aparecen en ningún otro lugar del panel. */
+.brand { display: flex; align-items: center; color: var(--text); text-decoration: none; padding: 0 10px; }
+.brand svg { height: 24px; width: auto; flex: none; display: block; }
+.brand .node { fill: none; stroke: currentColor; }
+.brand .wave { fill: none; stroke: var(--brand-in); }
+.brand .in { fill: var(--brand-in); }
+.brand .out { fill: var(--brand-out); }
+.brand .word { fill: currentColor; }
+.brand.big { justify-content: center; margin: 56px 0 28px; }
+.brand.big svg { height: 40px; }
+/* Íconos de navegación: trazo en retícula de 24 con un puerto de color (docs/identidad/iconos). */
+.navlabel { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+.ni { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.ni .port { fill: var(--brand-in); stroke: none; }
+.ni .port.out { fill: var(--brand-out); }
 .main { min-width: 0; display: flex; flex-direction: column; }
 .top { display: flex; align-items: center; justify-content: space-between; padding: 10px 32px; border-bottom: 1px solid var(--line); gap: 12px; min-height: 48px; }
 .topstatus { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

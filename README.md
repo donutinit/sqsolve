@@ -1,7 +1,23 @@
-# sqsolve
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/identidad/imagotipo-negativo.svg">
+    <img src="docs/identidad/imagotipo.svg" alt="sqsolve" width="380">
+  </picture>
+</p>
 
-Servidor libre y autohospedado de bibliotecas de proyectos para DaVinci Resolve, administrable
-desde el navegador. El nombre junta **SQ**L (PostgreSQL) y Re**solve**.
+<p align="center">
+  <strong>Servidor libre y autohospedado de bibliotecas de proyectos para DaVinci Resolve.</strong><br>
+  Un archivo YAML, un panel web y respaldos que se verifican solos.
+</p>
+
+<p align="center">
+  <a href="https://github.com/donutinit/sqsolve/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/donutinit/sqsolve/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/donutinit/sqsolve/pkgs/container/sqsolve"><img alt="Imagen en GHCR" src="https://img.shields.io/badge/imagen-ghcr.io%2Fdonutinit%2Fsqsolve-17191b"></a>
+  <a href="LICENSE"><img alt="AGPL-3.0-only" src="https://img.shields.io/badge/licencia-AGPL--3.0--only-178F84"></a>
+</p>
+
+El nombre junta **SQ**L (PostgreSQL) y Re**solve**. Se pronuncia como se lee y se escribe siempre
+en minúsculas.
 
 > Estado: **versión preliminar (0.x)**. Bibliotecas, accesos, respaldos, restauración, panel y
 > API están implementados y probados contra PostgreSQL 18, pero la interacción con DaVinci
@@ -9,43 +25,58 @@ desde el navegador. El nombre junta **SQ**L (PostgreSQL) y Re**solve**.
 > [`docs/02-pruebas-de-concepto.md`](docs/02-pruebas-de-concepto.md)). No lo uses con proyectos
 > de clientes hasta que esas pruebas pasen.
 
-## Contenido
+## Por qué existe
 
-1. [Qué hace](#qué-hace)
-2. [Cómo está armado](#cómo-está-armado)
-3. [Requisitos](#requisitos)
-4. [Instalación](#instalación)
-5. [Primer arranque](#primer-arranque)
-6. [Bibliotecas y estaciones de Resolve](#bibliotecas-y-estaciones-de-resolve)
-7. [Respaldos](#respaldos)
-8. [Restaurar](#restaurar)
-9. [Accesos y seguridad de cada biblioteca](#accesos-y-seguridad-de-cada-biblioteca)
-10. [Usuarios del panel, avisos y API](#usuarios-del-panel-avisos-y-api)
-11. [Consola](#consola)
-12. [Actualizar](#actualizar)
-13. [Mover a otro servidor o recuperar un desastre](#mover-a-otro-servidor-o-recuperar-un-desastre)
-14. [Solución de problemas](#solución-de-problemas)
-15. [Desarrollo](#desarrollo)
-16. [Documentación y licencia](#documentación-y-licencia)
+DaVinci Resolve guarda los proyectos en "bibliotecas de proyectos". Para que varias estaciones
+compartan proyectos, la biblioteca tiene que vivir en un servidor PostgreSQL. Montarlo a mano es
+fácil; mantenerlo con respaldos que de verdad restauran, accesos por persona y un lugar donde ver
+si todo está bien, no. sqsolve es ese servidor, empaquetado en dos contenedores y administrado
+desde el navegador, pensado para un editor con un NAS en casa o un estudio de dos a diez
+estaciones.
 
-## Qué hace
-
-DaVinci Resolve guarda sus proyectos en "bibliotecas de proyectos". Para que varias estaciones
-compartan proyectos, la biblioteca vive en un servidor PostgreSQL. sqsolve es ese servidor,
-empaquetado en contenedores y administrado desde la web:
-
-- crea bibliotecas, cada una con su propio usuario de PostgreSQL, para que un cliente no vea ni
-  toque los proyectos de otro;
-- te da los datos de conexión para cada estación y, si quieres, una contraseña por persona;
-- respalda cada biblioteca a mano o con horario, verifica cada respaldo y hace restauraciones de
-  prueba para saber que sí sirven;
-- restaura como biblioteca nueva o en lugar de la actual, con un respaldo automático previo y
-  la opción de revertir;
-- muestra de un vistazo si cada biblioteca está protegida (la "línea de tiempo de protección"),
-  avisa por webhook, ntfy o correo cuando algo falla y funciona sin Internet.
+| Lo que hace | Cómo |
+|---|---|
+| **Bibliotecas aisladas** | Cada biblioteca tiene su propio usuario de PostgreSQL: un cliente no ve ni toca los proyectos de otro |
+| **Conexión sin adivinar** | Datos de conexión listos para cada estación y, si quieres, una contraseña por persona que se revoca sin afectar a nadie más |
+| **Respaldos que sí sirven** | `pg_dump` consistente con suma SHA-256 y manifiesto; verificación al terminar y restauración de prueba semanal |
+| **Restaurar sin miedo** | Como biblioteca nueva o en lugar de la actual, con respaldo previo automático y siete días para revertir |
+| **Saber de un vistazo** | La línea de tiempo de protección: cada biblioteca es una pista y cada respaldo un marcador con su nivel de verificación |
+| **Avisar cuando falla** | Webhook, ntfy o correo. Nada sale del servidor hasta que agregues un canal |
+| **Sin Internet, sin cuenta** | Funciona desconectado, sin telemetría. AGPL-3.0, compilable desde la fuente |
 
 No es un editor ni un servidor de medios: administra la base de datos de proyectos y sus
 respaldos. Tus clips siguen en tu almacenamiento de siempre.
+
+## En cinco minutos
+
+1. Crea tres carpetas: `db` y `app` en SSD, `respaldos` en otro disco.
+2. Copia [`deploy/compose.yaml`](deploy/compose.yaml), cambia las tres rutas y tu zona horaria.
+3. `docker compose up -d` (en TrueNAS: Apps, "Install via YAML").
+4. `docker compose logs sqsolve` te da el código de instalación.
+5. Abre `https://<ip-del-servidor>:9432`, pega el código, crea tu usuario y descarga el kit de
+   recuperación.
+
+Cada paso con detalle, más adelante. Si algo falla, la sección
+[Solución de problemas](#solución-de-problemas) tiene los códigos `SQS-...`.
+
+## Contenido
+
+1. [Cómo está armado](#cómo-está-armado)
+2. [Requisitos](#requisitos)
+3. [Instalación](#instalación)
+4. [Primer arranque](#primer-arranque)
+5. [Bibliotecas y estaciones de Resolve](#bibliotecas-y-estaciones-de-resolve)
+6. [Respaldos](#respaldos)
+7. [Restaurar](#restaurar)
+8. [Accesos y seguridad de cada biblioteca](#accesos-y-seguridad-de-cada-biblioteca)
+9. [Usuarios del panel, avisos y API](#usuarios-del-panel-avisos-y-api)
+10. [Consola](#consola)
+11. [Actualizar](#actualizar)
+12. [Mover a otro servidor o recuperar un desastre](#mover-a-otro-servidor-o-recuperar-un-desastre)
+13. [Solución de problemas](#solución-de-problemas)
+14. [Desarrollo](#desarrollo)
+15. [Identidad visual](#identidad-visual)
+16. [Documentación y licencia](#documentación-y-licencia)
 
 ## Cómo está armado
 
@@ -316,8 +347,11 @@ docker compose up -d
 ```
 
 En TrueNAS, con `0.1`, la app muestra "Update available" cuando sale un arreglo y el botón
-Update hace lo mismo que esos dos comandos. Para pasar a otra serie (`0.2`) cambia la línea a
-mano.
+Update hace lo mismo que esos dos comandos. TrueNAS compara las imágenes con el registro una
+vez al día, así que el aviso puede tardar hasta 24 horas; para no esperar, desde la consola del
+NAS: `sudo midclt call app.image.op.check_update` para forzar la revisión, o directamente
+`sudo midclt call -j app.pull_images sqsolve '{"redeploy": true}'`, que es el botón Update. Para
+pasar a otra serie (`0.2`) cambia la línea a mano.
 
 `sqsolve-init` vuelve a correr y regenera la configuración. Si la versión nueva cambia el
 catálogo, sqsolve guarda antes una copia en `app/state-backups/`. Para volver atrás, regresa a
@@ -386,6 +420,20 @@ imagen recién construida y hace un recorrido completo con los usuarios 1000 y 5
 `X.Y` y `latest`, para amd64 y arm64.
 
 Las reglas para quien programe (incluidos agentes) están en [`AGENTS.md`](AGENTS.md).
+
+## Identidad visual
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/identidad/isologo-negativo.svg">
+    <img src="docs/identidad/isologo.svg" alt="sqsolve dentro de un nodo con sus dos puertos" width="300">
+  </picture>
+</p>
+
+La marca es un nodo como los de la página de color: entrada, señal y salida. Los archivos en
+todas sus formas (símbolo, logotipo, imagotipo, isologo, íconos, ícono de app, imagen social), la
+paleta, la tipografía y las reglas de uso están en [`docs/identidad`](docs/identidad/README.md)
+([ADR 0020](docs/adr/0020-identidad-visual.md)).
 
 ## Documentación y licencia
 

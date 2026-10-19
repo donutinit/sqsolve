@@ -57,3 +57,42 @@ func TestLibraryExportPageWithStills(t *testing.T) {
 		t.Error("without permission the download links must not appear")
 	}
 }
+
+// TestLayoutBrand checks the identity (ADR 0020) in both layouts: the "Nodo"
+// lockup with its ports and the navigation icons, plus the files the layout
+// links to.
+func TestLayoutBrand(t *testing.T) {
+	l := &core.Library{ID: "01M5A5X0JZQYHV8GE4H1PK6VG9", Slug: "apolo", DisplayName: "Apolo", State: core.StateActive}
+	shell := renderPage(t, "library_export", map[string]any{"L": l, "Tab": "exportar", "Enabled": false, "Err": "x"})
+	for _, want := range []string{`class="brand" href="/" aria-label="sqsolve, ir al panel"`, `class="in"`, `class="out"`, `class="word"`, `rel="apple-touch-icon" href="/static/apple-touch-icon.png"`} {
+		if !strings.Contains(shell, want) {
+			t.Errorf("shell layout lacks %s", want)
+		}
+	}
+	if n := strings.Count(shell, `class="ni"`); n != 7 {
+		t.Errorf("navigation icons: %d, want 7", n)
+	}
+	if n := strings.Count(shell, `class="port out"`); n < 2 {
+		t.Errorf("output ports in icons: %d, want at least 2", n)
+	}
+	s := &Server{A: &app.App{Cfg: &config.Config{Location: time.UTC}}}
+	if err := s.parseTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := s.pages["error"].ExecuteTemplate(&buf, "layout", View{Title: "t", Data: map[string]any{"Message": "m"}, Now: time.Now(), Query: url.Values{}}); err != nil {
+		t.Fatal(err)
+	}
+	if bare := buf.String(); !strings.Contains(bare, `class="brand big"`) || !strings.Contains(bare, `role="img" aria-label="sqsolve"`) {
+		t.Error("bare layout lacks the brand lockup with its accessible name")
+	}
+	for _, f := range []string{"static/favicon.svg", "static/apple-touch-icon.png"} {
+		b, err := staticFS.ReadFile(f)
+		if err != nil || len(b) == 0 {
+			t.Errorf("%s not embedded: %v", f, err)
+		}
+	}
+	if fav, _ := staticFS.ReadFile("static/favicon.svg"); !strings.Contains(string(fav), `rx="5"`) || strings.Contains(string(fav), "<path") {
+		t.Error("favicon must be the reduced mark: node and ports, without the signal path")
+	}
+}

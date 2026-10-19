@@ -25,3 +25,4 @@ Formato: contexto, decisión, alternativas, consecuencias. Estados: **Propuesto*
 | [0017](0017-version-mayor-postgresql.md) | Versiones mayores de PostgreSQL por migración lógica a un clúster nuevo | Aceptado |
 | [0018](0018-tres-volumenes.md) | Tres volúmenes visibles: base de datos, aplicación y respaldos | Aceptado |
 | [0019](0019-exportacion-experimental.md) | Exportación experimental de proyectos (`.drp`) y grados (`.drx`) leyendo un conjunto fijo de tablas | Propuesto |
+| [0020](0020-identidad-visual.md) | Identidad visual "Nodo": símbolo, logotipo en trazos, paleta de marca solo en los puertos, íconos | Aceptado |

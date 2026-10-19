@@ -498,5 +498,6 @@ internal/clock               reloj inyectable para pruebas
 | 0.6 | SQS-400 a 420, 500 a 520 | API, notificaciones e interfaz implementadas (2026-10-18). Pendientes: SQS-400 (OpenAPI), SQS-410 (contrato) y SQS-520 con navegador; hay una prueba de extremo a extremo por HTTP |
 | 0.9 y 1.0 | SQS-600 a 607 | SQS-600, 601 y 602 implementadas (2026-10-18); SQS-603 parcial (`test/scenarios.py` en CI: procesos que mueren, PostgreSQL caído, restaurar con sesiones abiertas); 604 a 607 pendientes |
 | 1.1 (parcial) | SQS-720 a 722 | Implementado (2026-10-19) como ADR 0019 Propuesto; validado contra Resolve 21.1.1 |
+| Identidad | ADR 0020 | Implementada (2026-10-19): marca en `docs/identidad`, panel con el imagotipo e íconos, README |
 
 Los criterios `[ ]` de cada tarea no se marcaron uno por uno en esta pasada; la tabla resume.
