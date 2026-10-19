@@ -46,8 +46,45 @@ func TestInitPreparesDataDir(t *testing.T) {
 	}
 }
 
+// A TrueNAS dataset made with the Apps preset gives new folders 0770 from its
+// ACL, whatever mode they are created with, and the PostgreSQL user cannot
+// get through them to PGDATA.
+func TestInitOpensFoldersAboveDataDir(t *testing.T) {
+	cfg := testConfig(t)
+	parent := filepath.Dir(cfg.PGDataDir)
+	if err := os.MkdirAll(parent, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := Init(cfg, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(parent); st.Mode().Perm() != 0o755 {
+		t.Errorf("%s left at %04o", parent, st.Mode().Perm())
+	}
+}
+
+func TestDataDirModeNeedsReachableFolders(t *testing.T) {
+	root := t.TempDir()
+	pgdata := filepath.Join(root, "18", "docker")
+	if err := os.MkdirAll(pgdata, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(root, 0o755)
+	os.Chmod(filepath.Dir(pgdata), 0o770)
+	if err := dataDirMode(root, pgdata); err == nil || !strings.Contains(err.Error(), "no puede entrar") {
+		t.Fatalf("want an unreachable folder error, got %v", err)
+	}
+	os.Chmod(filepath.Dir(pgdata), 0o755)
+	if err := dataDirMode(root, pgdata); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestInitRefusesVolumeThatIgnoresChmod(t *testing.T) {
-	dataDirCheck = func(string) error { return errors.New("su carpeta quedó en 0770 y PostgreSQL exige 0700") }
+	dataDirCheck = func(string, string) error { return errors.New("su carpeta quedó en 0770 y PostgreSQL exige 0700") }
 	defer func() { dataDirCheck = dataDirMode }()
 	cfg := testConfig(t)
 	pg := cfg.PGDir

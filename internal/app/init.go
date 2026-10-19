@@ -34,11 +34,24 @@ func stateBackupDir(c *config.Config) string { return filepath.Join(c.AppDir, "s
 // can simulate a volume that does not keep the mode.
 var dataDirCheck = dataDirMode
 
-// dataDirMode fails unless PGDATA has a mode PostgreSQL accepts (0700 or
-// 0750). Volumes whose permissions come from an NFSv4 ACL can refuse or
-// rewrite the chmod, and then the server never starts.
-func dataDirMode(path string) error {
-	st, err := os.Stat(path)
+// dataDirMode fails unless the PostgreSQL user can reach PGDATA from the
+// volume root and PGDATA has a mode PostgreSQL accepts (0700 or 0750).
+// Volumes whose permissions come from an NFSv4 ACL can refuse or rewrite a
+// chmod, and then the server never starts.
+func dataDirMode(root, pgdata string) error {
+	for dir := filepath.Dir(pgdata); ; dir = filepath.Dir(dir) {
+		st, err := os.Stat(dir)
+		if err != nil {
+			return err
+		}
+		if st.Mode().Perm()&0o001 == 0 {
+			return fmt.Errorf("%s quedó en %04o y el usuario de PostgreSQL no puede entrar", dir, st.Mode().Perm())
+		}
+		if dir == root || dir == filepath.Dir(dir) {
+			break
+		}
+	}
+	st, err := os.Stat(pgdata)
 	if err != nil {
 		return err
 	}
@@ -152,17 +165,22 @@ func Init(c *config.Config, out io.Writer) error {
 	// apps, so the postgres container runs as its own user and never needs
 	// root on the volume.
 	pgdata := func() error {
-		if err := os.MkdirAll(filepath.Dir(c.PGDataDir), 0o755); err != nil {
-			return err
-		}
 		if err := os.MkdirAll(c.PGDataDir, 0o700); err != nil {
 			return err
+		}
+		// On an NFSv4 ACL volume a new folder inherits the ACL and ignores
+		// the mode it is created with (TrueNAS gives 0770), so each folder
+		// between the volume root and PGDATA gets an explicit chmod.
+		for dir := filepath.Dir(c.PGDataDir); strings.HasPrefix(dir, c.PGDir+string(filepath.Separator)); dir = filepath.Dir(dir) {
+			if err := os.Chmod(dir, 0o755); err != nil {
+				return err
+			}
 		}
 		if err := os.Chmod(c.PGDataDir, 0o700); err != nil {
 			return err
 		}
 		chown(c.PGDataDir, c.PGUID, c.PGGID)
-		return dataDirCheck(c.PGDataDir)
+		return dataDirCheck(c.PGDir, c.PGDataDir)
 	}
 	if err := pgdata(); err != nil {
 		return fmt.Errorf("SQS-C054 PostgreSQL no podrá usar el volumen de la base de datos (%v). "+
