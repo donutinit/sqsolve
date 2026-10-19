@@ -172,8 +172,9 @@ func (e *env) firstBackup(l *core.Library) *core.Backup {
 	e.t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
+		// The status is "ok" one step before the L1 check writes its result.
 		bs, _ := e.svc.Backups(e.ctx, core.BackupFilter{LibraryID: l.ID, Statuses: []string{core.BackupOK}})
-		if len(bs) > 0 {
+		if len(bs) > 0 && bs[0].VerifyStatus != core.VerifyNone {
 			return bs[0]
 		}
 		time.Sleep(100 * time.Millisecond)
