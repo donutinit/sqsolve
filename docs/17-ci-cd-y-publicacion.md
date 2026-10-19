@@ -49,9 +49,22 @@ Makefile
 | `zap` | Nocturno | OWASP ZAP baseline |
 | `release` | Etiqueta `v*` | Todo lo anterior, publicar imágenes, SBOM, firmas, notas |
 
-Los flujos se escriben con la sintaxis común de GitHub Actions y Forgejo Actions, sin acciones de
-terceros salvo `actions/checkout` y `docker/setup-buildx-action`, fijadas por SHA de commit. Todo
-lo que hace CI también se puede hacer en local con `make`.
+Implementado hoy (2026-10-18) en `.github/workflows`:
+
+- `ci.yml`: trabajo `check` (formato, `go vet`, staticcheck, pruebas con `-race` incluidas las de
+  integración contra PostgreSQL 18 del repositorio PGDG, govulncheck) y trabajo `smoke` (construye
+  la imagen, levanta `deploy/compose.yaml` tal cual con rutas temporales, espera `/readyz`, corre
+  `sqsolve doctor` y comprueba que los datos sobreviven a un reinicio).
+- `image.yml`: en cada push a `main` y en etiquetas `v*`, imagen amd64 y arm64 en
+  `ghcr.io/donutinit/sqsolve` con procedencia y SBOM de buildx. Etiquetas `edge` (main),
+  `X.Y.Z` y `X.Y` (versiones) y `sha-<commit>`.
+
+Pendientes de la tabla: contrato OpenAPI, `e2e` con navegador, `reproducible`, `faults`, `fuzz`,
+`zap`, firmas con cosign y `release`.
+
+Acciones usadas, todas fijadas por SHA de commit: `actions/checkout`, `actions/setup-go` y las
+de Docker (`setup-buildx`, `login`, `metadata`, `build-push`). Todo lo que hace CI también se
+puede hacer en local con `make`.
 
 ## 5. Compilación
 
@@ -80,7 +93,7 @@ lo que hace CI también se puede hacer en local con `make`.
   desde su publicación (salvo arreglos de seguridad), revisando el diff de `go.sum`.
 - Imágenes base: digest fijado; un trabajo semanal avisa de digest nuevos de
   `postgres:18.x-trixie`; la actualización pasa por la batería completa.
-- htmx y los iconos: vendorizados con versión y SHA-256 en `internal/web/assets/VENDOR.md`.
+- Interfaz sin recursos de terceros (ADR 0004).
 
 ## 8. Lista de comprobación de una versión
 

@@ -15,7 +15,7 @@ cadena de suministro, mantenibilidad a 5 años, rendimiento suficiente, comunida
 Versión: `go.mod` declara `go 1.26` como mínimo (la del sistema en lizeth). CI compila con la
 última versión de parche de la rama estable vigente (1.27 al 2026-10-18).
 
-## 2. Interfaz: **plantillas en el servidor + htmx**
+## 2. Interfaz: **plantillas en el servidor** (sin htmx, ver ADR 0004)
 
 | Opción | A favor | En contra |
 |---|---|---|
@@ -26,9 +26,10 @@ Versión: `go.mod` declara `go 1.26` como mínimo (la del sistema en lizeth). CI
 La interfaz no consume la API REST: ambas llaman a los mismos servicios. Así la API no se
 deforma para la interfaz y la interfaz no paga latencia extra.
 
-JavaScript permitido: htmx y un archivo propio pequeño (`app.js`, menos de 300 líneas) para
-copiar al portapapeles, confirmaciones tecleadas y tema claro u oscuro. Sin `eval`, sin scripts
-en línea.
+JavaScript permitido: un archivo propio pequeño (`app.js`, menos de 300 líneas) para copiar al
+portapapeles, confirmaciones tecleadas y progreso en vivo. Sin `eval`, sin scripts en línea. Al
+implementar se descartó htmx: formularios con POST, redirección y GET bastan. El tema sigue al
+sistema.
 
 ## 3. Estado del plano de control: **SQLite**
 
@@ -97,8 +98,8 @@ protocolos sencillos.
 Solo en pruebas: `github.com/testcontainers/testcontainers-go` (MIT), `github.com/chromedp/chromedp`
 (MIT), `github.com/getkin/kin-openapi` (MIT).
 
-Recursos vendorizados en `internal/web/assets`: htmx 2.x (licencia permisiva; verificar el archivo
-LICENSE al vendorizar y registrar su SHA-256), iconos SVG de Lucide (ISC), solo los usados.
+Sin recursos de terceros vendorizados: estilos, scripts y la marca SVG son propios
+(`internal/web/static`).
 
 Cualquier módulo nuevo requiere ADR, versión publicada hace al menos 7 días, revisión de
 licencia y del árbol de dependencias transitivas (`go mod graph`).

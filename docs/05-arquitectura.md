@@ -59,26 +59,20 @@ flowchart TB
     SQ["sqsolve<br/>imagen basada en postgres:18.x-trixie<br/>binario sqsolve, pg_dump, pg_restore"]
     HK["sqsolve-hooks (1.1, opcional)<br/>ejecuta hooks sin secretos"]
   end
-  V1[("pgdata")]
-  V2[("pgconf")]
-  V3[("pgsocket")]
-  V4[("state")]
-  V5[("secrets")]
-  V6[("backups")]
-
-  INIT --> V2 & V4 & V5
-  PG --- V1
-  PG -- "solo lectura" --- V2
-  PG --- V3
-  SQ --- V2 & V3 & V4 & V6
-  SQ -- "solo lectura" --- V5
-  PG -- "solo lectura" --- V5
-  HK -- "solo lectura" --- V6
+  DB[("db<br/>clúster y configuración generada")]
+  APP[("app<br/>SQLite y secretos")]
+  BK[("respaldos")]
+  RUN[("socket<br/>volumen interno")]
+  INIT --> DB & APP & BK
+  PG --- DB
+  PG --- RUN
+  SQ --- DB & APP & BK & RUN
+  HK -- "solo lectura" --- BK
 ```
 
 | Contenedor | Responsabilidad | Usuario | Red |
 |---|---|---|---|
-| `sqsolve-init` | Crear secretos que falten, generar `postgresql.conf`, `pg_hba.conf` y certificados, ajustar permisos de volúmenes. Termina y no vuelve a correr hasta el siguiente `up` | root (solo esta tarea, sin red) | ninguna |
+| `sqsolve-init` | Crear secretos que falten, generar `postgresql.conf`, `pg_hba.conf` y certificados, ajustar permisos de los tres volúmenes. Termina y no vuelve a correr hasta el siguiente `up` | root (solo esta tarea, sin red) | ninguna |
 | `postgres` | Servir las bibliotecas | `postgres` (UID 999 de la imagen) | `lan` (5432 publicado) |
 | `sqsolve` | Panel, API, programador, tareas, respaldos, auditoría | UID y GID configurables, 1000 por defecto | `lan` (9432 publicado); llega a PostgreSQL por socket |
 | `sqsolve-hooks` | Ejecutar hooks del administrador | UID propio sin acceso a secretos | `hooks` (configurable) |
@@ -107,7 +101,7 @@ flowchart TB
   subgraph infra["Infraestructura"]
     STORE["store<br/>SQLite, migraciones"]
     PGC["pg<br/>cliente de control, DDL seguro"]
-    PGCONF["pgconf<br/>pg_hba.conf y conf.d"]
+    PGCONF["pgconf<br/>postgresql.conf y pg_hba.conf"]
     EXEC["execx<br/>pg_dump, pg_restore, restic"]
     FSX["fsx<br/>escrituras atómicas, espacio, marcadores"]
     SEC["secrets<br/>archivos y cifrado"]
@@ -213,9 +207,9 @@ paso se registra antes de ejecutarse para poder completarlo o revertirlo tras un
 | Capa | Dónde | Ejemplos |
 |---|---|---|
 | Arranque | Variables de entorno (`SQSOLVE_*`) | Rutas de volúmenes, puerto, zona horaria, UID, nivel de log |
-| Secretos | Archivos en `/run/sqsolve/secrets` | Superusuario, rol de control, clave maestra |
+| Secretos | Archivos en `app/secrets` y `db/sqsolve/superuser_password` (ADR 0018) | Clave maestra, rol de control, superusuario |
 | Ajustes de ejecución | Tabla `settings` de SQLite, editables en la interfaz | Dirección anunciada, políticas por defecto, canales de aviso |
-| PostgreSQL | Archivos generados en `pgconf` | `postgresql.conf`, `pg_hba.conf`, certificados |
+| PostgreSQL | Archivos generados en `db/sqsolve` | `postgresql.conf`, `pg_hba.conf`, certificados |
 
 No hay archivo de configuración propio: menos formatos y una sola fuente de verdad para cada
 cosa. La lista completa de variables está en `12-despliegue.md` §4.

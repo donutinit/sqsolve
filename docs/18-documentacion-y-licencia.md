@@ -35,12 +35,15 @@ Reglas:
 | Opción | A favor | En contra |
 |---|---|---|
 | **AGPL-3.0-only** | Garantiza que versiones modificadas ofrecidas por red (un fabricante de NAS, un servicio hospedado) publiquen su código; coherente con "100 % libre" | Algunas empresas evitan la AGPL |
+| AGPL-3.0-or-later | Lo mismo, y admite versiones futuras de la AGPL publicadas por la FSF | Descartada por decisión de Diego (ADR 0001) |
 | GPL-3.0-or-later | Copyleft conocido | No cubre el uso por red, que es justamente el caso de un servidor con panel web |
 | Apache-2.0 o MIT | Adopción máxima | Permite versiones cerradas derivadas, que es lo que el proyecto quiere evitar |
 | MPL-2.0 | Copyleft por archivo | Débil para una aplicación completa |
 
 Decisión en ADR 0001. Consecuencias:
 
+- `LICENSE` contiene el texto oficial de la GNU AGPL versión 3 (gnu.org, SHA-256
+  `0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0`).
 - Cada archivo fuente lleva `SPDX-License-Identifier: AGPL-3.0-only`.
 - El panel muestra en "Acerca de" un enlace al código fuente de la versión exacta en ejecución
   (requisito de la sección 13 de la AGPL).

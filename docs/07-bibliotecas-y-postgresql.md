@@ -46,8 +46,14 @@ inyectar SQL, con `sqsolve_admin` el daño se limita a bases y roles, no al sist
 
 Desde PostgreSQL 16, `sqsolve_admin` solo puede modificar los roles que creó (tiene `ADMIN
 OPTION` sobre ellos) y solo puede conceder `CREATEDB` porque lo tiene [01 §12]. Al crear un rol de
-biblioteca, sqsolve ejecuta además `GRANT <slug> TO sqsolve_admin WITH INHERIT FALSE, SET TRUE`
-para poder actuar como ese rol en restauraciones (`pg_restore --role`).
+biblioteca, sqsolve ejecuta además `GRANT <slug> TO sqsolve_admin WITH INHERIT TRUE, SET TRUE`.
+
+Implementado y probado contra PostgreSQL 18: la base sigue siendo propiedad del rol de la
+biblioteca (como la deja Resolve al crearla) y `sqsolve_admin`, por herencia, actúa como dueño
+para renombrarla, bloquearla, borrarla o respaldarla; tiene además `CREATEDB` propio, que exige
+el renombre. Así no hace falta cambiar el dueño de la base y el plan B de PoC-01 se vuelve el
+camino normal. `pg_hba.conf` rechaza a `sqsolve_admin` por red aunque sea miembro de los roles de
+biblioteca, porque los roles se listan por nombre.
 
 Información que PostgreSQL no permite ocultar: cualquier rol conectado puede leer
 `pg_database` y ver los nombres de todas las bases. Se documenta; no se ofrece "biblioteca
@@ -97,9 +103,9 @@ Resolve inicializa una base vacía con "Connect", y E2 como optimización.
 3. Mostrar los datos para "Create" en Resolve (nombre de la biblioteca, IP o nombre del
    servidor, usuario, contraseña) y el estado "esperando inicialización".
 4. Vigilar cada 5 s: la base `<slug>` existe, su dueño es `<slug>` y tiene tablas en `public`.
-5. Al detectarla: `ALTER ROLE <slug> NOCREATEDB`; si PoC-01 lo permite, `ALTER DATABASE <slug>
-   OWNER TO sqsolve_admin` (el esquema y las tablas siguen a nombre de `<slug>`); `REVOKE
-   CONNECT ON DATABASE <slug> FROM PUBLIC`; `GRANT CONNECT, TEMP ... TO <slug>`.
+5. Al detectarla y ver estable el número de tablas en tres revisiones seguidas: `ALTER ROLE
+   <slug> NOCREATEDB`; `REVOKE ALL ON DATABASE <slug> FROM PUBLIC`; `GRANT CONNECT, TEMP ... TO
+   <slug>`. La base conserva su dueño.
 6. Huella de esquema, política de respaldo por defecto y primer respaldo (tarea encadenada).
 7. Ventana máxima configurable, 60 min por defecto; al vencer se quita `CREATEDB`.
 
@@ -209,7 +215,7 @@ Contenido base de `postgresql.conf` (los valores entre `<>` los calcula sqsolve)
 | `unix_socket_directories` | `'/var/run/postgresql'` | Volumen `pgsocket` compartido con sqsolve |
 | `max_connections` | `200` (ajustar tras PoC-01 paso 6) | Varias conexiones por estación |
 | `password_encryption` | `scram-sha-256` | RNF-SEG-02 |
-| `ssl` | `on` con `ssl_cert_file` y `ssl_key_file` en `pgconf/tls` | Cifrado oportunista (PoC-06) |
+| `ssl` | `on` con `ssl_cert_file` y `ssl_key_file` en `db/sqsolve/tls` | Cifrado oportunista (PoC-06) |
 | `shared_buffers` | `<25 % de la memoria asignada, máximo 2 GB>` | Bases medianas |
 | `log_connections`, `log_disconnections` | `on` | Auditoría de acceso |
 | `log_line_prefix` | `'%m [%p] %u@%d %r '` | Correlación |

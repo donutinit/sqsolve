@@ -107,13 +107,13 @@ bibliotecas distintas.
 
 | Secreto | Dónde | Quién lo lee | Rotación |
 |---|---|---|---|
-| Contraseña de `postgres` | `secrets/pg_superuser_password` (0400) | PostgreSQL (al iniciar el clúster por `POSTGRES_PASSWORD_FILE`), sqsolve | `sqsolve admin rotate-superuser` |
-| Contraseña de `sqsolve_admin` | `secrets/pg_admin_password` | sqsolve | Automática cada 90 días o bajo demanda |
-| Clave maestra (32 bytes) | `secrets/master.key` | sqsolve | `sqsolve admin rotate-master-key` vuelve a cifrar todo en una transacción |
+| Contraseña de `postgres` | `db/sqsolve/superuser_password` (0440, grupo de PostgreSQL) | PostgreSQL (al iniciar el clúster por `POSTGRES_PASSWORD_FILE`), sqsolve | `sqsolve admin rotate-superuser` |
+| Contraseña de `sqsolve_admin` | `app/secrets/pg_admin_password` (0400) | sqsolve | Automática cada 90 días o bajo demanda |
+| Clave maestra (32 bytes) | `app/secrets/master.key` (0400) | sqsolve | `sqsolve admin rotate-master-key` vuelve a cifrar todo en una transacción |
 | Clave de firma de webhooks | Cifrada en SQLite, una por canal | sqsolve | Desde la interfaz |
 | Contraseñas de bibliotecas | Cifradas en SQLite | sqsolve | Rotación por biblioteca |
 | Contraseña de restic (1.1) | Cifrada en SQLite y en el kit de recuperación | sqsolve | No rotable sin rehacer el repositorio; se documenta |
-| Certificados TLS | `pgconf/tls` y `state/tls` | PostgreSQL, sqsolve | Renovación automática a 30 días de caducar (autofirmados de 2 años) |
+| Certificados TLS | `db/sqsolve/tls` y `app/tls` | PostgreSQL, sqsolve | Renovación automática a 30 días de caducar (autofirmados de 2 años) |
 
 Cifrado de secretos recuperables: XChaCha20-Poly1305 con nonce aleatorio de 24 bytes; el
 identificador de la clave y el nombre de la columna van como datos adicionales autenticados para

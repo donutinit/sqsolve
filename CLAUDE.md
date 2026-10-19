@@ -5,9 +5,11 @@ Lee esto completo antes de tocar el repo. Las reglas globales de `~/.claude/CLAU
 
 ## Estado del proyecto
 
-Fase 0 (investigación y pruebas de concepto). La arquitectura está en `docs/`. No escribas
-código de una parte cuyo diseño dependa de una prueba de concepto (PoC) sin resolver: revisa la
-columna "Bloquea" de `docs/02-pruebas-de-concepto.md`.
+Versiones 0.1 a 0.6 implementadas (2026-10-18) por encargo de Diego, antes de correr las
+pruebas de concepto con Resolve. La arquitectura está en `docs/` y el avance en
+`docs/21-tareas.md` §12. Lo que depende de una PoC (columna "Bloquea" de
+`docs/02-pruebas-de-concepto.md`) está escrito según la hipótesis del plan y **no está validado
+con Resolve real**: no lo extiendas ni lo des por bueno hasta que la PoC lo confirme.
 
 ## Cómo elegir y cerrar una tarea
 
@@ -52,7 +54,8 @@ columna "Bloquea" de `docs/02-pruebas-de-concepto.md`.
 - Go estable vigente (ver `go.mod`), `CGO_ENABLED=0`. Identificadores y comentarios de código en
   inglés; documentación, interfaz y mensajes de commit en español.
 - Paquetes bajo `internal/`. Sin frameworks web: `net/http`, `html/template`, `log/slog`.
-- Interfaz: plantillas en el servidor más htmx vendorizado. Sin Node ni npm en la compilación.
+- Interfaz: plantillas en el servidor, formularios estándar y `app.js` propio (ADR 0004). Sin
+  htmx, sin JavaScript de terceros, sin Node ni npm en la compilación.
 - Antes de la primera tarea que cambie la interfaz, corre la fase de patrones de
   `ui-consistency` (finding-patterns) y deja su lista de verificación en
   `docs/ui/checklist.md`.

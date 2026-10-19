@@ -2,24 +2,40 @@
 
 ## 1. Dirección visual
 
-Decisión: **herramienta de sala de edición**. Oscura por defecto (como Resolve, para no
-deslumbrar en salas con luz baja), con tema claro completo para oficinas. Sobria, densa en
-información, sin ilustraciones ni degradados.
+Decisión (revisada con las guías de interfaz de Apple el 2026-10-18): **el entorno de una sala
+de color.**
 
-- Neutros grises fríos con un solo color de acento (ámbar, `#E8A33D` en oscuro y `#B4740F` en
-  claro) para acciones primarias y foco. El ámbar evoca las luces de grabación y de estado
-  de los equipos sin confundirse con los colores de estado.
-- Estados siempre con icono y texto, nunca solo color: correcto (verde), aviso (amarillo), error
-  (rojo), en curso (azul), inactivo (gris).
-- Tipografía del sistema (`system-ui`) para el texto y monoespaciada del sistema
-  (`ui-monospace`) para valores técnicos: IP, nombres de base, usuarios, hashes. Sin fuentes
-  externas: el panel funciona sin Internet.
-- Escala de espaciado de 4 px; radios pequeños (4 px); bordes de 1 px en lugar de sombras.
-- Tokens de diseño como propiedades CSS en `:root` y sobrescritas en `[data-theme="light"]` y
-  `prefers-color-scheme`.
+- **Grises estrictamente neutros** (R = G = B) en superficies y texto. El panel puede estar
+  abierto junto a un monitor de referencia; un gris teñido sesga la percepción del colorista.
+- **El color solo aparece cuando un estado significa algo:** correcto (verde), aviso (ámbar),
+  error (rojo), en curso (azul). No hay color de marca; la acción principal es un botón
+  invertido (texto sobre fondo claro en oscuro, al revés en claro). Cada estado lleva además
+  texto y una forma distinta (círculo, rombo, cuadrado, contorno), nunca solo color.
+- **El tema sigue al sistema** (`prefers-color-scheme`); no hay interruptor propio. Con
+  `prefers-contrast: more` los textos secundarios pasan al color principal.
+- **Elemento distintivo: la línea de tiempo de protección.** Cada biblioteca es una pista,
+  como en una línea de tiempo de edición. Cada respaldo es un marcador: alto y sólido si pasó la
+  restauración de prueba, medio si pasó suma e índice, punteado si no se verificó, una cruz roja
+  si falló. Una franja ámbar marca el tiempo sin respaldo verificado reciente. La línea fina de
+  la derecha es "ahora". Aparece en el panel (14 días), en la lista de bibliotecas y en la
+  pestaña de respaldos (30 días), siempre con leyenda y descripción accesible.
+- **Tipografía del sistema** para la interfaz y monoespaciada para valores técnicos
+  (identificadores, IP, hashes, nombres de pista); cifras tabulares en todo el panel.
+- La marca es la misma pista en miniatura (tres marcadores sobre un carril); no hay logotipo
+  repetido.
 
-Justificación: quien usa el panel viene de Resolve y de un NAS; reconocer jerarquía y estado de
-un vistazo importa más que la personalidad visual. La sobriedad también envejece mejor.
+Contraste medido (WCAG 2.x):
+
+| Par | Oscuro | Claro |
+|---|---|---|
+| Texto sobre tarjeta | #ececec / #242424: 13.1:1 | #1a1a1a / #ffffff: 17.4:1 |
+| Secundario sobre tarjeta | #a8a8a8 / #242424: 6.5:1 | #5c5c5c / #ffffff: 6.7:1 |
+| Error como texto | #f0645a / #242424: 4.9:1 | #c0352b / #ffffff: 5.6:1 |
+| Botón de peligro | blanco / #c4342c: 5.4:1 | blanco / #b8312a: 6.0:1 |
+| Borde de controles | #6b6b6b / #161616: 3.4:1 | #8c8c8c / #ffffff: 3.4:1 |
+
+Antes de esta revisión el acento ámbar medía 3.9:1 como enlace en tema claro y 1.07:1 frente al
+amarillo de aviso: un botón principal y una advertencia se veían iguales. Por eso se quitó.
 
 ## 2. Navegación
 
@@ -201,8 +217,11 @@ del idioma elegido. Los códigos `SQS-` no se traducen.
 
 ## 8. Implementación
 
-- Plantillas en `internal/web/templates`, un `layout` base, parciales por componente
-  (`card`, `status-badge`, `danger-zone`, `job-progress`, `copy-field`, `empty-state`).
+- Plantillas en `internal/web/templates`: `layout.html`, `partials.html` (badge, copy, empty,
+  jobstate, librarystate, jobtable, joblist, track, trackrow, tracklegend) y una plantilla por
+  pantalla. Estilos en `internal/web/static/app.css`, JavaScript en `app.js`.
+- Sin estilos ni scripts en línea (CSP estricta). Medidores con `<meter>`, progreso con
+  `<progress>`, la pista con SVG.
 - Antes de la primera tarea de interfaz (SQS-500), el agente corre `ui-consistency`
   (finding-patterns, luego planning) y documenta en `docs/ui/checklist.md` los componentes,
   tokens y patrones que todas las páginas deben reutilizar. Cada página nueva se verifica contra
