@@ -68,6 +68,6 @@
     {{if .Thumb}}<img src="{{jpeg .Thumb}}" alt="" width="288" height="162">{{else}}<div class="nothumb muted small">Sin miniatura</div>{{end}}
     <div class="stillmeta"><span class="mono">{{.Label}}</span>{{if .RecTC}} <span class="muted small">{{.RecTC}}</span>{{end}}
       {{if not .Created.IsZero}}<time class="muted small" datetime="{{iso .Created}}">{{dt .Created}}</time>{{end}}
-      {{if .can}}<a class="small" href="/bibliotecas/{{.id}}/exportar/stills/{{.ID}}">.drx</a>{{end}}</div>
+      {{if $.can}}<a class="small" href="/bibliotecas/{{$.id}}/exportar/stills/{{.ID}}">.drx</a>{{end}}</div>
   </li>{{else}}<li class="muted">Sin stills.</li>{{end}}
 </ul>{{end}}
