@@ -26,8 +26,13 @@ jobs:
         run: |
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y --no-install-recommends postgresql-18
-      - name: Formato, vet y staticcheck
-        run: make fmt vet lint
+      - name: Formato y vet
+        run: make fmt vet
+      # staticcheck v0.8.1 cannot read Go 1.27.2 export data; v0.8.2 can, but it was
+      # published on 2026-10-12 and the 7-day rule allows it from 2026-10-19.
+      - name: staticcheck
+        if: matrix.go == '1.26.x'
+        run: make lint
       - name: Pruebas (incluidas las de integración con PostgreSQL real)
         env:
           SQSOLVE_TEST_PG_BIN: /usr/lib/postgresql/18/bin

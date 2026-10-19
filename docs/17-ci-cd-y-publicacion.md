@@ -60,6 +60,10 @@ Implementado hoy (2026-10-18) en `.github/workflows`:
   `ghcr.io/donutinit/sqsolve` con procedencia y SBOM de buildx. Etiquetas `edge` (main),
   `X.Y.Z` y `X.Y` (versiones) y `sha-<commit>`.
 
+staticcheck corre por ahora solo con Go 1.26: la v0.8.1 no lee el formato de Go 1.27.2 y la
+v0.8.2, que sí, se publicó el 2026-10-12 (se puede subir desde el 2026-10-19 por la regla de
+7 días).
+
 Pendientes de la tabla: contrato OpenAPI, `e2e` con navegador, `reproducible`, `faults`, `fuzz`,
 `zap`, firmas con cosign y `release`.
 
