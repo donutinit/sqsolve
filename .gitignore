@@ -1,0 +1,5 @@
+/sqsolve
+/dist/
+/coverage.out
+*.test
+/.cache/
