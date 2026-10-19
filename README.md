@@ -110,8 +110,9 @@ Copia [`deploy/compose.yaml`](deploy/compose.yaml) y cambia solo esto:
    todas igual).
 2. `TZ`, tu zona horaria (por ejemplo `America/Mexico_City`). Los horarios de respaldo usan esta
    zona.
-3. La versión de la imagen en `x-sqsolve` (`ghcr.io/donutinit/sqsolve:<versión>`). Usa una
-   versión fija, no `edge`.
+3. La versión de la imagen en `x-sqsolve`. Con `0.1` recibes cada arreglo de la serie 0.1 y
+   TrueNAS te avisa con "Update available"; con una versión exacta (`0.1.1`) nada cambia hasta
+   que tú la cambies. No uses `edge`: es lo último de `main`, sin publicarse como versión.
 4. Si el puerto 5432 ya está ocupado en el host (pasa en Synology), publícalo solo en la IP de
    la LAN: `"192.168.1.10:5432:5432"`.
 
@@ -306,12 +307,17 @@ docker compose exec sqsolve sqsolve audit verify
 
 1. Antes, haz un respaldo de todo (o confirma en el panel que todo tiene un verificado
    reciente).
-2. Cambia la versión de la imagen en el compose y corre:
+2. Con la etiqueta `0.1` basta con bajar la imagen nueva; con una versión exacta, primero
+   cámbiala en el compose. Luego:
 
 ```
 docker compose pull
 docker compose up -d
 ```
+
+En TrueNAS, con `0.1`, la app muestra "Update available" cuando sale un arreglo y el botón
+Update hace lo mismo que esos dos comandos. Para pasar a otra serie (`0.2`) cambia la línea a
+mano.
 
 `sqsolve-init` vuelve a correr y regenera la configuración. Si la versión nueva cambia el
 catálogo, sqsolve guarda antes una copia en `app/state-backups/`. Para volver atrás, regresa a
@@ -376,8 +382,8 @@ Go 1.26 o más nuevo y, para las pruebas de integración, los binarios de Postgr
 
 CI (`.github/workflows`) corre todo lo anterior, levanta `deploy/compose.yaml` tal cual con la
 imagen recién construida y hace un recorrido completo con los usuarios 1000 y 568. Cada push a
-`main` publica `ghcr.io/donutinit/sqsolve:edge`; cada etiqueta `vX.Y.Z` publica esa versión para
-amd64 y arm64.
+`main` publica `ghcr.io/donutinit/sqsolve:edge`; cada etiqueta `vX.Y.Z` publica `X.Y.Z`, mueve
+`X.Y` y `latest`, para amd64 y arm64.
 
 Las reglas para quien programe (incluidos agentes) están en [`AGENTS.md`](AGENTS.md).
 

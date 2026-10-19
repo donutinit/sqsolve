@@ -67,7 +67,8 @@ Implementado hoy (2026-10-18) en `.github/workflows`:
     datos, y `sqsolve-init` repetido).
 - `image.yml`: en cada push a `main` y en etiquetas `v*`, imagen amd64 y arm64 en
   `ghcr.io/donutinit/sqsolve` con procedencia y SBOM de buildx. Etiquetas `edge` (main),
-  `X.Y.Z` y `X.Y` (versiones) y `sha-<commit>`.
+  `X.Y.Z`, `X.Y` y `latest` (versiones) y `sha-<commit>`. El compose de referencia usa `X.Y`
+para que cada arreglo llegue como "Update available" en TrueNAS.
 
 staticcheck corre por ahora solo con Go 1.26: la v0.8.1 no lee el formato de Go 1.27.2 y la
 v0.8.2, que sí, se publicó el 2026-10-12 (se puede subir desde el 2026-10-19 por la regla de
