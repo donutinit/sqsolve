@@ -30,6 +30,35 @@ func panelCertPath(c *config.Config) string  { return filepath.Join(c.AppDir, "t
 func panelKeyPath(c *config.Config) string   { return filepath.Join(c.AppDir, "tls", "panel.key") }
 func stateBackupDir(c *config.Config) string { return filepath.Join(c.AppDir, "state-backups") }
 
+// permProbe checks the db volume before PostgreSQL gets it. A variable so
+// tests can simulate a volume that ignores chmod.
+var permProbe = keepsPermissions
+
+// keepsPermissions reports whether dir keeps the permission bits a chmod
+// sets. PostgreSQL depends on them; a volume whose permissions come from an
+// NFSv4 ACL (a TrueNAS dataset created with a preset other than Generic)
+// rewrites them, and the server never starts.
+func keepsPermissions(dir string) error {
+	f, err := os.CreateTemp(dir, ".sqsolve-perms-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	f.Close()
+	defer os.Remove(name)
+	if err := os.Chmod(name, 0o640); err != nil {
+		return err
+	}
+	st, err := os.Stat(name)
+	if err != nil {
+		return err
+	}
+	if got := st.Mode().Perm(); got != 0o640 {
+		return fmt.Errorf("se pidió 0640 y quedó %04o", got)
+	}
+	return nil
+}
+
 // Init prepares the volumes. It runs as root in the sqsolve-init container,
 // without network, before PostgreSQL starts. It is idempotent.
 func Init(c *config.Config, out io.Writer) error {
@@ -129,6 +158,11 @@ func Init(c *config.Config, out io.Writer) error {
 	conf := c.PGConfDir()
 	if err := mkdir(c.PGDir, 0o755, -1, -1); err != nil {
 		return err
+	}
+	if err := permProbe(c.PGDir); err != nil {
+		return fmt.Errorf("SQS-C054 el volumen de la base de datos no respeta los permisos de archivo (%v), "+
+			"así que PostgreSQL no puede arrancar. Pasa con carpetas que usan ACL de tipo NFSv4: "+
+			"en TrueNAS, crea el dataset con el preset Generic", err)
 	}
 	if err := mkdir(conf, 0o750, c.UID, c.PGGID); err != nil {
 		return err

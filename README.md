@@ -98,8 +98,9 @@ Tres carpetas vacías: dos en SSD y la de respaldos de preferencia en otro disco
 /mnt/discos/sqsolve-respaldos
 ```
 
-En TrueNAS conviene un dataset por carpeta. Si después PostgreSQL se queja de los permisos de su
-carpeta, mira [Solución de problemas](#solución-de-problemas).
+En TrueNAS conviene un dataset por carpeta, todos con el preset **Generic**. Los otros presets
+dejan ACL de tipo NFSv4 y con eso PostgreSQL no arranca (`sqsolve-init` lo detecta y se detiene
+con el error `SQS-C054`).
 
 ### 2. Ajusta el compose
 
@@ -347,7 +348,7 @@ código `SQS-...` que también aparece en la API.
 | `SQS-S004` en `sqsolve-init` | La carpeta de respaldos tiene archivos que no son de sqsolve | Monta una carpeta vacía. Si de verdad es la correcta, `SQSOLVE_BACKUPS_ADOPT=1` |
 | `SQS-S003` | Ese volumen de respaldos es de otra instalación | Revisa que montaste la carpeta correcta |
 | Errores de permisos tras cambiar de usuario o copiar carpetas | Los dueños no corresponden | Agrega `SQSOLVE_FIX_PERMS: "1"` al servicio `sqsolve-init`, levanta una vez y quítalo |
-| PostgreSQL no arranca: `data directory ... has invalid permissions` | El dataset no permite `chmod` (ACL de tipo NFSv4 en algunos NAS) | Crea la carpeta `db` en un dataset con permisos POSIX (en TrueNAS, preset Generic) |
+| `SQS-C054` en `sqsolve-init`, o PostgreSQL se reinicia con `mkdir: cannot create directory '/var/lib/postgresql/18': Permission denied` o `data directory ... has invalid permissions` | La carpeta `db` usa ACL de tipo NFSv4 y no respeta los permisos que PostgreSQL necesita | Crea la carpeta `db` en un dataset con permisos POSIX (en TrueNAS, preset Generic) |
 | `port is already allocated` en 5432 | Otro PostgreSQL en el host (Synology) | Publica `"IP-de-la-LAN:5432:5432"` |
 | Resolve no conecta | Red, firewall, dirección o regla de red | Desde la estación, que llegue a `IP:5432`; revisa la dirección anunciada en Ajustes y las reglas de la biblioteca; el registro de `postgres` dice por qué rechazó (`pg_hba.conf rejects connection for host ...`) |
 | Rechazos con una IP `172.x` en el registro de `postgres` | Tu Docker reescribe la IP de origen | Las reglas de red no ven la IP real de la estación: quítalas o pon esa red |
