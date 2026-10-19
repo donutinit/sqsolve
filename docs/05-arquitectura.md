@@ -7,7 +7,8 @@
    cuando más se necesita para diagnosticar y restaurar.
 2. **Bibliotecas como caja negra** (ADR 0007). sqsolve administra bases, roles, conexiones y
    respaldos; nunca interpreta tablas de Resolve. Así no se rompe cuando Resolve cambia su
-   esquema.
+   esquema. La única excepción es la lectura acotada y apagada por defecto de ADR 0019 para
+   exportar `.drp` y `.drx`, que se apaga sola si el esquema cambia.
 3. **Nunca destruir sin copia.** Borrar, restaurar o rotar dejan un camino de vuelta.
 4. **Toda operación larga es una tarea persistente** con pasos registrados, reanudable o
    limpiable tras un corte.
@@ -223,10 +224,11 @@ cosa. La lista completa de variables está en `12-despliegue.md` §4.
   tabla para que no se desincronicen.
 - La API devuelve RFC 9457 (`application/problem+json`) con el código en `type`.
 - Áreas: `A` autenticación, `L` bibliotecas, `B` respaldos, `R` restauración, `J` tareas,
-  `P` PostgreSQL, `S` almacenamiento, `N` notificaciones, `C` configuración, `X` interno.
+  `P` PostgreSQL, `S` almacenamiento, `N` notificaciones, `C` configuración, `E` exportación
+  experimental, `X` interno.
 
 ## 9. Decisiones registradas
 
 Ver `adr/README.md`. Las que dan forma a esta arquitectura: 0002 (topología), 0003 (Go),
 0004 (interfaz), 0005 (SQLite), 0007 (caja negra), 0008 (roles), 0009 y 0010 (respaldos y
-restauración), 0016 (imagen base).
+restauración), 0016 (imagen base), 0019 (exportación experimental, acota a 0007).

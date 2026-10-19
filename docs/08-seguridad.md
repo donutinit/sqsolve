@@ -62,7 +62,7 @@ opcional), contenedores y host (volúmenes).
   de un solo uso guardados como hash. Administradores: TOTP obligatorio si se activa la opción
   global.
 - Tokens de API: prefijo `sqs_`, 32 bytes aleatorios, se muestran una sola vez, se guardan como
-  SHA-256. Alcances: `read`, `backup`, `restore`, `admin`. Caducidad máxima 365 días.
+  SHA-256. Alcances: `read`, `backup`, `restore`, `export`, `admin`. Caducidad máxima 365 días.
 - Recuperación: `docker compose exec sqsolve sqsolve admin reset-password <usuario>` o
   `sqsolve admin create --role admin`. Quien llega a la consola del contenedor ya controla el
   host.
@@ -79,6 +79,7 @@ Roles del panel:
 | Respaldar ahora, verificar | No | Sí | Sí | No |
 | Restaurar como copia, descargar respaldo | No | Sí | Sí | No |
 | Restaurar reemplazando, revertir | No | No | Sí | No |
+| Exportar proyectos y grados (experimental, si está activo) | No | Sí | Sí | No |
 | Crear, editar, mantenimiento, eliminar bibliotecas | No | No | Sí | No |
 | Credenciales, reglas de red | No | No | Sí | No |
 | Programaciones, retención, notificaciones | No | No | Sí | No |

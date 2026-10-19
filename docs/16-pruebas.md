@@ -11,7 +11,7 @@
 | Extremo a extremo | Flujos de la interfaz en navegador | `chromedp` contra el Compose completo | CI |
 | Fallos y recuperación | Cortes, disco lleno, volúmenes ausentes, PostgreSQL caído | Scripts Go que controlan Docker en la máquina de CI | CI (nocturno) |
 | Seguridad | Análisis estático, vulnerabilidades, escaneo web, autorización | `gosec`, `govulncheck`, OWASP ZAP, pruebas de matriz | CI |
-| Compatibilidad con Resolve | Comportamiento real de Resolve | Manual guiado (`14-compatibilidad.md` §4) | Estaciones de Diego |
+| Compatibilidad con Resolve | Comportamiento real de Resolve, incluido el kit de exportación (`22` §6) | Manual guiado (`14-compatibilidad.md` §4) | Estaciones de Diego |
 | Aceptación | Criterios AC-01 a AC-11 | Guion §8, parte automática y parte manual | Antes de cada versión |
 | Rendimiento | Tiempos de página y respaldo | `go test -bench`, cargas sintéticas | Antes de cada versión |
 
@@ -58,7 +58,9 @@ Contra PostgreSQL 18 en contenedor, con la configuración generada por sqsolve:
 - Migraciones de SQLite desde cada versión publicada anterior (fixtures guardados por versión).
 
 Los datos de prueba nunca incluyen esquemas de Resolve: se usa un esquema sintético propio que
-imita el patrón (muchas tablas, algunos `bytea` grandes, índices).
+imita el patrón (muchas tablas, algunos `bytea` grandes, índices). El esquema sintético de la
+exportación experimental puede repetir los nombres de tablas y columnas del formato `.drp` (`22`
+§3), nunca el esquema completo de Resolve ni datos reales.
 
 ## 4. Pruebas de fallos y recuperación
 

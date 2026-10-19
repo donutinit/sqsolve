@@ -89,7 +89,7 @@ func TestPolicyMatrix(t *testing.T) {
 			t.Errorf("operator can %s", a)
 		}
 	}
-	for _, a := range []Action{ActBackupCreate, ActRestoreNew, ActBackupDownload} {
+	for _, a := range []Action{ActBackupCreate, ActRestoreNew, ActBackupDownload, ActLibraryExport} {
 		if !RoleAllows(RoleOperator, a) {
 			t.Errorf("operator cannot %s", a)
 		}
@@ -102,6 +102,13 @@ func TestPolicyMatrix(t *testing.T) {
 	op := &Principal{User: &User{Role: RoleOperator}, TokenID: "t", Scopes: []string{"admin"}}
 	if op.Can(ActLibraryDelete) {
 		t.Error("scope widened the role")
+	}
+	ex := &Principal{User: &User{Role: RoleOperator}, TokenID: "t", Scopes: []string{"export"}}
+	if !ex.Can(ActLibraryExport) || ex.Can(ActBackupDownload) || !ex.Can(ActView) {
+		t.Error("export scope wrong")
+	}
+	if v := (&Principal{User: &User{Role: RoleViewer}}); v.Can(ActLibraryExport) {
+		t.Error("viewer can export")
 	}
 }
 

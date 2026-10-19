@@ -47,7 +47,7 @@ flowchart LR
   P --- E["Eventos y auditoría"]
   P --- S["Salud y almacenamiento"]
   P --- A["Ajustes"]
-  B --> BD["Detalle de biblioteca<br/>Conexión, Respaldos, Programación,<br/>Accesos, Actividad, Ajustes, Zona de peligro"]
+  B --> BD["Detalle de biblioteca<br/>Conexión, Respaldos, Programación,<br/>Accesos, Actividad, Exportar, Ajustes, Zona de peligro"]
   A --> AU["Usuarios y tokens"]
   A --> AN["Notificaciones"]
   A --> AS["Sistema: red, TLS, idioma, zona horaria"]
@@ -102,6 +102,10 @@ respaldo con su verificación, versión detectada. Filtros por estado. Botón "N
   red, límite de conexiones.
 - **Actividad**: sesiones activas con botón de cerrar; eventos de la biblioteca; historial de
   huellas.
+- **Exportar** (experimental, solo si el ajuste está activo): aviso "Experimental: sin
+  garantía" y estado de la huella ("verificada con Resolve 21.1.1" o "no verificada"); tabla de
+  proyectos con miniatura, carpeta, nombre, modificado y "Descargar .drp"; álbumes PowerGrade y
+  de cada proyecto con miniaturas, ".drx" por still y "Descargar álbum (.zip)". Ver `22` §7.
 - **Ajustes**: nombre visible, notas (texto libre para rutas de medios, cliente, etc.), versión
   declarada de Resolve, guardar como plantilla.
 - **Zona de peligro**: mantenimiento, eliminar. Fondo diferenciado y explicación de cada acción.
@@ -137,6 +141,8 @@ anunciada, TLS del panel con carga de certificado propio, idioma por defecto, zo
 proxies de confianza); mantenimiento y recuperación (reconstruir catálogo, importar, regenerar
 `pg_hba.conf`, paquete de diagnóstico, kit de recuperación, ventana de actualización de
 Resolve); acerca de (versiones, licencias de terceros, SBOM, matriz de compatibilidad).
+En General > Experimental: "Exportación experimental de proyectos y grados", apagada por defecto
+(ADR 0019).
 
 ## 4. Flujos clave
 
@@ -190,14 +196,17 @@ después por biblioteca.
   y volver. Nunca un botón que bloquea esperando.
 - **Peligro**: color de error solo en el botón final, consecuencias con datos reales,
   confirmación tecleada para irreversibles, reautenticación si pasaron más de 5 min.
-- **Formularios**: validación en el servidor siempre y en vivo por htmx; errores junto al campo;
-  el envío no borra lo escrito.
+- **Formularios**: validación en el servidor siempre; el error vuelve como aviso al inicio de
+  la página con su código y el envío no borra lo escrito.
 - **Vacíos**: cada lista vacía explica qué es y ofrece la acción principal ("Aún no hay
   bibliotecas. Crea la primera").
 - **Errores**: mensaje humano, código `SQS-`, enlace a la ayuda y, si aplica, botón de
   reintentar.
 - **Copiar**: botón con confirmación visual "Copiado"; en navegadores sin API de portapapeles,
-  selecciona el texto.
+  selecciona el texto. Las páginas que esperan a Resolve consultan el estado por la API y solo
+  se recargan cuando cambia, para no interrumpir una copia.
+- **Avisos**: cada aviso lleva texto y la misma figura que las insignias (círculo, rombo,
+  cuadrado, contorno), nunca solo color.
 - **Tiempos**: relativos ("hace 3 h") con la fecha absoluta en la zona del servidor al pasar el
   cursor o tocar.
 

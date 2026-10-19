@@ -28,6 +28,7 @@
   --on-danger: #ffffff;
   --focus: #000000;
   --radius: 5px;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Ubuntu, Cantarell, sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
   color-scheme: light dark;
@@ -70,7 +71,7 @@ a { color: var(--text); text-decoration: underline; text-decoration-color: var(-
 a:hover { text-decoration-color: currentColor; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
 h1 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 6px; font-weight: 650; letter-spacing: -0.01em; }
-h2 { font-size: 1.07rem; margin: 0 0 12px; font-weight: 600; }
+h2 { font-size: 1.15rem; margin: 0 0 12px; font-weight: 600; letter-spacing: -0.005em; }
 h3 { font-size: 1rem; margin: 0 0 4px; font-weight: 600; }
 p { margin: 0 0 12px; }
 code, .mono { font-family: var(--mono); font-size: 0.9em; }
@@ -111,7 +112,8 @@ main { padding: 28px 32px 48px; max-width: 1240px; width: 100%; }
 .pagehead { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 .pagehead p { margin: 0; }
 .card { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px; margin-bottom: 16px; }
-.card.flush { padding: 0; overflow: hidden; }
+.card.flush { padding: 0; overflow: auto; }
+.scroll-x { overflow-x: auto; }
 .card.narrow { max-width: 720px; }
 .card.emphasis { border-color: var(--text); }
 .card.emphasis.bad { border-color: var(--bad); }
@@ -203,12 +205,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 tr.revoked td { opacity: 0.55; }
 
 /* Messages and small parts. */
-.flash { border: 1px solid var(--line); border-left-width: 4px; border-radius: var(--radius); padding: 10px 14px; margin: 16px 32px 0; background: var(--raised); }
+/* Notices carry the same shape language as badges: text plus a figure, never color alone. */
+.flash { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; margin: 16px 32px 0; background: var(--raised); }
 main .flash, .card .flash, .bare .flash { margin: 0 0 12px; }
-.flash.ok { border-left-color: var(--ok); }
-.flash.error { border-left-color: var(--bad); }
-.flash.info { border-left-color: var(--text); }
-.flash.warn { border-left-color: var(--warn); }
+.flash::before { content: ""; flex: none; width: 10px; height: 10px; margin-top: 7px; border-radius: 50%; background: var(--faint); }
+.flash.ok::before { background: var(--ok); }
+.flash.error::before { background: var(--bad); border-radius: 1px; }
+.flash.info::before { background: transparent; border: 1.5px solid var(--muted); }
+.flash.warn::before { background: var(--warn-fill); border-radius: 1px; transform: rotate(45deg); }
+.flash.error { border-color: color-mix(in srgb, var(--bad) 50%, var(--line)); }
+.flash.warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
 .empty { text-align: center; padding: 40px 20px; border: 1px dashed var(--control-line); border-radius: var(--radius); color: var(--muted); }
 .empty p { max-width: 520px; margin: 0 auto 14px; }
 .copygrid { display: grid; gap: 8px; margin: 14px 0; }
@@ -231,8 +237,12 @@ details.more[open] summary { margin-bottom: 8px; }
 .dz-item { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .dz-item:last-child { border-bottom: 0; }
 .dz-item p { margin: 0; color: var(--muted); }
-.actionlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
-.actionlist button { width: 100%; justify-content: flex-start; }
+.actionrow { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.actionrow:last-child { border-bottom: 0; padding-bottom: 0; }
+.actionrow:first-child { padding-top: 0; }
+.actionrow h3 { margin: 0 0 2px; }
+.actionrow p { margin: 0; color: var(--muted); font-size: 0.93rem; }
+.actionrow form { margin: 0; flex: none; }
 .log { background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; font-family: var(--mono); font-size: 0.84rem; max-height: 420px; overflow: auto; white-space: pre-wrap; margin: 0; }
 .codes { font-family: var(--mono); font-size: 1.05rem; background: var(--sunken); border: 1px solid var(--line); padding: 14px; border-radius: var(--radius); columns: 2; }
 
@@ -249,7 +259,7 @@ meter:-moz-meter-optimum::-moz-meter-bar { background: var(--text); }
 meter:-moz-meter-sub-optimum::-moz-meter-bar { background: var(--warn-fill); }
 meter:-moz-meter-sub-sub-optimum::-moz-meter-bar { background: var(--bad); }
 progress::-webkit-progress-bar { background: var(--sunken); }
-progress::-webkit-progress-value { background: var(--run); transition: width 0.4s ease; }
+progress::-webkit-progress-value { background: var(--run); transition: width 0.4s var(--ease-out); }
 progress::-moz-progress-bar { background: var(--run); }
 .jobhead { display: flex; gap: 14px; align-items: center; margin-bottom: 8px; }
 .jobhead progress { flex: 1; height: 10px; }
@@ -327,3 +337,11 @@ progress::-moz-progress-bar { background: var(--run); }
 .joblist li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 9px 0; border-bottom: 1px solid var(--line); align-items: center; }
 .joblist li:last-child { border-bottom: 0; }
 .joblist li .small { grid-column: 1 / -1; }
+
+/* Experimental export: thumbnails of projects and stills. */
+img.thumb { width: 96px; height: 54px; object-fit: cover; background: var(--sunken); border: 1px solid var(--line); border-radius: 3px; display: block; }
+.albumhead { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 12px 0 8px; }
+.albumhead h3 { margin: 0; }
+.stills { list-style: none; margin: 0 0 12px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.still img, .still .nothumb { width: 100%; aspect-ratio: 16 / 9; height: auto; object-fit: cover; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius); display: flex; align-items: center; justify-content: center; }
+.stillmeta { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-top: 4px; font-size: 0.9rem; }

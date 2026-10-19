@@ -35,7 +35,7 @@
     <p class="hint">La restauración de prueba carga el respaldo en una base temporal y compara tablas y filas con el manifiesto.</p>
     <div class="actions">
       {{if $p.Can "backup.verify"}}<form method="post" action="/respaldos/{{$b.ID}}/verificar">{{template "csrf" $.CSRF}}<button type="submit" class="ghost">Restauración de prueba</button></form>{{end}}
-      {{if $p.Can "backup.pin"}}<form method="post" action="/respaldos/{{$b.ID}}/fijar">{{template "csrf" $.CSRF}}<input type="hidden" name="pin" value="{{if $b.Pinned}}0{{else}}1{{end}}"><button type="submit" class="ghost">{{if $b.Pinned}}Soltar{{else}}Fijar (no borrar){{end}}</button></form>{{end}}
+      {{if $p.Can "backup.pin"}}<form method="post" action="/respaldos/{{$b.ID}}/fijar">{{template "csrf" $.CSRF}}<input type="hidden" name="pin" value="{{if $b.Pinned}}0{{else}}1{{end}}"><button type="submit" class="ghost">{{if $b.Pinned}}Dejar de fijar{{else}}Fijar (no borrar){{end}}</button></form>{{end}}
       {{if $p.Can "library.delete"}}<form method="post" action="/respaldos/{{$b.ID}}/borrar" data-confirm="El archivo se borra del volumen. ¿Continuar?">{{template "csrf" $.CSRF}}<button type="submit" class="ghost danger">Borrar</button></form>{{end}}
     </div>
     {{else}}<p class="muted">El respaldo no está disponible.</p>{{end}}
@@ -44,7 +44,7 @@
 {{with .Data.M}}
 <section class="card">
   <details class="more"><summary>Conteo de filas por tabla ({{len .RowCounts}} tablas{{if not .CountsExact}}, estimado{{end}})</summary>
-    <table class="table compact"><tbody>{{range $t, $n := .RowCounts}}<tr><td class="mono small">{{$t}}</td><td>{{$n}}</td></tr>{{end}}</tbody></table>
+    <div class="scroll-x"><table class="table compact"><tbody>{{range $t, $n := .RowCounts}}<tr><td class="mono small">{{$t}}</td><td>{{$n}}</td></tr>{{end}}</tbody></table></div>
   </details>
 </section>
 {{end}}

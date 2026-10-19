@@ -16,7 +16,7 @@ como orden de magnitud relativo.
 | **0.6** Interfaz y API | Todas las pantallas 1.0, OpenAPI completo, SSE, webhooks | L |
 | **0.9** Beta | Endurecimiento, pruebas de fallos, ZAP, documentación de usuario, runbooks, ventana de actualización de Resolve, kit y recuperación de instalación | M |
 | **1.0** MVP | Guion de aceptación AC-01 a AC-11 aprobado | S |
-| **1.1** Equipos | Credenciales por persona, portal de colaborador, reglas de red en la interfaz, SMTP y ntfy, restic, hooks en contenedor aparte, migración desde otro servidor, `.resolvedbkey` si PoC-05 pasa, E2 plantillas | L |
+| **1.1** Equipos | Credenciales por persona, portal de colaborador, reglas de red en la interfaz, SMTP y ntfy, restic, hooks en contenedor aparte, migración desde otro servidor, `.resolvedbkey` si PoC-05 pasa, E2 plantillas, exportación experimental de proyectos y grados (ADR 0019) | L |
 | **1.2** Operación | Métricas Prometheus, capacidad de volúmenes de medios, `sqsolve-check` para estaciones, mantenimiento programable en la interfaz | M |
 | **2.0** Avanzado | PITR con pgBackRest, OIDC, WebAuthn, asistente de versión mayor de PostgreSQL, modo servidor externo | L |
 

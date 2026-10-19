@@ -40,7 +40,8 @@ navegador y protege los proyectos con respaldos verificados, sin depender de nad
 ### Fuera
 
 - Almacenar, servir o transcodificar medios; generar proxies.
-- Leer o modificar el contenido de los proyectos (bins, timelines). Ver ADR 0007.
+- Leer o modificar el contenido de los proyectos (bins, timelines). Ver ADR 0007, salvo la
+  lectura acotada para exportar `.drp` y `.drx` (ADR 0019, experimental).
 - Reemplazar Blackmagic Cloud o hospedar bibliotecas para terceros como servicio.
 - Proveer la VPN (se documenta cómo usar una existente).
 - Clientes de escritorio obligatorios: todo se hace desde el navegador y desde Resolve.

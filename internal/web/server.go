@@ -453,6 +453,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /bibliotecas/{id}/revertir", s.dangerous(auth.ActRestoreRevert, s.libraryRevertForm))
 	m.HandleFunc("POST /bibliotecas/{id}/revertir", s.dangerous(auth.ActRestoreRevert, s.libraryRevertSubmit))
 	m.HandleFunc("POST /bibliotecas/{id}/recrear", s.page(auth.ActRestoreReplace, s.libraryRecreate))
+	m.HandleFunc("GET /bibliotecas/{id}/exportar", s.page(auth.ActView, s.libraryExport))
+	m.HandleFunc("GET /bibliotecas/{id}/exportar/proyectos/{pid}", s.page(auth.ActLibraryExport, s.libraryExportProject))
+	m.HandleFunc("GET /bibliotecas/{id}/exportar/stills/{sid}", s.page(auth.ActLibraryExport, s.libraryExportStill))
+	m.HandleFunc("GET /bibliotecas/{id}/exportar/albumes/{vid}", s.page(auth.ActLibraryExport, s.libraryExportAlbum))
 
 	m.HandleFunc("GET /respaldos", s.page(auth.ActView, s.backups))
 	m.HandleFunc("GET /respaldos/importar", s.page(auth.ActBackupImport, s.importForm))

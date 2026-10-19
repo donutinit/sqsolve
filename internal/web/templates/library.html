@@ -1,31 +1,11 @@
 {{define "content"}}
 {{$l := .Data.L}}{{$id := $l.ID}}{{$csrf := .CSRF}}{{$p := .P}}
-<div class="pagehead" data-state="{{$l.State}}">
-  <div>
-    <h1>{{$l.DisplayName}}</h1>
-    <p class="muted"><span class="mono">{{$l.Slug}}</span> · {{template "librarystate" $l}}{{if $l.ResolveVersion}} · Resolve {{$l.ResolveVersion}}{{end}}</p>
-  </div>
-  <div class="actions">
-    {{if and ($p.Can "backup.create") (or (eq $l.State "active") (eq $l.State "maintenance"))}}
-    <form method="post" action="/bibliotecas/{{$id}}/respaldar">{{template "csrf" $csrf}}<button type="submit">Respaldar ahora</button></form>
-    {{end}}
-  </div>
-</div>
-{{range .Data.Running}}<div class="flash info" role="status">En curso: <a href="/tareas/{{.ID}}">{{.Title}}</a> ({{.State.Label}}{{if eq .State "running"}}, {{.Progress}} %{{end}})</div>{{end}}
-
-<nav class="tabs" aria-label="Secciones de la biblioteca">
-  <a href="?tab=conexion" {{if eq .Data.Tab "conexion"}}aria-current="page"{{end}}>Conexión</a>
-  <a href="?tab=respaldos" {{if eq .Data.Tab "respaldos"}}aria-current="page"{{end}}>Respaldos</a>
-  <a href="?tab=programacion" {{if eq .Data.Tab "programacion"}}aria-current="page"{{end}}>Programación</a>
-  <a href="?tab=accesos" {{if eq .Data.Tab "accesos"}}aria-current="page"{{end}}>Accesos</a>
-  <a href="?tab=actividad" {{if eq .Data.Tab "actividad"}}aria-current="page"{{end}}>Actividad</a>
-  <a href="?tab=ajustes" {{if eq .Data.Tab "ajustes"}}aria-current="page"{{end}}>Ajustes</a>
-  <a href="?tab=peligro" {{if eq .Data.Tab "peligro"}}aria-current="page"{{end}} class="dangertab">Zona de peligro</a>
-</nav>
+{{template "libhead" .}}
+{{template "libtabs" .}}
 
 {{if eq .Data.Tab "conexion"}}
   {{if eq $l.State "provisioning"}}
-    <section class="card"><p>Preparando la biblioteca. Esta página se actualiza sola.</p><div data-autorefresh="3"></div></section>
+    <section class="card"><p>Preparando la biblioteca. Esta página se actualiza sola.</p><div data-autorefresh="3" data-watch="/api/v1/libraries/{{$id}}" data-watch-state="{{$l.State}}"></div></section>
   {{else if eq $l.State "awaiting_init"}}
     {{with .Data.Misnamed}}<div class="flash warn" role="status">Resolve creó {{range $i, $d := .}}{{if $i}}, {{end}}<code>{{$d}}</code>{{end}}, pero la biblioteca debe llamarse exactamente <code>{{$l.Slug}}</code>. En Resolve quita esa biblioteca de la lista y vuelve a crearla con el nombre correcto. sqsolve no borra la base con el nombre equivocado por su cuenta.</div>{{end}}
     <section class="card emphasis">
@@ -45,7 +25,7 @@
         </div>
       </div>
       <p class="hint">Los nombres exactos de los campos cambian entre versiones de Resolve. Las demás estaciones usarán "Connect" con los mismos datos cuando la biblioteca esté activa. Esta página detecta la inicialización sola.</p>
-      <div data-autorefresh="5"></div>
+      <div data-autorefresh="5" data-watch="/api/v1/libraries/{{$id}}" data-watch-state="{{$l.State}}"></div>
     </section>
   {{else if eq $l.State "init_expired"}}
     <section class="card"><h2>Venció la ventana de inicialización</h2><p>Nadie creó la biblioteca desde Resolve a tiempo. Puedes abrir otra ventana.</p>
@@ -95,9 +75,9 @@
     {{with .Data.Sessions}}
     <section class="card">
       <h2>Conectadas ahora</h2>
-      <table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Conectada</th></tr></thead><tbody>
+      <div class="scroll-x"><table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Conectada</th></tr></thead><tbody>
       {{range .}}<tr><td class="mono">{{.User}}</td><td class="mono">{{.ClientAddr}}</td><td>{{.Application}}</td><td>{{ago .Started}}</td></tr>{{end}}
-      </tbody></table>
+      </tbody></table></div>
     </section>
     {{end}}
   {{end}}
@@ -187,7 +167,7 @@
 <section class="card">
   <h2>Credenciales</h2>
   <p class="hint">Resolve solo distingue quién se conecta, no qué hace cada quien dentro de la biblioteca. Para separar clientes o producciones usa bibliotecas distintas.</p>
-  <table class="table compact"><thead><tr><th>Usuario en Resolve</th><th>Para</th><th>Creada</th><th>Contraseña cambiada</th><th></th></tr></thead><tbody>
+  <div class="scroll-x"><table class="table compact"><thead><tr><th>Usuario en Resolve</th><th>Para</th><th>Creada</th><th>Contraseña cambiada</th><th></th></tr></thead><tbody>
   {{range .Data.Creds}}
     <tr class="{{if .RevokedAt}}revoked{{end}}">
       <td class="mono">{{.PGRole}}</td>
@@ -203,7 +183,7 @@
       </td>
     </tr>
   {{end}}
-  </tbody></table>
+  </tbody></table></div>
   {{if and ($p.Can "library.credentials") (or (eq $l.State "active") (eq $l.State "maintenance"))}}
   <form method="post" action="/bibliotecas/{{$id}}/personas" class="form inline">
     {{template "csrf" $csrf}}
@@ -231,10 +211,10 @@
 <section class="card">
   <h2>Sesiones activas</h2>
   {{if .Data.Sessions}}
-  <table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Conectada</th><th>Estado</th><th></th></tr></thead><tbody>
+  <div class="scroll-x"><table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Conectada</th><th>Estado</th><th></th></tr></thead><tbody>
   {{range .Data.Sessions}}<tr><td class="mono">{{.User}}</td><td class="mono">{{.ClientAddr}}</td><td>{{.Application}}</td><td>{{ago .Started}}</td><td>{{.State}}</td>
     <td>{{if $p.Can "library.session.terminate"}}<form method="post" action="/bibliotecas/{{$id}}/sesiones/{{.PID}}/cerrar" data-confirm="Resolve perderá esta conexión. ¿Cerrarla?">{{template "csrf" $csrf}}<button class="ghost small danger" type="submit">Cerrar</button></form>{{end}}</td></tr>{{end}}
-  </tbody></table>
+  </tbody></table></div>
   {{else}}<p class="muted">Nadie conectado.</p>{{end}}
 </section>
 <section class="card"><h2>Tareas</h2>{{if .Data.Jobs}}{{template "jobtable" .Data.Jobs}}{{else}}<p class="muted">Sin tareas.</p>{{end}}</section>

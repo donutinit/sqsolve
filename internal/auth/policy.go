@@ -57,18 +57,19 @@ const (
 	ActJobCancel          Action = "job.cancel"
 	ActDiagnostics        Action = "diagnostics"
 	ActTokensOwn          Action = "tokens.own"
+	ActLibraryExport      Action = "library.export"
 )
 
 // AllActions lists every action (for exhaustive tests).
 var AllActions = []Action{ActView, ActLibraryCreate, ActLibraryEdit, ActLibraryDelete, ActLibraryMaintenance, ActLibraryReveal,
 	ActLibraryCredentials, ActSessionTerminate, ActBackupCreate, ActBackupVerify, ActBackupDownload, ActBackupImport, ActBackupPin,
 	ActRestoreNew, ActRestoreReplace, ActRestoreRevert, ActPolicyEdit, ActUsersManage, ActSettingsEdit, ActAuditView, ActNotifyManage,
-	ActJobCancel, ActDiagnostics, ActTokensOwn}
+	ActJobCancel, ActDiagnostics, ActTokensOwn, ActLibraryExport}
 
 var viewerActions = []Action{ActView, ActTokensOwn}
 
 var operatorActions = append(append([]Action{}, viewerActions...),
-	ActBackupCreate, ActBackupVerify, ActBackupDownload, ActRestoreNew, ActAuditView, ActJobCancel)
+	ActBackupCreate, ActBackupVerify, ActBackupDownload, ActRestoreNew, ActAuditView, ActJobCancel, ActLibraryExport)
 
 // RoleAllows is the single source of truth for role permissions.
 func RoleAllows(r Role, a Action) bool {
@@ -88,6 +89,7 @@ var Scopes = map[string][]Action{
 	"read":    {ActView},
 	"backup":  {ActView, ActBackupCreate, ActBackupVerify},
 	"restore": {ActView, ActBackupDownload, ActRestoreNew, ActRestoreReplace, ActRestoreRevert},
+	"export":  {ActView, ActLibraryExport},
 	"admin":   AllActions,
 }
 

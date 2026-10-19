@@ -3,6 +3,7 @@
 package web
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -207,6 +208,10 @@ func funcs(a *app.App) template.FuncMap {
 			}
 			return m
 		},
+		"jpeg": func(b []byte) template.URL {
+			return template.URL("data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(b))
+		},
+		"scopelabel": scopeLabel,
 		"firstline": func(s string) string {
 			if i := strings.IndexByte(s, '\n'); i >= 0 {
 				return s[:i]
@@ -295,4 +300,21 @@ func stepLabel(name string) string {
 		return "Respaldar " + strings.TrimPrefix(name, "respaldo_")
 	}
 	return name
+}
+
+// scopeLabel names an API token scope the way the panel describes roles.
+func scopeLabel(s string) string {
+	switch s {
+	case "read":
+		return "Solo lectura"
+	case "backup":
+		return "Respaldar y verificar"
+	case "restore":
+		return "Restaurar y descargar respaldos"
+	case "export":
+		return "Exportar proyectos y grados (experimental)"
+	case "admin":
+		return "Todo lo que permite tu rol"
+	}
+	return s
 }

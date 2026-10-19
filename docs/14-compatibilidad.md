@@ -18,7 +18,7 @@ Blackmagic declara compatible a nivel de biblioteca.
 
 | Versión | Nivel | Base de la decisión |
 |---|---|---|
-| 21.1.x | Soportado (pendiente de PoC-01, 02, 04) | Blackmagic declara bibliotecas en PostgreSQL 13+ y trae 18 [01 §4] |
+| 21.1.x | Soportado (pendiente de PoC-01, 02, 04) | Blackmagic declara bibliotecas en PostgreSQL 13+ y trae 18 [01 §4]. Exportación experimental verificada con 21.1.1 el 2026-10-19 (`22` §6) |
 | 21.0.x | Esperado | Misma familia; se recomienda actualizar a 21.1.x |
 | 20.3.2 | Soportado si PoC-02 pasa con PostgreSQL 18 | Bibliotecas compatibles con 21 según Blackmagic [01 §6] |
 | 19.x, 18.x | Esperado como máximo, sin pruebas | Usaban PostgreSQL 13; sin garantía con 18 |
@@ -47,7 +47,8 @@ Blackmagic declara compatible a nivel de biblioteca.
 1. **Versión declarada** por el administrador en el detalle de la biblioteca (texto libre
    validado, por ejemplo `21.1.1`).
 2. **Huella de esquema** (`07` §9) comparada con el registro de huellas conocidas incluido en cada
-   versión de sqsolve.
+   versión de sqsolve (`internal/compat/fingerprints.json`), que indica además qué exportaciones
+   se verificaron con esa huella (`verified`).
 3. Eventos `library.schema_changed` con huella anterior y nueva.
 
 No se lee ninguna tabla de versión interna de Resolve: no está documentada.
@@ -67,7 +68,9 @@ versión de Resolve; las beta se prueban solo si hay tiempo y se marcan como tal
 5. Restaurar en Resolve un respaldo de sqsolve y en sqsolve un respaldo de Resolve (PoC-04).
 6. Colaboración entre dos estaciones.
 7. Si el módulo de llaves está activo: importar una llave generada.
-8. Actualizar la matriz, el registro de huellas y las notas de versión de sqsolve.
+8. Si la exportación experimental está activa: correr el kit de `22` §6 (exportar con sqsolve y
+   con Resolve, comparar, importar) y registrar la huella con lo verificado.
+9. Actualizar la matriz, el registro de huellas y las notas de versión de sqsolve.
 
 ## 5. Ventana de actualización de Resolve
 

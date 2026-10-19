@@ -19,8 +19,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/donutinit/sqsolve/internal/api"
 	"github.com/donutinit/sqsolve/internal/app"
+	"github.com/donutinit/sqsolve/internal/audit"
 	"github.com/donutinit/sqsolve/internal/config"
 	"github.com/donutinit/sqsolve/internal/core"
 	"github.com/donutinit/sqsolve/internal/jobs"
@@ -218,6 +221,30 @@ func TestPanelEndToEnd(t *testing.T) {
 	for _, tab := range []string{"conexion", "respaldos", "programacion", "accesos", "actividad", "ajustes", "peligro"} {
 		b.page(libPath + "?tab=" + tab)
 	}
+
+	// Experimental export: off by default; on, it refuses a library whose
+	// tables are not Resolve's, and every error carries its code.
+	if pg := b.page(libPath + "/exportar"); !strings.Contains(pg, "SQS-E002") || !strings.Contains(pg, "Experimental") {
+		t.Fatalf("export tab with the feature off:\n%s", pg[:min(len(pg), 600)])
+	}
+	if st, _, _ := b.do("GET", libPath+"/exportar/proyectos/00000000-0000-0000-0000-000000000000", nil); st != http.StatusConflict {
+		t.Fatalf("download with the feature off: %d", st)
+	}
+	expSettings := a.Svc.Settings(ctx)
+	expSettings.ExperimentalExports = true
+	if err := a.Svc.SaveSettings(ctx, audit.System, expSettings); err != nil {
+		t.Fatal(err)
+	}
+	if pg := b.page(libPath + "/exportar"); !strings.Contains(pg, "SQS-E001") || !strings.Contains(pg, "SM_Project.ClipInfoSeed") {
+		i := strings.Index(pg, "SQS-E")
+		t.Fatalf("export tab without Resolve's schema: %s", pg[max(0, i-100):min(len(pg), i+400)])
+	}
+	if st, _, body := b.do("GET", libPath+"/exportar/stills/zzz", nil); st != http.StatusUnprocessableEntity || !strings.Contains(body, "SQS-E001") {
+		t.Fatalf("download without Resolve's schema: %d", st)
+	}
+	if !strings.Contains(b.page("/ajustes"), `name="experimental_exports" checked`) {
+		t.Fatal("experimental export setting not shown as enabled")
+	}
 	backupsPage := b.page("/respaldos")
 	bid := regexp.MustCompile(`href="/respaldos/([0-9A-Z]{26})"`).FindStringSubmatch(backupsPage)
 	if bid == nil {
@@ -283,7 +310,15 @@ func TestPanelEndToEnd(t *testing.T) {
 	}
 	_, _, reveal2 := b.do("POST", loc2+"/contrasena/ver", url.Values{"csrf": {tok}})
 	pw2 := regexp.MustCompile(`id="r-pass">([^<]+)<`).FindStringSubmatch(reveal2)
-	conn2, err := c.ConnectTCP(ctx, "comercial", secrets.New(pw2[1]), "postgres")
+	// pg_hba.conf was just reloaded for the new role; the postmaster applies
+	// the reload asynchronously, so give it a moment under load.
+	var conn2 *pgx.Conn
+	for i := 0; i < 30; i++ {
+		if conn2, err = c.ConnectTCP(ctx, "comercial", secrets.New(pw2[1]), "postgres"); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,6 +355,17 @@ func TestPanelEndToEnd(t *testing.T) {
 		var out map[string]any
 		json.NewDecoder(resp.Body).Decode(&out)
 		return resp.StatusCode, out
+	}
+	if st, out := apiGet("/api/v1/libraries/" + libID + "/projects"); st != http.StatusUnprocessableEntity || out["code"] != "SQS-E001" {
+		t.Fatalf("projects without Resolve's schema: %d %v", st, out)
+	}
+	expSettings.ExperimentalExports = false
+	a.Svc.SaveSettings(ctx, audit.System, expSettings)
+	if st, out := apiGet("/api/v1/libraries/" + libID + "/grades"); st != http.StatusConflict || out["code"] != "SQS-E002" {
+		t.Fatalf("grades with the feature off: %d %v", st, out)
+	}
+	if st, out := apiGet("/api/v1/libraries/" + libID + "/projects/x/export"); st != http.StatusForbidden || out["code"] != "SQS-A030" {
+		t.Fatalf("read token exported: %d %v", st, out)
 	}
 	if st, out := apiGet("/api/v1/libraries"); st != 200 || len(out["items"].([]any)) != 3 {
 		t.Fatalf("api libraries: %d %v", st, out)

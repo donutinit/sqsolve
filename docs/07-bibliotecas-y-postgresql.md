@@ -10,6 +10,9 @@ Una **biblioteca de sqsolve** es la suma de:
 - reglas de red, políticas de respaldo y retención;
 - metadatos en SQLite: nombre visible, estado, huella, versión declarada, notas.
 
+El contenido sigue siendo opaco; la única lectura de tablas de Resolve es la acotada de ADR 0019
+para exportar `.drp` y `.drx` (`22-exportacion-de-proyectos-y-grados.md`).
+
 ## 2. Nombres e identificadores
 
 | Elemento | Regla | Ejemplo |
@@ -192,8 +195,10 @@ terminar una restauración. Un cambio genera el evento `library.schema_changed` 
 anterior y la nueva.
 
 Registro de huellas conocidas: `internal/compat/fingerprints.json` asocia huellas a versiones de
-Resolve, alimentado por las PoC y por reportes de usuarios (solo el hash y la versión; nunca el
-esquema). Una huella desconocida no impide nada: se muestra "versión no identificada".
+Resolve e indica además qué exportaciones se verificaron con esa versión (`verified`, ver `22`
+§6), alimentado por las PoC, el kit de verificación y reportes de usuarios (solo el hash, la
+versión y lo verificado; nunca el esquema). Una huella desconocida no impide nada: se muestra
+"versión no identificada".
 
 ## 10. Configuración de PostgreSQL
 

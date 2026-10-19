@@ -36,7 +36,8 @@ con Resolve real**: no lo extiendas ni lo des por bueno hasta que la PoC lo conf
 
 - Las bases de datos de Resolve son una caja negra (ADR 0007): sqsolve no lee ni escribe
   tablas de Resolve salvo las consultas de catálogo y conteos descritos en
-  `docs/07-bibliotecas-y-postgresql.md`.
+  `docs/07-bibliotecas-y-postgresql.md`. La única excepción es la lectura acotada de
+  `internal/drp` para exportar .drp/.drx (ADR 0019), que no se extiende sin otro ADR.
 - SQL siempre con parámetros. Los identificadores (nombres de base y de rol) pasan por la
   validación por expresión regular y por `pgx.Identifier.Sanitize`. Nunca concatenar texto
   del usuario en SQL.

@@ -126,6 +126,7 @@ func (s *Server) settingsGeneral(w http.ResponseWriter, r *http.Request) {
 	st.MaintenanceDBAccess = r.FormValue("maintenance_db") == "on"
 	st.RequireTLS = r.FormValue("require_tls") == "on"
 	st.TOTPRequiredAdmins = r.FormValue("totp_required") == "on"
+	st.ExperimentalExports = r.FormValue("experimental_exports") == "on"
 	st.DefaultPolicy.Cron = strings.TrimSpace(r.FormValue("default_cron"))
 	st.DefaultPolicy.KeepLast = atoi(r.FormValue("keep_last"), st.DefaultPolicy.KeepLast)
 	st.DefaultPolicy.KeepDaily = atoi(r.FormValue("keep_daily"), st.DefaultPolicy.KeepDaily)

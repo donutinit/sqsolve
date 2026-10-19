@@ -1,0 +1,9 @@
+{
+  "sha256:2bf9e02acd6f8389b240fddf0cb312b8a7b6a72dff48d8101609e6a80f150fee": {
+    "resolve": "21.1.1",
+    "app_version": "21.1.1.0010",
+    "project_version": 17,
+    "verified": ["drx", "drp"],
+    "checked": "2026-10-19"
+  }
+}

@@ -31,9 +31,9 @@
 {{if $s.Databases}}
 <section class="card">
   <h2>Bases de datos</h2>
-  <table class="table compact"><thead><tr><th>Base</th><th>Dueño</th><th>Tamaño</th><th>Sesiones</th><th>Acceso</th></tr></thead><tbody>
+  <div class="scroll-x"><table class="table compact"><thead><tr><th>Base</th><th>Dueño</th><th>Tamaño</th><th>Sesiones</th><th>Acceso</th></tr></thead><tbody>
   {{range $s.Databases}}<tr><td class="mono">{{.Name}}</td><td class="mono">{{.Owner}}</td><td>{{bytes .SizeBytes}}</td><td>{{.ActiveSessions}}</td><td>{{if .AllowConn}}permitido{{else}}bloqueado{{end}}{{if .CollationStale}} {{template "badge" (dict "tone" "warn" "label" "Colación cambió")}}{{end}}</td></tr>{{end}}
-  </tbody></table>
+  </tbody></table></div>
 </section>
 {{end}}
 <div class="grid2">

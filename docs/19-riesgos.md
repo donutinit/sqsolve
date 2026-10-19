@@ -21,6 +21,7 @@ Probabilidad (P) e impacto (I): A alto, M medio, B bajo. Se revisa al cerrar cad
 | T-13 | Colación cambia con una imagen nueva | B | A | Proveedor `builtin` (PoC-01 paso 7) e indicador de versión de colación | Indicador de colación |
 | T-14 | La colaboración falla por la red de las estaciones y se culpa al servidor | A | B | Guía para editores con puertos; PoC-07; herramienta `sqsolve-check` (1.2) | Reportes de usuarios |
 | T-15 | Cambio en la imagen oficial de PostgreSQL (rutas, entrada) | B | M | Digest fijado; pruebas de integración contra cada digest nuevo | Trabajo semanal de digest |
+| T-16 | Una versión nueva de Resolve cambia el formato `.drp` o `.drx` y la exportación produce archivos que importan mal | M | M | Apagada por defecto; contrato de esquema que la apaga sola (`SQS-E001`); guardas `SQS-E004`; kit de verificación por versión (`22` §6); aviso "sin garantía" | Huella nueva no registrada |
 
 ## 2. Seguridad
 

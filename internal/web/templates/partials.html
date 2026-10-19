@@ -63,3 +63,27 @@
     <span class="muted small"><time datetime="{{iso .CreatedAt}}" title="{{dt .CreatedAt}}">{{ago .CreatedAt}}</time>{{if dur .Duration}} · {{dur .Duration}}{{end}} · {{.CreatedBy.Label}}</span>
   </li>{{end}}
 </ul>{{end}}
+
+{{define "libhead"}}<div class="pagehead" data-state="{{.Data.L.State}}">
+  <div>
+    <h1>{{.Data.L.DisplayName}}</h1>
+    <p class="muted"><span class="mono">{{.Data.L.Slug}}</span> · {{template "librarystate" .Data.L}}{{if .Data.L.ResolveVersion}} · Resolve {{.Data.L.ResolveVersion}}{{end}}</p>
+  </div>
+  <div class="actions">
+    {{if and (.P.Can "backup.create") (or (eq .Data.L.State "active") (eq .Data.L.State "maintenance"))}}
+    <form method="post" action="/bibliotecas/{{.Data.L.ID}}/respaldar">{{template "csrf" .CSRF}}<button type="submit">Respaldar ahora</button></form>
+    {{end}}
+  </div>
+</div>
+{{range .Data.Running}}<div class="flash info" role="status">En curso: <a href="/tareas/{{.ID}}">{{.Title}}</a> ({{.State.Label}}{{if eq .State "running"}}, {{.Progress}} %{{end}})</div>{{end}}{{end}}
+
+{{define "libtabs"}}<nav class="tabs" aria-label="Secciones de la biblioteca">
+  <a href="/bibliotecas/{{.Data.L.ID}}?tab=conexion" {{if eq .Data.Tab "conexion"}}aria-current="page"{{end}}>Conexión</a>
+  <a href="/bibliotecas/{{.Data.L.ID}}?tab=respaldos" {{if eq .Data.Tab "respaldos"}}aria-current="page"{{end}}>Respaldos</a>
+  <a href="/bibliotecas/{{.Data.L.ID}}?tab=programacion" {{if eq .Data.Tab "programacion"}}aria-current="page"{{end}}>Programación</a>
+  <a href="/bibliotecas/{{.Data.L.ID}}?tab=accesos" {{if eq .Data.Tab "accesos"}}aria-current="page"{{end}}>Accesos</a>
+  <a href="/bibliotecas/{{.Data.L.ID}}?tab=actividad" {{if eq .Data.Tab "actividad"}}aria-current="page"{{end}}>Actividad</a>
+  <a href="/bibliotecas/{{.Data.L.ID}}/exportar" {{if eq .Data.Tab "exportar"}}aria-current="page"{{end}}>Exportar</a>
+  <a href="/bibliotecas/{{.Data.L.ID}}?tab=ajustes" {{if eq .Data.Tab "ajustes"}}aria-current="page"{{end}}>Ajustes</a>
+  <a href="/bibliotecas/{{.Data.L.ID}}?tab=peligro" {{if eq .Data.Tab "peligro"}}aria-current="page"{{end}} class="dangertab">Zona de peligro</a>
+</nav>{{end}}

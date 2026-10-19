@@ -55,11 +55,27 @@
       b.addEventListener("click", function () { window.print(); });
     });
 
-    // Pages that wait for something (library initialization).
+    // Pages that wait for something (library initialization). With a
+    // data-watch URL the page polls the state and only reloads when it
+    // changes, so copying values is never interrupted.
     var auto = document.querySelector("[data-autorefresh]");
     if (auto) {
       var secs = parseInt(auto.getAttribute("data-autorefresh"), 10) || 5;
-      setTimeout(function () { location.reload(); }, secs * 1000);
+      var watch = auto.getAttribute("data-watch");
+      if (watch && "fetch" in window) {
+        var was = auto.getAttribute("data-watch-state");
+        var poll = function () {
+          fetch(watch, { credentials: "same-origin", headers: { "Accept": "application/json" } })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (j) {
+              if (j && j.state && j.state !== was) location.reload();
+              else setTimeout(poll, secs * 1000);
+            }, function () { setTimeout(poll, secs * 1000); });
+        };
+        setTimeout(poll, secs * 1000);
+      } else {
+        setTimeout(function () { location.reload(); }, secs * 1000);
+      }
     }
 
     // Live job progress.

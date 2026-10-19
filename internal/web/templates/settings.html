@@ -45,6 +45,11 @@
       <label class="check"><input type="checkbox" name="require_tls" {{if $st.RequireTLS}}checked{{end}}> Exigir TLS en las conexiones de Resolve (solo si comprobaste que tu versión de Resolve usa TLS, PoC-06)</label>
       <label class="check"><input type="checkbox" name="totp_required" {{if $st.TOTPRequiredAdmins}}checked{{end}}> Segundo factor obligatorio para administradores</label>
     </fieldset>
+    <fieldset {{if not ($p.Can "settings.edit")}}disabled{{end}}>
+      <legend>Experimental</legend>
+      <label class="check"><input type="checkbox" name="experimental_exports" {{if $st.ExperimentalExports}}checked{{end}}> Exportación de proyectos (.drp) y grados (.drx) desde el panel</label>
+      <p class="hint">Lee tablas de Resolve que Blackmagic no documenta. Sin garantía: comprueba cada archivo importándolo en Resolve. Verificado con Resolve 21.1.1 (ADR 0019).</p>
+    </fieldset>
     {{if $p.Can "settings.edit"}}<div class="actions"><button type="submit">Guardar</button></div>{{end}}
   </form>
 </section>
@@ -66,7 +71,7 @@
 <section class="card">
   <h2>Usuarios del panel</h2>
   <p class="hint">Son cuentas para administrar sqsolve. No son los usuarios con los que Resolve se conecta a las bibliotecas.</p>
-  <table class="table compact cards-on-mobile"><thead><tr><th>Usuario</th><th>Rol</th><th>Segundo factor</th><th>Último acceso</th><th>Cambios</th></tr></thead><tbody>
+  <div class="scroll-x"><table class="table compact cards-on-mobile"><thead><tr><th>Usuario</th><th>Rol</th><th>Segundo factor</th><th>Último acceso</th><th>Cambios</th></tr></thead><tbody>
   {{range .Data.Users}}
   <tr>
     <td data-label="Usuario"><strong>{{.Username}}</strong>{{if .DisplayName}}<br><span class="muted small">{{.DisplayName}}</span>{{end}}{{if .DisabledAt}} {{template "badge" (dict "tone" "off" "label" "Desactivado")}}{{end}}</td>
@@ -91,7 +96,7 @@
     </td>
   </tr>
   {{end}}
-  </tbody></table>
+  </tbody></table></div>
 </section>
 <section class="card narrow">
   <h2>Agregar usuario</h2>
@@ -112,7 +117,7 @@
 <section class="card">
   <h2>Canales</h2>
   {{if .Data.Channels}}
-  <table class="table compact cards-on-mobile"><thead><tr><th>Nombre</th><th>Tipo</th><th>Severidad mínima</th><th>Eventos</th><th>Último envío</th><th></th></tr></thead><tbody>
+  <div class="scroll-x"><table class="table compact cards-on-mobile"><thead><tr><th>Nombre</th><th>Tipo</th><th>Severidad mínima</th><th>Eventos</th><th>Último envío</th><th></th></tr></thead><tbody>
   {{range .Data.Channels}}
   <tr>
     <td data-label="Nombre">{{.Name}}{{if not .Enabled}} {{template "badge" (dict "tone" "off" "label" "Pausado")}}{{end}}</td>
@@ -129,7 +134,7 @@
     </td>
   </tr>
   {{end}}
-  </tbody></table>
+  </tbody></table></div>
   {{else}}<p class="muted">Sin canales. sqsolve no envía nada fuera del servidor hasta que agregues uno.</p>{{end}}
 </section>
 {{if $p.Can "notify.manage"}}
@@ -182,15 +187,20 @@
   <section class="card">
     <h2>Tareas manuales</h2>
     {{if $p.Can "settings.edit"}}
-    <ul class="actionlist">
-      <li><form method="post" action="/ajustes/mantenimiento/verificar">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Verificar ahora el último respaldo de cada biblioteca</button></form></li>
-      <li><form method="post" action="/ajustes/mantenimiento/retencion">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Aplicar la retención ahora</button></form></li>
-      <li><form method="post" action="/ajustes/mantenimiento/optimizar">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Optimizar bibliotecas (VACUUM ANALYZE)</button></form></li>
-      <li><form method="post" action="/ajustes/mantenimiento/control">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Respaldar el plano de control</button></form></li>
-      <li><form method="post" action="/ajustes/mantenimiento/revisar">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Revisar catálogo contra archivos</button></form></li>
-      <li><form method="post" action="/ajustes/mantenimiento/catalogo">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Reconstruir catálogo desde el volumen</button></form></li>
-      <li><form method="post" action="/ajustes/mantenimiento/hba">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Regenerar pg_hba.conf</button></form></li>
-    </ul>
+    <div class="actionrow"><div><h3>Verificar los últimos respaldos</h3><p>Restauración de prueba del respaldo más reciente de cada biblioteca.</p></div>
+      <form method="post" action="/ajustes/mantenimiento/verificar">{{template "csrf" .CSRF}}<button type="submit" class="ghost small">Ejecutar</button></form></div>
+    <div class="actionrow"><div><h3>Aplicar la retención</h3><p>Borra los respaldos vencidos según la política de cada biblioteca; nunca los fijados.</p></div>
+      <form method="post" action="/ajustes/mantenimiento/retencion">{{template "csrf" .CSRF}}<button type="submit" class="ghost small">Ejecutar</button></form></div>
+    <div class="actionrow"><div><h3>Optimizar bibliotecas</h3><p>VACUUM ANALYZE en cada base, como "Optimize" en Resolve, sin reindexar.</p></div>
+      <form method="post" action="/ajustes/mantenimiento/optimizar">{{template "csrf" .CSRF}}<button type="submit" class="ghost small">Ejecutar</button></form></div>
+    <div class="actionrow"><div><h3>Respaldar el plano de control</h3><p>Copia la base de sqsolve (usuarios, catálogo, auditoría) al volumen de respaldos.</p></div>
+      <form method="post" action="/ajustes/mantenimiento/control">{{template "csrf" .CSRF}}<button type="submit" class="ghost small">Ejecutar</button></form></div>
+    <div class="actionrow"><div><h3>Revisar el catálogo</h3><p>Compara el catálogo con los archivos del volumen y marca los que faltan.</p></div>
+      <form method="post" action="/ajustes/mantenimiento/revisar">{{template "csrf" .CSRF}}<button type="submit" class="ghost small">Ejecutar</button></form></div>
+    <div class="actionrow"><div><h3>Reconstruir el catálogo</h3><p>Vuelve a leer los manifiestos del volumen de respaldos y rehace el catálogo.</p></div>
+      <form method="post" action="/ajustes/mantenimiento/catalogo">{{template "csrf" .CSRF}}<button type="submit" class="ghost small">Ejecutar</button></form></div>
+    <div class="actionrow"><div><h3>Regenerar pg_hba.conf</h3><p>Escribe de nuevo las reglas de acceso de PostgreSQL desde el catálogo y las recarga.</p></div>
+      <form method="post" action="/ajustes/mantenimiento/hba">{{template "csrf" .CSRF}}<button type="submit" class="ghost small">Ejecutar</button></form></div>
     {{end}}
   </section>
   <section class="card">

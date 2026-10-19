@@ -1,0 +1,73 @@
+{{define "content"}}
+{{$l := .Data.L}}{{$id := $l.ID}}
+{{template "libhead" .}}
+{{template "libtabs" .}}
+
+<section class="card emphasis">
+  <div class="cardhead"><h2>Exportar proyectos y grados</h2>{{template "badge" (dict "tone" "warn" "label" "Experimental")}}</div>
+  <p>Produce archivos <code>.drp</code> (proyecto completo, sin stills) y <code>.drx</code> (grado: árbol de nodos y miniatura de un still) leyendo la biblioteca, sin abrir Resolve. Lee tablas que Blackmagic no documenta: <strong>sin garantía</strong>. Comprueba cada archivo importándolo en Resolve antes de confiar en él.</p>
+  {{if .Data.Fingerprint}}
+  <p class="muted small">Esquema de la biblioteca: {{if .Data.KnownOK}}{{template "badge" (dict "tone" "ok" "label" (printf "Verificado con Resolve %s" .Data.Known.Resolve))}}{{else}}{{template "badge" (dict "tone" "warn" "label" "No verificado con Resolve")}} Las tablas coinciden con el modelo, pero nadie comparó archivos de esta versión con los de Resolve.{{end}}</p>
+  {{end}}
+</section>
+
+{{if not .Data.Enabled}}
+<div class="flash info" role="status">{{.Data.Err}}{{if .P.Can "settings.edit"}} <a href="/ajustes">Ir a Ajustes</a>.{{end}}</div>
+{{else if .Data.Err}}
+<div class="flash error" role="alert">{{.Data.Err}}</div>
+{{else}}
+
+<section class="card flush">
+  <div class="cardhead pad"><h2>Proyectos</h2><span class="muted small">{{len .Data.Projects}} en la biblioteca</span></div>
+  <table class="table cards-on-mobile">
+    <thead><tr><th>Miniatura</th><th>Proyecto</th><th>Carpeta</th><th>Modificado</th><th></th></tr></thead>
+    <tbody>
+    {{range .Data.Projects}}
+      <tr>
+        <td data-label="Miniatura">{{if .Thumb}}<img class="thumb" src="{{jpeg .Thumb}}" alt="" width="96" height="54">{{else}}<span class="muted small">Sin miniatura</span>{{end}}</td>
+        <td data-label="Proyecto">{{.Name}}</td>
+        <td data-label="Carpeta" class="mono small">{{if .Path}}{{.Path}}{{else}}<span class="muted">raíz</span>{{end}}</td>
+        <td data-label="Modificado">{{if .Modified.IsZero}}<span class="muted">Por confirmar</span>{{else}}<time datetime="{{iso .Modified}}" title="{{dt .Modified}}">{{ago .Modified}}</time>{{end}}</td>
+        <td data-label="" class="actions">{{if $.Data.CanExport}}<a class="button ghost small" href="/bibliotecas/{{$id}}/exportar/proyectos/{{.ID}}">Descargar .drp</a>{{end}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="5" class="muted">Sin proyectos.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>PowerGrades</h2>
+  {{range .Data.PowerGrades}}
+  <div class="albumhead"><h3>{{if .Name}}{{.Name}}{{else}}<span class="muted">Álbum sin nombre</span>{{end}} <span class="muted small">{{len .Stills}} grados</span></h3>
+    {{if $.Data.CanExport}}<a class="button ghost small" href="/bibliotecas/{{$id}}/exportar/albumes/{{.ViewID}}">Descargar álbum (.zip)</a>{{end}}</div>
+  {{template "stillgrid" (dict "stills" .Stills "id" $id "can" $.Data.CanExport)}}
+  {{else}}
+  <p class="muted">Sin álbumes de PowerGrades.</p>
+  {{end}}
+</section>
+
+<section class="card">
+  <h2>Stills por proyecto</h2>
+  {{range .Data.ProjectAlbums}}
+  <details class="more">
+    <summary>{{.ProjectName}}{{if .Name}} · {{.Name}}{{end}} <span class="muted small">{{len .Stills}} stills</span></summary>
+    {{if $.Data.CanExport}}<p><a class="button ghost small" href="/bibliotecas/{{$id}}/exportar/albumes/{{.ViewID}}">Descargar álbum (.zip)</a></p>{{end}}
+    {{template "stillgrid" (dict "stills" .Stills "id" $id "can" $.Data.CanExport)}}
+  </details>
+  {{else}}
+  <p class="muted">Sin stills en los proyectos.</p>
+  {{end}}
+</section>
+{{end}}
+{{end}}
+
+{{define "stillgrid"}}<ul class="stills">
+  {{range .stills}}<li class="still">
+    {{if .Thumb}}<img src="{{jpeg .Thumb}}" alt="" width="288" height="162">{{else}}<div class="nothumb muted small">Sin miniatura</div>{{end}}
+    <div class="stillmeta"><span class="mono">{{.Label}}</span>{{if .RecTC}} <span class="muted small">{{.RecTC}}</span>{{end}}
+      {{if not .Created.IsZero}}<time class="muted small" datetime="{{iso .Created}}">{{dt .Created}}</time>{{end}}
+      {{if .can}}<a class="small" href="/bibliotecas/{{.id}}/exportar/stills/{{.ID}}">.drx</a>{{end}}</div>
+  </li>{{else}}<li class="muted">Sin stills.</li>{{end}}
+</ul>{{end}}

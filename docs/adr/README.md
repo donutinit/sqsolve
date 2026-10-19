@@ -12,7 +12,7 @@ Formato: contexto, decisión, alternativas, consecuencias. Estados: **Propuesto*
 | [0004](0004-interfaz-servidor.md) | Interfaz renderizada en el servidor con formularios estándar, sin Node ni JavaScript de terceros | Aceptado (actualizado) |
 | [0005](0005-sqlite.md) | Estado del plano de control en SQLite | Aceptado |
 | [0006](0006-postgresql-18.md) | PostgreSQL 18 oficial con colación `builtin` | Aceptado, pendiente de PoC-01 y PoC-02 |
-| [0007](0007-caja-negra.md) | Las bibliotecas de Resolve son una caja negra | Aceptado |
+| [0007](0007-caja-negra.md) | Las bibliotecas de Resolve son una caja negra | Aceptado; acotado por 0019 |
 | [0008](0008-roles.md) | Rol de control sin superusuario y un rol propietario por biblioteca | Aceptado, pendiente de PoC-01 |
 | [0009](0009-respaldos-logicos.md) | Respaldos lógicos por biblioteca con `pg_dump` custom y manifiesto | Aceptado, pendiente de PoC-04 |
 | [0010](0010-restauracion-intercambio.md) | Restaurar siempre en base nueva e intercambiar por renombre | Aceptado, pendiente de PoC-09 |
@@ -24,3 +24,4 @@ Formato: contexto, decisión, alternativas, consecuencias. Estados: **Propuesto*
 | [0016](0016-imagen-base.md) | Imagen de sqsolve basada en la imagen oficial de PostgreSQL | Aceptado |
 | [0017](0017-version-mayor-postgresql.md) | Versiones mayores de PostgreSQL por migración lógica a un clúster nuevo | Aceptado |
 | [0018](0018-tres-volumenes.md) | Tres volúmenes visibles: base de datos, aplicación y respaldos | Aceptado |
+| [0019](0019-exportacion-experimental.md) | Exportación experimental de proyectos (`.drp`) y grados (`.drx`) leyendo un conjunto fijo de tablas | Propuesto |

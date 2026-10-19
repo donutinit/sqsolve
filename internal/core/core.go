@@ -60,6 +60,7 @@ type Settings struct {
 	StaleHours          int            `json:"stale_hours"`
 	ImportMaxMB         int            `json:"import_max_mb"`
 	ExperimentalKeys    bool           `json:"experimental_resolvedbkey"`
+	ExperimentalExports bool           `json:"experimental_exports"`
 	TOTPRequiredAdmins  bool           `json:"totp_required_admins"`
 	InstanceName        string         `json:"instance_name"`
 	Extra               map[string]any `json:"extra,omitempty"`
@@ -137,6 +138,7 @@ func (s *Service) SaveSettings(ctx context.Context, by audit.Actor, st Settings)
 	}
 	s.Audit.Record(ctx, by, "settings.update", "settings", settingsKey, audit.OK, map[string]any{
 		"advertised_host": st.AdvertisedHost, "require_tls": st.RequireTLS, "maintenance_db_access": st.MaintenanceDBAccess,
+		"experimental_exports": st.ExperimentalExports,
 	})
 	if old.RequireTLS != st.RequireTLS || old.MaintenanceDBAccess != st.MaintenanceDBAccess {
 		return s.SyncHBA(ctx)

@@ -27,7 +27,8 @@ internal/library             ciclo de vida, credenciales, sesiones, huella
 internal/backup              respaldo, manifiesto, verificación, catálogo, retención, restauración
 internal/notify              webhook, SMTP, ntfy, reglas, agrupación
 internal/health              estado, indicadores, doctor, diagnóstico
-internal/compat              matriz y huellas conocidas
+internal/compat              huellas conocidas con lo verificado por versión
+internal/drp                 exportación experimental de .drp y .drx desde la biblioteca (ADR 0019)
 internal/api                 handlers JSON v1
 internal/web                 handlers HTML, plantillas, i18n, recursos embebidos
 internal/reconcile           reconciliación al arranque
@@ -467,6 +468,9 @@ internal/clock               reloj inyectable para pruebas
 | SQS-707 | Plantillas locales (E2) | PoC-04 paso 3 | Crear desde plantilla sin pasar por Resolve |
 | SQS-708 | Adopción de bases existentes | SQS-200 | `REASSIGN OWNED` auditado y registro de la base |
 | SQS-610 | Llaves `.resolvedbkey` | PoC-05, revisión J-02 | Llave aceptada por Resolve en Windows, macOS y Linux; desactivada por defecto |
+| SQS-720 | Exportación experimental: modelo y archivos `.drp`/`.drx` | ADR 0019 | 5 de 5 proyectos de `apolo` sin diferencias canónicas contra Resolve; kit documentado (`22` §6) |
+| SQS-721 | Exportación experimental: interfaz, API, permisos y auditoría | SQS-720 | Pestaña Exportar; ajuste apagado por defecto; descargas auditadas; códigos `SQS-E` con prueba |
+| SQS-722 | Registro de huellas verificadas | SQS-720 | `internal/compat` con la huella de 21.1.1 y procedimiento en `14` §4 |
 
 ## 11. Versiones 1.2 y 2.0
 
@@ -493,5 +497,6 @@ internal/clock               reloj inyectable para pruebas
 | 0.4 y 0.5 | SQS-300 a 340 | Implementado (2026-10-18); la restauración vista desde Resolve sin validar (PoC-07, 08) |
 | 0.6 | SQS-400 a 420, 500 a 520 | API, notificaciones e interfaz implementadas (2026-10-18). Pendientes: SQS-400 (OpenAPI), SQS-410 (contrato) y SQS-520 con navegador; hay una prueba de extremo a extremo por HTTP |
 | 0.9 y 1.0 | SQS-600 a 607 | SQS-600, 601 y 602 implementadas (2026-10-18); SQS-603 parcial (`test/scenarios.py` en CI: procesos que mueren, PostgreSQL caído, restaurar con sesiones abiertas); 604 a 607 pendientes |
+| 1.1 (parcial) | SQS-720 a 722 | Implementado (2026-10-19) como ADR 0019 Propuesto; validado contra Resolve 21.1.1 |
 
 Los criterios `[ ]` de cada tarea no se marcaron uno por uno en esta pasada; la tabla resume.

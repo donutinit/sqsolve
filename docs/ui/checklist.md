@@ -7,7 +7,7 @@ cambiada más recientemente. 14 miembros de 29 candidatos en `internal/web` (pla
 fase de patrones de `ui-consistency`.
 
 Miembros: account, activity, backup, backups, dashboard, health, import, job, jobs, libraries,
-library, library_new, restore, settings. No miembros (15): las páginas de una sola tarjeta
+library, library_export, library_new, restore, settings. No miembros (15): las páginas de una sola tarjeta
 `card narrow` sin `pagehead` (confirmaciones, acceso, kit, error, instrucciones); siguen las
 mismas reglas de insignias, avisos, fechas y CSRF.
 
@@ -32,7 +32,15 @@ Es una foto: si esta lista y el código no coinciden, manda el código y se vuel
       el parcial no hace enlaces, con su `span.dot`.
 - [ ] Aviso dentro de la página: `<div class="flash TONO" role="...">`, con `alert` solo para
       `error` y `status` para lo demás, la misma regla del parcial `flash` (nivel 4). 10 avisos
-      en 6 archivos; los 2 que no tenían `role` se corrigieron.
+      en 6 archivos; los 2 que no tenían `role` se corrigieron. Desde el 2026-10-19 el aviso
+      lleva la misma figura que las insignias (`::before` por tono: círculo, rombo, cuadrado,
+      contorno) y borde fino alrededor; se quitó la franja lateral de color.
+- [ ] Tablas anchas: dentro de una tarjeta normal van envueltas en `<div class="scroll-x">`
+      para desplazarse de lado en pantallas angostas (7 tablas el 2026-10-19); las tablas
+      `cards-on-mobile` que son toda la página van en `card flush`, que ya desplaza.
+- [ ] Lista de acciones con explicación: `<div class="actionrow">` con `h3`, un párrafo que
+      dice qué hace y un botón corto ("Ejecutar"); nunca un botón largo que describe la acción
+      y se parte en dos líneas (mantenimiento, 7 acciones, corregido el 2026-10-19).
 - [ ] Vacío: una frase corta con `.muted` que nombra lo que falta ("Sin eventos."), en el
       elemento del contenedor: `p` en una sección o bajo el encabezado (11), `li` en una lista y
       `td colspan` en una tabla (5). Toda lista o tabla tiene su vacío (la auditoría no lo tenía; corregido). El
@@ -60,7 +68,7 @@ Es una foto: si esta lista y el código no coinciden, manda el código y se vuel
       tema oscuro; tres colores literales pasaron a variables el 2026-10-18. Sin estilos en
       línea, que la CSP bloquea: 0 `style=`. El espaciado no tiene base (literales de 1 a
       56 px): reutiliza los ya escritos, sobre todo 8, 10, 12 y 16 px. Tipografía en `rem`:
-      `h1` 1.5rem peso 650, `h2` 1.07rem peso 600, ayuda `.hint` 0.87rem en `--muted`.
+      `h1` 1.5rem peso 650, `h2` 1.15rem peso 600 (1.07rem hasta el 2026-10-19), `h3` 1rem peso 600, ayuda `.hint` 0.87rem en `--muted`. Transiciones con `--ease-out`, nunca `ease` del navegador.
 - [ ] No copiado de `library.html`: sus siete pestañas, la línea de tiempo de 30 días y la
       cuadrícula de datos para copiar (`copy`), que solo tiene ella.
 

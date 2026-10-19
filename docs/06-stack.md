@@ -94,6 +94,9 @@ protocolos sencillos.
 | `modernc.org/sqlite` | BSD-3 | SQLite sin CGO |
 | `golang.org/x/crypto` | BSD-3 | Argon2id, XChaCha20-Poly1305 |
 | `github.com/adhocore/gronx` | MIT | Expresiones cron |
+| `github.com/klauspost/compress` | BSD-3 | Solo su paquete `zstd`, para la exportación experimental de proyectos y grados (ADR 0019) |
+
+La lista cerrada para 1.0 tiene cinco módulos desde el 2026-10-19.
 
 Solo en pruebas: `github.com/testcontainers/testcontainers-go` (MIT), `github.com/chromedp/chromedp`
 (MIT), `github.com/getkin/kin-openapi` (MIT).

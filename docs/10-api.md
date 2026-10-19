@@ -4,8 +4,9 @@
 
 - Base: `https://<servidor>:9432/api/v1`. JSON UTF-8. Contrato en `api/openapi.yaml`
   (OpenAPI 3.1), que se escribe antes que los handlers y se valida en pruebas (SQS-410).
-- Autenticación: `Authorization: Bearer sqs_...` (tokens con alcance) o cookie de sesión más
-  cabecera `X-CSRF-Token` (uso desde el navegador).
+- Autenticación: `Authorization: Bearer sqs_...` (tokens con alcance `read`, `backup`,
+  `restore`, `export` o `admin`) o cookie de sesión más cabecera `X-CSRF-Token` (uso desde el
+  navegador).
 - Errores: RFC 9457 `application/problem+json`:
 
 ```json
@@ -58,6 +59,11 @@
 | `GET/PUT /libraries/{id}/backup-policy` | `read` / `admin` | Programación y retención |
 | `GET /libraries/{id}/backup-policy/preview` | `read` | Próximas ejecuciones y efecto de la retención |
 | `GET /libraries/{id}/backups` | `read` | Catálogo de la biblioteca |
+| `GET /libraries/{id}/projects` | `read` | Proyectos con carpeta y fecha (experimental, `22`) |
+| `GET /libraries/{id}/projects/{pid}/export` | `export` | Descarga del `.drp` (experimental) |
+| `GET /libraries/{id}/grades` | `read` | Álbumes de la galería con sus stills (experimental) |
+| `GET /libraries/{id}/grades/{sid}/export` | `export` | Descarga del `.drx` de un still (experimental) |
+| `GET /libraries/{id}/grades/albums/{vid}/export` | `export` | Zip con los `.drx` de un álbum (experimental) |
 | `POST /libraries/{id}/backups` | `backup` | Respaldar ahora; devuelve tarea |
 | `GET /backups` | `read` | Catálogo global |
 | `GET /backups/{id}` | `read` | Detalle con manifiesto |

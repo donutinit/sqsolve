@@ -1,0 +1,1578 @@
+{
+ "assoc": {
+  "Gallery::GyGallery.Views": "Gallery::GyGallery_Gallery::GyView",
+  "Gallery::GyMemView.Memories": "Gallery::GyMemView_Gallery::GyStillRef",
+  "Gallery::GyView.Stills": "Gallery::GyStillRef_Gallery::GyView",
+  "ListMgt::LmVersionTable.Locals": "ListMgt::LmVersion_ListMgt::LmVersionTable",
+  "SM_Project.Thumbnails": "BtThumnail_SM_Project",
+  "SM_Project.TimelineHandleVec": "SM_Project_Sm2Timeline",
+  "Sm2GroupList.GroupList": "Sm2Group_Sm2GroupList",
+  "Sm2MpAudioClip.EmbeddedAudioVec": "BtAudioInfo_Sm2MpMedia",
+  "Sm2MpFolder.MediaVec": "Sm2MpFolder_Sm2MpMedia",
+  "Sm2MpVideoClip.EmbeddedAudioVec": "BtAudioInfo_Sm2MpMedia",
+  "Sm2SequenceContainer.AudioTrackVec": "Sm2SequenceContainer_Sm2TiTrack",
+  "Sm2SequenceContainer.SubtitleTrackVec": "Sm2SequenceContainer_Sm2TiTrack",
+  "Sm2SequenceContainer.VideoTrackVec": "Sm2SequenceContainer_Sm2TiTrack",
+  "Sm2TiTrack.Items": "Sm2TiItem_Sm2TiTrack"
+ },
+ "backref": {
+  "Sm2LockableBlobMap.LocableBlobSet": {
+   "column": "BtLockableBlobMap_id",
+   "table": "BtLockableBlob"
+  }
+ },
+ "classes": {
+  "BtAudioInfo": {
+   "fields": [
+    "FieldsBlob",
+    "Clip",
+    "TracksBA",
+    "MediaMetadata"
+   ],
+   "table": "BtAudioInfo"
+  },
+  "BtMetadataLockableBlob": {
+   "fields": [
+    "FieldsBlob",
+    "BlobOwner",
+    "DbSavedTime"
+   ],
+   "table": "BtLockableBlob"
+  },
+  "BtThumnail": {
+   "fields": [
+    "FieldsBlob",
+    "ImgWidth",
+    "ImgHeight",
+    "Buffer"
+   ],
+   "table": "BtThumnail"
+  },
+  "BtVideoInfo": {
+   "fields": [
+    "FieldsBlob",
+    "Clip",
+    "Time",
+    "Geometry",
+    "Radiometry",
+    "Proxy",
+    "VideoMetadata",
+    "MediaMetadata",
+    "Type",
+    "Eye"
+   ],
+   "table": "BtVideoInfo"
+  },
+  "Gallery::GyGallery": {
+   "children": {
+    "MemoryView": [
+     "Gallery::GyMemView"
+    ],
+    "Views": [
+     "Gallery::GyView"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "Views",
+    "MemoryView",
+    "LockSysId",
+    "DbSavedTime"
+   ],
+   "kinds": {
+    "MemoryView": "obj",
+    "Views": "list:obj"
+   },
+   "table": "Gallery::GyGallery"
+  },
+  "Gallery::GyMemView": {
+   "children": {
+    "Memories": [
+     "Gallery::GyStillRef"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "Memories"
+   ],
+   "kinds": {
+    "Memories": "list:obj"
+   },
+   "table": "Gallery::GyMemView"
+  },
+  "Gallery::GyStill": {
+   "children": {
+    "Vsr": [
+     "BtThumnail"
+    ],
+    "pClipFullVer": [
+     "ListMgt::LmVersion"
+    ],
+    "pTrackVer": [
+     "ListMgt::LmVersion"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "SrcHint",
+    "SrcType",
+    "GalleryPath",
+    "Label",
+    "RecTC",
+    "SrcTC",
+    "DpxDescriptor",
+    "Width",
+    "Height",
+    "BitDepth",
+    "PAR",
+    "Endianship",
+    "CreateTime",
+    "pClipFullVer",
+    "pTrackVer",
+    "PrimaryCCMode",
+    "Vsr",
+    "ClipThumbnails",
+    "TrackThumbnails",
+    "ReelName"
+   ],
+   "kinds": {
+    "Vsr": "obj",
+    "pClipFullVer": "obj",
+    "pTrackVer": "obj"
+   },
+   "table": "Gallery::GyStill"
+  },
+  "Gallery::GyStillRef": {
+   "fields": [
+    "FieldsBlob",
+    "Label",
+    "TrackIdx",
+    "SceneIdx",
+    "CreateTime",
+    "Type",
+    "MasterHint",
+    "Ref0",
+    "Ref1"
+   ],
+   "table": "Gallery::GyStillRef"
+  },
+  "Gallery::GyView": {
+   "children": {
+    "Stills": [
+     "Gallery::GyStillRef"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "Stills",
+    "OneStillPerScene",
+    "TraceTimeline",
+    "SortType",
+    "ViewName",
+    "LockSysId",
+    "DbSavedTime"
+   ],
+   "kinds": {
+    "Stills": "list:obj"
+   },
+   "table": "Gallery::GyView"
+  },
+  "ListMgt::LmPowerNodeList": {
+   "fields": [
+    "FieldsBlob",
+    "PowerNodes",
+    "LockSysId",
+    "DbSavedTime"
+   ],
+   "table": "ListMgt::LmPowerNodeList"
+  },
+  "ListMgt::LmVersion": {
+   "fields": [
+    "FieldsBlob",
+    "Name",
+    "HasCorrection",
+    "VerType",
+    "ImplVersion",
+    "IncludedInRecording",
+    "FlatPassEnabled",
+    "RGBAOutputEnabled",
+    "Body",
+    "UseVersionClipProcParams"
+   ],
+   "table": "ListMgt::LmVersion"
+  },
+  "ListMgt::LmVersionTable": {
+   "children": {
+    "Locals": [
+     "ListMgt::LmVersion"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "VerType",
+    "pActive",
+    "Locals",
+    "DbSavedTime",
+    "LinkedGroup"
+   ],
+   "kinds": {
+    "Locals": "list:obj"
+   },
+   "table": "ListMgt::LmVersionTable"
+  },
+  "SM_Config": {
+   "children": {
+    "MultiSysData": [
+     "Sm2MultiSysData"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "User",
+    "ConfigId",
+    "UserId",
+    "ProjId",
+    "SsnId",
+    "Name",
+    "LockSysId",
+    "DbSavedTime",
+    "MultiSysData"
+   ],
+   "kinds": {
+    "MultiSysData": "obj"
+   },
+   "table": "SM_Config"
+  },
+  "SM_Project": {
+   "children": {
+    "CommonConfig": [
+     "SM_Config"
+    ],
+    "GroupListObj": [
+     "Sm2GroupList"
+    ],
+    "LockableBlobMap": [
+     "Sm2LockableBlobMap"
+    ],
+    "MediaPool": [
+     "Sm2MediaPool"
+    ],
+    "PowerNodeList": [
+     "ListMgt::LmPowerNodeList"
+    ],
+    "Thumbnails": [
+     "BtThumnail"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "LockId",
+    "User",
+    "Folder",
+    "UserId",
+    "SysId",
+    "ProjectId",
+    "UpToDate",
+    "OrigProjUpToDate",
+    "RevivalTaskSetID",
+    "PlayHeadsSplitDisplay",
+    "LastModTimeInSecs",
+    "UpgradeLockSysId",
+    "ProjectAgeInMs",
+    "ProjectName",
+    "FolderMap",
+    "TimelineVec",
+    "TimelineHandleVec",
+    "CurrentTimelineIndex",
+    "StreamCursorVector",
+    "StreamIdVector",
+    "StreamPlayHeadVector",
+    "StreamAdvanceVector",
+    "GangPlayHeadVector",
+    "NumTotalStreams",
+    "NumPlayStreams",
+    "CurrentStreamId",
+    "PlayingStreamId",
+    "PlayHeadMode",
+    "CommonConfig",
+    "DeletedSsnList",
+    "IsADeliverableProject",
+    "DeliverableProjectEDLStr",
+    "DeliverableSessionName",
+    "NumReader",
+    "ClipInfoSeed",
+    "ReelSeed",
+    "EDLSeed",
+    "RenderTextEnabled",
+    "RenderTextGanged",
+    "RenderTextPrefixed",
+    "activeStereoLeftSession",
+    "activeStereoRightSession",
+    "IsAutoSave",
+    "ProjRef",
+    "Thumbnails",
+    "MediaPool",
+    "ProjectVersion",
+    "GroupList",
+    "GroupListObj",
+    "CurrentGroup",
+    "IsLiveCollaborationEnabled",
+    "LockableBlobMap",
+    "PowerNodeList",
+    "Notes",
+    "FaceTaggingClipVec",
+    "FaceTaggingPeopleVec"
+   ],
+   "kinds": {
+    "CommonConfig": "obj",
+    "GangPlayHeadVector": "list:text",
+    "GroupListObj": "obj",
+    "LockableBlobMap": "obj",
+    "MediaPool": "obj",
+    "PowerNodeList": "obj",
+    "StreamAdvanceVector": "list:text",
+    "StreamCursorVector": "list:text",
+    "StreamIdVector": "list:text",
+    "StreamPlayHeadVector": "list:text",
+    "Thumbnails": "list:obj",
+    "TimelineHandleVec": "list:text"
+   },
+   "table": "SM_Project"
+  },
+  "Sm2Group": {
+   "children": {
+    "pLmVerTable": [
+     "ListMgt::LmVersionTable"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "Name",
+    "pLmVerTable"
+   ],
+   "kinds": {
+    "pLmVerTable": "obj"
+   },
+   "table": "Sm2Group"
+  },
+  "Sm2GroupList": {
+   "children": {
+    "GroupList": [
+     "Sm2Group"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "GroupList",
+    "LockSysId",
+    "DbSavedTime"
+   ],
+   "kinds": {
+    "GroupList": "list:obj"
+   },
+   "table": "Sm2GroupList"
+  },
+  "Sm2LockableBlobMap": {
+   "children": {
+    "LocableBlobSet": [
+     "BtMetadataLockableBlob",
+     "Sm2MediaPoolLockableBlob",
+     "Sm2MpItemLockableBlob",
+     "Sm2SequenceLockableBlob",
+     "Sm2TiItemLockableBlob"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "LocableBlobSet"
+   ],
+   "kinds": {
+    "LocableBlobSet": "list:obj"
+   },
+   "table": "BtLockableBlobMap"
+  },
+  "Sm2MediaPool": {
+   "fields": [
+    "FieldsBlob",
+    "SmartFolderVec",
+    "StereoSource"
+   ],
+   "table": "Sm2MediaPool"
+  },
+  "Sm2MediaPoolLockableBlob": {
+   "fields": [
+    "FieldsBlob",
+    "BlobOwner",
+    "DbSavedTime"
+   ],
+   "table": "BtLockableBlob"
+  },
+  "Sm2MpAudioClip": {
+   "children": {
+    "EmbeddedAudioVec": [
+     "BtAudioInfo"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "Name",
+    "MpFolder",
+    "UniqueMediaPoolItemId",
+    "MarkIn",
+    "MarkInVideo",
+    "MarkInAudio",
+    "MarkOut",
+    "MarkOutVideo",
+    "MarkOutAudio",
+    "CurPlayheadPosition",
+    "PinsBA",
+    "VirtualAudioTracksBA",
+    "EmbeddedAudioVec"
+   ],
+   "kinds": {
+    "EmbeddedAudioVec": "list:obj"
+   },
+   "table": "Sm2MpMedia"
+  },
+  "Sm2MpFolder": {
+   "children": {
+    "MediaVec": [
+     "Sm2MpAudioClip",
+     "Sm2MpGenerator",
+     "Sm2MpMulticamClip",
+     "Sm2MpSubtitle",
+     "Sm2MpTimelineClip",
+     "Sm2MpVideoClip"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "Name",
+    "MpFolder",
+    "UniqueMediaPoolItemId",
+    "MediaVec",
+    "MediaPool",
+    "Folded",
+    "ColorTag",
+    "LockSysId",
+    "DbSavedTime"
+   ],
+   "kinds": {
+    "MediaVec": "list:obj"
+   },
+   "table": "Sm2MpFolder"
+  },
+  "Sm2MpGenerator": {
+   "children": {
+    "CompositionTable": [
+     "Sm2TiCompositionTable"
+    ],
+    "pLmVerTable": [
+     "ListMgt::LmVersionTable"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "Name",
+    "MpFolder",
+    "UniqueMediaPoolItemId",
+    "MarkIn",
+    "MarkInVideo",
+    "MarkInAudio",
+    "MarkOut",
+    "MarkOutVideo",
+    "MarkOutAudio",
+    "CurPlayheadPosition",
+    "pLmVerTable",
+    "CompositionTable"
+   ],
+   "kinds": {
+    "CompositionTable": "obj",
+    "pLmVerTable": "obj"
+   },
+   "table": "Sm2MpMedia"
+  },
+  "Sm2MpItemLockableBlob": {
+   "fields": [
+    "FieldsBlob",
+    "BlobOwner",
+    "DbSavedTime"
+   ],
+   "table": "BtLockableBlob"
+  },
+  "Sm2MpMulticamClip": {
+   "children": {
+    "PTZRPreset": [
+     "SmPTZRPreset"
+    ],
+    "Sequence": [
+     "Sm2Sequence"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "Name",
+    "MpFolder",
+    "UniqueMediaPoolItemId",
+    "MarkIn",
+    "MarkInVideo",
+    "MarkInAudio",
+    "MarkOut",
+    "MarkOutVideo",
+    "MarkOutAudio",
+    "CurPlayheadPosition",
+    "PinsBA",
+    "VirtualAudioTracksBA",
+    "MatteVec",
+    "AudioSource",
+    "PTZRPreset",
+    "PTZRPresetType",
+    "SlateTC",
+    "Sequence",
+    "VideoMetadata",
+    "MediaMetadata"
+   ],
+   "kinds": {
+    "PTZRPreset": "obj",
+    "Sequence": "obj"
+   },
+   "table": "Sm2MpMedia"
+  },
+  "Sm2MpSubtitle": {
+   "fields": [
+    "FieldsBlob",
+    "Name",
+    "MpFolder",
+    "UniqueMediaPoolItemId",
+    "MarkIn",
+    "MarkInVideo",
+    "MarkInAudio",
+    "MarkOut",
+    "MarkOutVideo",
+    "MarkOutAudio",
+    "CurPlayheadPosition"
+   ],
+   "table": "Sm2MpMedia"
+  },
+  "Sm2MpTimelineClip": {
+   "children": {
+    "PTZRPreset": [
+     "SmPTZRPreset"
+    ],
+    "TimelineSharedHandle": [
+     "Sm2Timeline"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "Name",
+    "MpFolder",
+    "UniqueMediaPoolItemId",
+    "MarkIn",
+    "MarkInVideo",
+    "MarkInAudio",
+    "MarkOut",
+    "MarkOutVideo",
+    "MarkOutAudio",
+    "CurPlayheadPosition",
+    "PinsBA",
+    "VirtualAudioTracksBA",
+    "MatteVec",
+    "AudioSource",
+    "PTZRPreset",
+    "PTZRPresetType",
+    "SlateTC",
+    "TimelineSharedHandle",
+    "VideoMetadata",
+    "MediaMetadata"
+   ],
+   "kinds": {
+    "PTZRPreset": "obj",
+    "TimelineSharedHandle": "obj"
+   },
+   "table": "Sm2MpMedia"
+  },
+  "Sm2MpVideoClip": {
+   "children": {
+    "EmbeddedAudioVec": [
+     "BtAudioInfo"
+    ],
+    "PTZRPreset": [
+     "SmPTZRPreset"
+    ],
+    "Video": [
+     "BtVideoInfo"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "Name",
+    "MpFolder",
+    "UniqueMediaPoolItemId",
+    "MarkIn",
+    "MarkInVideo",
+    "MarkInAudio",
+    "MarkOut",
+    "MarkOutVideo",
+    "MarkOutAudio",
+    "CurPlayheadPosition",
+    "PinsBA",
+    "VirtualAudioTracksBA",
+    "MatteVec",
+    "AudioSource",
+    "PTZRPreset",
+    "PTZRPresetType",
+    "SlateTC",
+    "Video",
+    "EmbeddedAudioVec"
+   ],
+   "kinds": {
+    "EmbeddedAudioVec": "list:obj",
+    "PTZRPreset": "obj",
+    "Video": "obj"
+   },
+   "table": "Sm2MpMedia"
+  },
+  "Sm2MultiSysData": {
+   "fields": [
+    "FieldsBlob",
+    "LockSysId",
+    "DbSavedTime"
+   ],
+   "table": "Sm2MultiSysData"
+  },
+  "Sm2Sequence": {
+   "children": {
+    "TimelineFilter": [
+     "SmTimelineFilter"
+    ],
+    "pLmVerTable": [
+     "ListMgt::LmVersionTable"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "UniqueSequenceId",
+    "MediaExtents",
+    "FrameRate",
+    "Resolution",
+    "VideoTrackVec",
+    "AudioTrackVec",
+    "Parent",
+    "pLmVerTable",
+    "TimelineFilter",
+    "LastChangedTime",
+    "RenderCacheBA",
+    "AuxRenderCacheBA",
+    "UIElementsState",
+    "NumOutputAudioChannels",
+    "OutputAudioGain",
+    "PinsBA",
+    "ImportExportMetadataBA",
+    "LockSysId",
+    "DbSavedTime"
+   ],
+   "kinds": {
+    "TimelineFilter": "obj",
+    "pLmVerTable": "obj"
+   },
+   "table": "Sm2Sequence"
+  },
+  "Sm2SequenceContainer": {
+   "children": {
+    "AudioTrackVec": [
+     "Sm2TiTrack"
+    ],
+    "SubtitleTrackVec": [
+     "Sm2TiTrack"
+    ],
+    "VideoTrackVec": [
+     "Sm2TiTrack"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "VideoTrackVec",
+    "AudioTrackVec",
+    "SubtitleTrackVec",
+    "GeometryTrackVec",
+    "DbSavedTime"
+   ],
+   "kinds": {
+    "AudioTrackVec": "list:obj",
+    "SubtitleTrackVec": "list:obj",
+    "VideoTrackVec": "list:obj"
+   },
+   "table": "Sm2SequenceContainer"
+  },
+  "Sm2SequenceLockableBlob": {
+   "fields": [
+    "FieldsBlob",
+    "BlobOwner",
+    "DbSavedTime"
+   ],
+   "table": "BtLockableBlob"
+  },
+  "Sm2TiAudioClip": {
+   "fields": [
+    "FieldsBlob",
+    "PrettyType",
+    "Name",
+    "Start",
+    "Duration",
+    "LinkedItemSync",
+    "WasDisbanded",
+    "MarkersBA",
+    "UiMemento",
+    "Flags",
+    "PriorityIndex",
+    "EffectFiltersBA",
+    "ImportExportMetadataBA",
+    "RenderTextEnabled",
+    "RenderTextGanged",
+    "RenderTextPrefixed",
+    "In",
+    "MixedFrameRateAlignment",
+    "MediaRef",
+    "MediaStartTime",
+    "MediaFilePath",
+    "MediaReelNumber",
+    "MediaFrameRate",
+    "MediaTimemapBA",
+    "LastChangedTime",
+    "LastRenderedTime",
+    "IsMarkedForCaching",
+    "IsForceConformed",
+    "MatchConflictState",
+    "UseOppositeSrcForLeftEye",
+    "UseOppositeSrcForRightEye",
+    "RenderCacheBA",
+    "VirtualAudioTrackBA",
+    "MediaTrackIdx"
+   ],
+   "table": "Sm2TiItem"
+  },
+  "Sm2TiCompositionTable": {
+   "fields": [
+    "FieldsBlob",
+    "DbSavedTime",
+    "CompositionBA",
+    "ActiveCompositionIdx"
+   ],
+   "table": "Sm2TiCompositionTable"
+  },
+  "Sm2TiGenerator": {
+   "fields": [
+    "FieldsBlob",
+    "PrettyType",
+    "Name",
+    "Start",
+    "Duration",
+    "LinkedItemSync",
+    "WasDisbanded",
+    "MarkersBA",
+    "UiMemento",
+    "Flags",
+    "PriorityIndex",
+    "EffectFiltersBA",
+    "ImportExportMetadataBA",
+    "RenderTextEnabled",
+    "RenderTextGanged",
+    "RenderTextPrefixed",
+    "In"
+   ],
+   "table": "Sm2TiItem"
+  },
+  "Sm2TiItemLockableBlob": {
+   "fields": [
+    "FieldsBlob",
+    "BlobOwner",
+    "DbSavedTime"
+   ],
+   "table": "BtLockableBlob"
+  },
+  "Sm2TiTrack": {
+   "children": {
+    "Items": [
+     "Sm2TiAudioClip",
+     "Sm2TiGenerator",
+     "Sm2TiTransition",
+     "Sm2TiVideoClip"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "Type",
+    "SubType",
+    "Flags",
+    "Sequence",
+    "Items",
+    "FusionCompHolderItems",
+    "UserDefinedName",
+    "LayersVec"
+   ],
+   "kinds": {
+    "Items": "list:obj"
+   },
+   "table": "Sm2TiTrack"
+  },
+  "Sm2TiTransition": {
+   "fields": [
+    "FieldsBlob",
+    "PrettyType",
+    "Name",
+    "Start",
+    "Duration",
+    "LinkedItemSync",
+    "WasDisbanded",
+    "MarkersBA",
+    "UiMemento",
+    "Flags",
+    "PriorityIndex",
+    "EffectFiltersBA",
+    "ImportExportMetadataBA",
+    "RenderTextEnabled",
+    "RenderTextGanged",
+    "RenderTextPrefixed",
+    "AlignmentType",
+    "Position"
+   ],
+   "table": "Sm2TiItem"
+  },
+  "Sm2TiVideoClip": {
+   "children": {
+    "CompositionTable": [
+     "Sm2TiCompositionTable"
+    ],
+    "Thumbnail": [
+     "BtThumnail"
+    ],
+    "pLmVerTable": [
+     "ListMgt::LmVersionTable"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "PrettyType",
+    "Name",
+    "Start",
+    "Duration",
+    "LinkedItemSync",
+    "WasDisbanded",
+    "MarkersBA",
+    "UiMemento",
+    "Flags",
+    "PriorityIndex",
+    "EffectFiltersBA",
+    "ImportExportMetadataBA",
+    "RenderTextEnabled",
+    "RenderTextGanged",
+    "RenderTextPrefixed",
+    "CompositionTable",
+    "In",
+    "MixedFrameRateAlignment",
+    "MediaRef",
+    "MediaStartTime",
+    "MediaFilePath",
+    "MediaReelNumber",
+    "MediaFrameRate",
+    "MediaTimemapBA",
+    "pLmVerTable",
+    "LastChangedTime",
+    "LastRenderedTime",
+    "IsMarkedForCaching",
+    "IsForceConformed",
+    "MatchConflictState",
+    "UseOppositeSrcForLeftEye",
+    "UseOppositeSrcForRightEye",
+    "RenderCacheBA",
+    "CurrentSelectorIdx",
+    "IsPreConformed",
+    "PreConformMediaExtents",
+    "MediaMetadata",
+    "Thumbnail",
+    "ThumbnailDirtyFlag"
+   ],
+   "kinds": {
+    "CompositionTable": "obj",
+    "Thumbnail": "obj",
+    "pLmVerTable": "obj"
+   },
+   "table": "Sm2TiItem"
+  },
+  "Sm2Timeline": {
+   "children": {
+    "PTZRPreset": [
+     "SmPTZRPreset"
+    ],
+    "Sequence": [
+     "Sm2Sequence"
+    ]
+   },
+   "fields": [
+    "FieldsBlob",
+    "Name",
+    "MpTimelineClip",
+    "Sequence",
+    "OfflineFrameOffset",
+    "PTZRPreset",
+    "PTZRPresetType",
+    "VideoStereoSource",
+    "Type",
+    "ImportExportMetadataBA",
+    "EnableLTC",
+    "LTCSyncDelay",
+    "EnableAudio",
+    "AudioSyncDelay",
+    "ModTimeInSecs",
+    "CreateTimeInSecs"
+   ],
+   "kinds": {
+    "PTZRPreset": "obj",
+    "Sequence": "obj"
+   },
+   "table": "Sm2Timeline"
+  },
+  "SmPTZRPreset": {
+   "fields": [
+    "FieldsBlob",
+    "Name",
+    "ID",
+    "IsCustom",
+    "Producer",
+    "Presets"
+   ],
+   "table": "SmPreset"
+  },
+  "SmTimelineFilter": {
+   "fields": [
+    "FieldsBlob",
+    "FilterMajorMode",
+    "FilterFlagSubMode",
+    "FilterPinSubMode",
+    "FilterMarkerSubMode",
+    "FilterModifiedSubMode",
+    "FilterNamedGroup",
+    "FilterCommonMpMediaUniqueId"
+   ],
+   "table": "SmTimelineFilter"
+  }
+ },
+ "empty_null_uuid": [
+  "Gallery::GyStillRef.Ref0",
+  "Gallery::GyStillRef.Ref1",
+  "SM_Config.User",
+  "SM_Project.Folder",
+  "SM_Project.ProjRef"
+ ],
+ "guards": [
+  {
+   "class": "SM_Project",
+   "field": "FolderMap",
+   "table": "SM_Project_FolderMap"
+  },
+  {
+   "class": "SM_Project",
+   "field": "GroupList",
+   "table": "SM_Project_Sm2Group"
+  },
+  {
+   "class": "SM_Project",
+   "field": "FaceTaggingClipVec",
+   "table": "FaceTaggingClip_SM_Project"
+  },
+  {
+   "class": "SM_Project",
+   "field": "FaceTaggingPeopleVec",
+   "table": "FaceTaggingPeople_SM_Project"
+  },
+  {
+   "class": "ListMgt::LmPowerNodeList",
+   "field": "PowerNodes",
+   "table": "ListMgt::LmPowerNode_ListMgt::LmPowerNodeList"
+  },
+  {
+   "class": "Sm2MediaPool",
+   "field": "SmartFolderVec",
+   "table": "Sm2MediaPool_Sm2MpSmartFolder"
+  },
+  {
+   "class": "Sm2MpVideoClip",
+   "field": "MatteVec",
+   "prop": "MatteVec",
+   "table": "BtVideoInfo_Sm2MpMedia"
+  },
+  {
+   "class": "Sm2MpTimelineClip",
+   "field": "MatteVec",
+   "prop": "MatteVec",
+   "table": "BtVideoInfo_Sm2MpMedia"
+  },
+  {
+   "class": "Sm2MpMulticamClip",
+   "field": "MatteVec",
+   "prop": "MatteVec",
+   "table": "BtVideoInfo_Sm2MpMedia"
+  },
+  {
+   "class": "Sm2SequenceContainer",
+   "field": "GeometryTrackVec",
+   "prop": "GeometryTrackVec",
+   "table": "Sm2SequenceContainer_Sm2TiTrack"
+  },
+  {
+   "class": "Sm2TiTrack",
+   "field": "FusionCompHolderItems",
+   "prop": "FusionCompHolderItems",
+   "table": "Sm2TiTrack_Sm2TiTrack"
+  },
+  {
+   "class": "Sm2TiTrack",
+   "field": "LayersVec",
+   "prop": "LayersVec",
+   "table": "Sm2TiTrack_Sm2TiTrack"
+  }
+ ],
+ "project_version": 17,
+ "resolve": "21.1.1.0010",
+ "tables": {
+  "BtAudioInfo": {
+   "BtAudioInfo_id": "uuid",
+   "Clip": "bytea",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "MediaMetadata": "bytea",
+   "TracksBA": "bytea"
+  },
+  "BtAudioInfo_Sm2MpMedia": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "BtLockableBlob": {
+   "BlobOwner": "uuid",
+   "BtLockableBlobMap_id": "uuid",
+   "BtLockableBlob_id": "uuid",
+   "DbSavedTime": "bigint",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea"
+  },
+  "BtLockableBlobMap": {
+   "BtLockableBlobMap_id": "uuid",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea"
+  },
+  "BtThumnail": {
+   "BtThumnail_id": "uuid",
+   "Buffer": "bytea",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "Gallery::GyStill_id": "uuid",
+   "ImgHeight": "integer",
+   "ImgWidth": "integer",
+   "SM_Project_id": "uuid"
+  },
+  "BtThumnail_SM_Project": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "BtVideoInfo": {
+   "BtVideoInfo_id": "uuid",
+   "Clip": "bytea",
+   "DbType": "character varying(128)",
+   "Eye": "character varying",
+   "FieldsBlob": "bytea",
+   "Geometry": "bytea",
+   "MediaMetadata": "bytea",
+   "Proxy": "bytea",
+   "Radiometry": "bytea",
+   "Time": "bytea",
+   "Type": "character varying",
+   "VideoMetadata": "bytea"
+  },
+  "BtVideoInfo_Sm2MpMedia": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "FaceTaggingClip_SM_Project": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "FaceTaggingPeople_SM_Project": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "Gallery::GyGallery": {
+   "DbSavedTime": "bigint",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "Gallery::GyGallery_id": "uuid",
+   "LockSysId": "character varying",
+   "MemoryView": "uuid",
+   "SM_Project_id": "uuid"
+  },
+  "Gallery::GyGallery_Gallery::GyView": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "Gallery::GyMemView": {
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "Gallery::GyMemView_id": "uuid"
+  },
+  "Gallery::GyMemView_Gallery::GyStillRef": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "Gallery::GyStill": {
+   "BitDepth": "character varying",
+   "ClipThumbnails": "bytea",
+   "CreateTime": "timestamp without time zone",
+   "DbType": "character varying(128)",
+   "DpxDescriptor": "integer",
+   "Endianship": "character varying",
+   "FieldsBlob": "bytea",
+   "Gallery::GyStill_id": "uuid",
+   "GalleryPath": "character varying",
+   "Height": "integer",
+   "Label": "character varying",
+   "PAR": "double precision",
+   "PrimaryCCMode": "integer",
+   "RecTC": "character varying",
+   "ReelName": "character varying",
+   "SrcHint": "character varying",
+   "SrcTC": "character varying",
+   "SrcType": "integer",
+   "TrackThumbnails": "bytea",
+   "Vsr": "uuid",
+   "Width": "integer",
+   "pClipFullVer": "uuid",
+   "pTrackVer": "uuid"
+  },
+  "Gallery::GyStillRef": {
+   "CreateTime": "timestamp without time zone",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "Gallery::GyStillRef_id": "uuid",
+   "Gallery::GyView_id": "uuid",
+   "Label": "character varying",
+   "MasterHint": "character varying",
+   "Ref0": "uuid",
+   "Ref1": "uuid",
+   "SceneIdx": "integer",
+   "TrackIdx": "integer",
+   "Type": "integer"
+  },
+  "Gallery::GyStillRef_Gallery::GyView": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "Gallery::GyView": {
+   "DbSavedTime": "bigint",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "Gallery::GyGallery_id": "uuid",
+   "Gallery::GyView_id": "uuid",
+   "LockSysId": "character varying",
+   "OneStillPerScene": "boolean",
+   "SortType": "integer",
+   "TraceTimeline": "boolean",
+   "ViewName": "character varying"
+  },
+  "ListMgt::LmPowerNodeList": {
+   "DbSavedTime": "bigint",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "ListMgt::LmPowerNodeList_id": "uuid",
+   "LockSysId": "character varying"
+  },
+  "ListMgt::LmPowerNode_ListMgt::LmPowerNodeList": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "ListMgt::LmVersion": {
+   "Body": "bytea",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "FlatPassEnabled": "boolean",
+   "HasCorrection": "boolean",
+   "ImplVersion": "integer",
+   "IncludedInRecording": "boolean",
+   "ListMgt::LmVersion_id": "uuid",
+   "Name": "character varying",
+   "RGBAOutputEnabled": "boolean",
+   "UseVersionClipProcParams": "boolean",
+   "VerType": "character varying"
+  },
+  "ListMgt::LmVersionTable": {
+   "DbSavedTime": "bigint",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "LinkedGroup": "uuid",
+   "ListMgt::LmVersionTable_id": "uuid",
+   "VerType": "character varying",
+   "pActive": "uuid"
+  },
+  "ListMgt::LmVersion_ListMgt::LmVersionTable": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "SM_Config": {
+   "ConfigId": "integer",
+   "DbSavedTime": "bigint",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "LockSysId": "character varying",
+   "MultiSysData": "uuid",
+   "Name": "character varying",
+   "ProjId": "integer",
+   "SM_Config_id": "uuid",
+   "SsnId": "integer",
+   "User": "uuid",
+   "UserId": "integer"
+  },
+  "SM_Project": {
+   "ClipInfoSeed": "bigint",
+   "CommonConfig": "uuid",
+   "CurrentGroup": "uuid",
+   "CurrentStreamId": "integer",
+   "CurrentTimelineIndex": "integer",
+   "DbType": "character varying(128)",
+   "DeletedSsnList": "integer[]",
+   "DeliverableProjectEDLStr": "character varying",
+   "DeliverableSessionName": "character varying",
+   "EDLSeed": "bigint",
+   "FieldsBlob": "bytea",
+   "Folder": "uuid",
+   "GangPlayHeadVector": "integer[]",
+   "GroupListObj": "uuid",
+   "IsADeliverableProject": "boolean",
+   "IsAutoSave": "boolean",
+   "IsLiveCollaborationEnabled": "boolean",
+   "LastModTimeInSecs": "bigint",
+   "LockId": "character varying",
+   "LockableBlobMap": "uuid",
+   "MediaPool": "uuid",
+   "Notes": "character varying",
+   "NumPlayStreams": "integer",
+   "NumReader": "integer",
+   "NumTotalStreams": "integer",
+   "OrigProjUpToDate": "boolean",
+   "PlayHeadMode": "character varying",
+   "PlayHeadsSplitDisplay": "boolean",
+   "PlayingStreamId": "integer",
+   "PowerNodeList": "uuid",
+   "ProjRef": "uuid",
+   "ProjectAgeInMs": "bigint",
+   "ProjectId": "integer",
+   "ProjectName": "character varying",
+   "ProjectVersion": "integer",
+   "ReelSeed": "bigint",
+   "RenderTextEnabled": "boolean",
+   "RenderTextGanged": "boolean",
+   "RenderTextPrefixed": "boolean",
+   "RevivalTaskSetID": "integer",
+   "SM_Project_id": "uuid",
+   "StreamAdvanceVector": "integer[]",
+   "StreamCursorVector": "integer[]",
+   "StreamIdVector": "integer[]",
+   "StreamPlayHeadVector": "integer[]",
+   "SysId": "character varying",
+   "UpToDate": "boolean",
+   "UpgradeLockSysId": "character varying",
+   "User": "uuid",
+   "UserId": "integer",
+   "activeStereoLeftSession": "character varying",
+   "activeStereoRightSession": "character varying",
+   "pGallery": "uuid",
+   "pMediaPool": "uuid"
+  },
+  "SM_ProjectFolder": {
+   "DbType": "character varying(128)",
+   "Name": "character varying",
+   "ParentFolder": "uuid",
+   "SM_ProjectFolder_id": "uuid"
+  },
+  "SM_Project_FolderMap": {
+   "DbKey": "bigint",
+   "DbOwner": "uuid",
+   "DbVal": "uuid"
+  },
+  "SM_Project_Sm2Group": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "SM_Project_Sm2Timeline": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "Sm2Group": {
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "Name": "character varying",
+   "Sm2Group_id": "uuid",
+   "pLmVerTable": "uuid"
+  },
+  "Sm2GroupList": {
+   "DbSavedTime": "bigint",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "LockSysId": "character varying",
+   "Sm2GroupList_id": "uuid"
+  },
+  "Sm2Group_Sm2GroupList": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "Sm2MediaPool": {
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "Sm2MediaPool_id": "uuid",
+   "StereoSource": "integer"
+  },
+  "Sm2MediaPool_Sm2MpSmartFolder": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "Sm2MpFolder": {
+   "ColorTag": "character varying",
+   "DbSavedTime": "bigint",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "Folded": "boolean",
+   "LockSysId": "character varying",
+   "MediaPool": "uuid",
+   "MpFolder": "uuid",
+   "Name": "character varying",
+   "Sm2MediaPool_id": "uuid",
+   "Sm2MpFolder_id": "uuid",
+   "UniqueMediaPoolItemId": "uuid"
+  },
+  "Sm2MpFolder_Sm2MpMedia": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "Sm2MpMedia": {
+   "AudioSource": "character varying",
+   "CompositionTable": "uuid",
+   "CurPlayheadPosition": "character varying",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "MarkIn": "character varying",
+   "MarkInAudio": "character varying",
+   "MarkInVideo": "character varying",
+   "MarkOut": "character varying",
+   "MarkOutAudio": "character varying",
+   "MarkOutVideo": "character varying",
+   "MediaMetadata": "bytea",
+   "MpFolder": "uuid",
+   "Name": "character varying",
+   "PTZRPreset": "uuid",
+   "PTZRPresetType": "integer",
+   "PinsBA": "bytea",
+   "Sequence": "uuid",
+   "SlateTC": "bytea",
+   "Sm2MpMedia_id": "uuid",
+   "TimelineSharedHandle": "uuid",
+   "UniqueMediaPoolItemId": "uuid",
+   "Video": "uuid",
+   "VideoMetadata": "bytea",
+   "VirtualAudioTracksBA": "bytea",
+   "pLmVerTable": "uuid"
+  },
+  "Sm2MultiSysData": {
+   "DbSavedTime": "bigint",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "LockSysId": "character varying",
+   "Sm2MultiSysData_id": "uuid"
+  },
+  "Sm2Sequence": {
+   "AuxRenderCacheBA": "bytea",
+   "DbSavedTime": "bigint",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "FrameRate": "bytea",
+   "ImportExportMetadataBA": "bytea",
+   "LastChangedTime": "bigint",
+   "LockSysId": "character varying",
+   "MediaExtents": "bytea",
+   "NumOutputAudioChannels": "integer",
+   "OutputAudioGain": "double precision",
+   "Parent": "uuid",
+   "PinsBA": "bytea",
+   "RenderCacheBA": "bytea",
+   "Resolution": "bytea",
+   "Sm2Sequence_id": "uuid",
+   "TimelineFilter": "uuid",
+   "UIElementsState": "bytea",
+   "UniqueSequenceId": "uuid",
+   "pLmVerTable": "uuid"
+  },
+  "Sm2SequenceContainer": {
+   "DbSavedTime": "bigint",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "Sm2SequenceContainer_id": "uuid",
+   "Sm2Sequence_id": "uuid"
+  },
+  "Sm2SequenceContainer_Sm2TiTrack": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "Sm2TiCompositionTable": {
+   "ActiveCompositionIdx": "integer",
+   "CompositionBA": "bytea",
+   "DbSavedTime": "bigint",
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "Sm2TiCompositionTable_id": "uuid"
+  },
+  "Sm2TiItem": {
+   "AlignmentType": "integer",
+   "CompositionTable": "uuid",
+   "CurrentSelectorIdx": "integer",
+   "DbType": "character varying(128)",
+   "Duration": "character varying",
+   "EffectFiltersBA": "bytea",
+   "FieldsBlob": "bytea",
+   "Flags": "integer",
+   "ImportExportMetadataBA": "bytea",
+   "In": "character varying",
+   "IsForceConformed": "boolean",
+   "IsMarkedForCaching": "boolean",
+   "IsPreConformed": "boolean",
+   "LastChangedTime": "bigint",
+   "LastRenderedTime": "bigint",
+   "LinkedItemSync": "character varying",
+   "MarkersBA": "bytea",
+   "MatchConflictState": "integer",
+   "MediaFilePath": "character varying",
+   "MediaFrameRate": "bytea",
+   "MediaMetadata": "bytea",
+   "MediaReelNumber": "character varying",
+   "MediaRef": "uuid",
+   "MediaStartTime": "double precision",
+   "MediaTimemapBA": "bytea",
+   "MediaTrackIdx": "integer",
+   "MixedFrameRateAlignment": "double precision",
+   "Name": "character varying",
+   "Position": "integer",
+   "PreConformMediaExtents": "bytea",
+   "PrettyType": "character varying",
+   "PriorityIndex": "integer",
+   "RenderCacheBA": "bytea",
+   "RenderTextEnabled": "boolean",
+   "RenderTextGanged": "boolean",
+   "RenderTextPrefixed": "boolean",
+   "Sm2TiItem_id": "uuid",
+   "Start": "character varying",
+   "Thumbnail": "uuid",
+   "ThumbnailDirtyFlag": "boolean",
+   "UiMemento": "integer",
+   "UseOppositeSrcForLeftEye": "boolean",
+   "UseOppositeSrcForRightEye": "boolean",
+   "VirtualAudioTrackBA": "bytea",
+   "WasDisbanded": "boolean",
+   "pLmVerTable": "uuid"
+  },
+  "Sm2TiItem_Sm2TiTrack": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "Sm2TiTrack": {
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "Flags": "integer",
+   "Sequence": "uuid",
+   "Sm2TiTrack_id": "uuid",
+   "SubType": "integer",
+   "Type": "integer",
+   "UserDefinedName": "character varying"
+  },
+  "Sm2TiTrack_Sm2TiTrack": {
+   "DbAssociate": "uuid",
+   "DbIndex": "integer",
+   "DbOwner": "uuid",
+   "DbPropertyName": "character varying"
+  },
+  "Sm2Timeline": {
+   "AudioSyncDelay": "double precision",
+   "CreateTimeInSecs": "bigint",
+   "DbType": "character varying(128)",
+   "EnableAudio": "boolean",
+   "EnableLTC": "boolean",
+   "FieldsBlob": "bytea",
+   "ImportExportMetadataBA": "bytea",
+   "LTCSyncDelay": "double precision",
+   "ModTimeInSecs": "bigint",
+   "MpTimelineClip": "uuid",
+   "Name": "character varying",
+   "OfflineFrameOffset": "integer",
+   "PTZRPreset": "uuid",
+   "PTZRPresetType": "integer",
+   "Sequence": "uuid",
+   "Sm2Timeline_id": "uuid",
+   "Type": "integer",
+   "VideoStereoSource": "integer"
+  },
+  "SmPreset": {
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "ID": "integer",
+   "IsCustom": "boolean",
+   "Name": "character varying",
+   "Presets": "bytea",
+   "Producer": "character varying",
+   "SmPreset_id": "uuid"
+  },
+  "SmTimelineFilter": {
+   "DbType": "character varying(128)",
+   "FieldsBlob": "bytea",
+   "FilterCommonMpMediaUniqueId": "uuid",
+   "FilterFlagSubMode": "character varying",
+   "FilterMajorMode": "character varying",
+   "FilterMarkerSubMode": "character varying",
+   "FilterModifiedSubMode": "character varying",
+   "FilterNamedGroup": "character varying",
+   "FilterPinSubMode": "character varying",
+   "SmTimelineFilter_id": "uuid"
+  }
+ },
+ "text_in_bytea": [
+  "Sm2MpMedia.SlateTC"
+ ]
+}

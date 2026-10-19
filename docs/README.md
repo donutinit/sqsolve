@@ -29,6 +29,7 @@ Resolve, PostgreSQL o Docker se revisa en cada versión mayor de Resolve
 | 19 | [Riesgos](19-riesgos.md) | Registro de riesgos con mitigación |
 | 20 | [Roadmap](20-roadmap.md) | MVP, versiones, fases, hitos y dependencias |
 | 21 | [Tareas](21-tareas.md) | Desglose ejecutable por agentes con criterios de terminado |
+| 22 | [Exportación de proyectos y grados](22-exportacion-de-proyectos-y-grados.md) | Formato `.drp` y `.drx`, reglas, kit de verificación (experimental, ADR 0019) |
 | ADR | [Decisiones](adr/README.md) | Registro de decisiones de arquitectura |
 
 ## Convención de estados de evidencia

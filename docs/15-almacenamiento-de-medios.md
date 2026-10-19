@@ -86,5 +86,6 @@ ingesta; el panel de sqsolve ya es el lugar donde se mira la salud del servidor.
 - Servir medios por la red.
 
 Si en el futuro se plantea un módulo de medios (por ejemplo, comprobar que las rutas de un proyecto
-existen), requiere leer tablas de Resolve y por eso queda DESCARTADO mientras exista el principio
-de caja negra.
+existen), requiere leer tablas de Resolve más allá de la lectura acotada de ADR 0019, así que
+exigiría extender ese ADR. sqsolve sigue sin servir imágenes de stills: la exportación
+experimental (`22`) entrega el árbol de nodos y la miniatura, no el DPX.

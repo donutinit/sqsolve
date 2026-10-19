@@ -243,7 +243,7 @@ func (s *Server) reauthSubmit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) account(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	tokens, _ := s.A.Auth.Tokens(r.Context(), p.User.ID)
-	s.render(w, r, "account", "Mi cuenta", "cuenta", map[string]any{"Tokens": tokens, "Scopes": []string{"read", "backup", "restore", "admin"}})
+	s.render(w, r, "account", "Mi cuenta", "cuenta", map[string]any{"Tokens": tokens, "Scopes": []string{"read", "backup", "restore", "export", "admin"}})
 }
 
 func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request) {

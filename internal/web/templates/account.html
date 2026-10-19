@@ -8,7 +8,7 @@
       {{template "csrf" .CSRF}}
       <label>Nueva contraseña<input type="password" name="password" required minlength="12" autocomplete="new-password"></label>
       <label>Repítela<input type="password" name="password2" required minlength="12" autocomplete="new-password"></label>
-      <div class="actions"><button type="submit">Cambiar</button></div>
+      <div class="actions"><button type="submit">Cambiar contraseña</button></div>
     </form>
   </section>
   <section class="card">
@@ -28,16 +28,16 @@
   <h2>Tokens de API</h2>
   <p class="hint">Para automatizar con la API (<code>/api/v1</code>). El token solo puede hacer lo que permite tu rol y los alcances que elijas.</p>
   {{if .Data.Tokens}}
-  <table class="table compact"><thead><tr><th>Nombre</th><th>Alcances</th><th>Creado</th><th>Último uso</th><th>Vence</th><th></th></tr></thead><tbody>
+  <div class="scroll-x"><table class="table compact"><thead><tr><th>Nombre</th><th>Alcances</th><th>Creado</th><th>Último uso</th><th>Vence</th><th></th></tr></thead><tbody>
   {{range .Data.Tokens}}<tr class="{{if .RevokedAt}}revoked{{end}}"><td>{{.Name}}</td><td class="mono small">{{join .Scopes ", "}}</td><td>{{dt .CreatedAt}}</td><td>{{if .LastUsedAt}}{{ago .LastUsedAt}}{{else}}nunca{{end}}</td><td>{{dt .ExpiresAt}}</td>
     <td>{{if .RevokedAt}}{{template "badge" (dict "tone" "off" "label" "Revocado")}}{{else}}<form method="post" action="/cuenta/tokens/{{.ID}}/revocar" data-confirm="Lo que use este token dejará de funcionar. ¿Revocarlo?">{{template "csrf" $.CSRF}}<button type="submit" class="ghost small danger">Revocar</button></form>{{end}}</td></tr>{{end}}
-  </tbody></table>
+  </tbody></table></div>
   {{end}}
   <form method="post" action="/cuenta/tokens" class="form inline">
     {{template "csrf" .CSRF}}
     <label>Nombre<input name="name" required maxlength="80" placeholder="script de respaldos"></label>
     <fieldset class="inline"><legend>Alcances</legend>
-      {{range .Data.Scopes}}<label class="check"><input type="checkbox" name="scope" value="{{.}}" {{if eq . "read"}}checked{{end}}> {{.}}</label>{{end}}
+      {{range .Data.Scopes}}<label class="check"><input type="checkbox" name="scope" value="{{.}}" {{if eq . "read"}}checked{{end}}> <span>{{scopelabel .}} <code>{{.}}</code></span></label>{{end}}
     </fieldset>
     <label>Vigencia<select name="days"><option value="30">30 días</option><option value="90">90 días</option><option value="365" selected>1 año</option></select></label>
     <button type="submit">Crear token</button>
