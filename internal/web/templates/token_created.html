@@ -1,0 +1,9 @@
+{{define "content"}}
+<section class="card narrow">
+  <h1>Token creado</h1>
+  <p>Cópialo ahora: no se volverá a mostrar.</p>
+  {{template "copy" (dict "label" "Token" "value" .Data.Token "id" "tok")}}
+  <p class="hint">Úsalo en la cabecera <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+  <p><a class="button" href="/cuenta">Listo</a></p>
+</section>
+{{end}}

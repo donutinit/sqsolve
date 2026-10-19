@@ -1,0 +1,72 @@
+{{define "content"}}
+{{$s := .Data.S}}
+<div class="pagehead">
+  <div>
+    <h1>Panel</h1>
+    <p class="muted">¿Están protegidos los proyectos y pueden trabajar las estaciones?</p>
+  </div>
+  {{if .P.Can "library.create"}}<a class="button" href="/bibliotecas/nueva">Nueva biblioteca</a>{{end}}
+</div>
+{{if not .Data.Host}}<div class="flash info" role="status">Falta la dirección que usarán las estaciones. <a href="/ajustes">Defínela en Ajustes</a>.</div>{{end}}
+
+<div class="strip">
+  <div>
+    <p class="section-label">PostgreSQL</p>
+    {{if $s.PostgresUp}}
+      <p class="value">{{template "badge" (dict "tone" "ok" "label" "En línea")}} <span class="mono">{{$s.Postgres.Version}}</span></p>
+      <p class="muted small">{{$s.Postgres.Connections}} de {{$s.Postgres.MaxConnections}} conexiones · encendido {{ago $s.Postgres.StartedAt}}</p>
+    {{else}}
+      <p class="value">{{template "badge" (dict "tone" "bad" "label" "Sin respuesta")}}</p>
+      <p class="muted small">Las estaciones no pueden abrir proyectos. <a href="/salud">Ver salud</a></p>
+    {{end}}
+  </div>
+  <div>
+    <p class="section-label">Estaciones conectadas</p>
+    <p class="value">{{.Data.Stations}}</p>
+    <p class="muted small">en {{$s.Active}} {{if eq $s.Active 1}}biblioteca activa{{else}}bibliotecas activas{{end}}</p>
+  </div>
+  <div>
+    <p class="section-label">Almacenamiento</p>
+    {{range $s.Volumes}}
+      <div class="meter"><span class="mlabel">{{.Name}}</span><meter min="0" max="100" low="80" high="90" optimum="0" value="{{pctw .UsedPct}}" title="{{pct .UsedPct}} usado">{{pct .UsedPct}}</meter><span class="mval">{{bytes .Free}} libres</span></div>
+    {{end}}
+  </div>
+</div>
+
+{{if $s.Attention}}
+<section class="card" aria-labelledby="atencion">
+  <h2 id="atencion">Atención</h2>
+  <ul class="attention">
+    {{range $s.Attention}}<li><span class="badge {{sevtone .Severity}}"><span class="dot" aria-hidden="true"></span>{{sev .Severity}}</span> <a href="{{.Link}}">{{.Message}}</a></li>{{end}}
+  </ul>
+</section>
+{{end}}
+
+<section class="card" aria-labelledby="proteccion">
+  <div class="cardhead"><h2 id="proteccion">Protección de los últimos 14 días</h2><a href="/bibliotecas">Todas las bibliotecas</a></div>
+  {{if .Data.Tracks}}
+  <div class="tracks">
+    <div class="trackrow" aria-hidden="true"><span class="ruler"><span>hace 14 días</span><span>hace 7 días</span><span>ahora</span></span></div>
+    {{range .Data.Tracks}}{{template "trackrow" (dict "t" . "name" .Label)}}{{end}}
+  </div>
+  {{template "tracklegend"}}
+  {{else}}
+  {{template "empty" (dict "text" "Aún no hay bibliotecas. Una biblioteca es una base de PostgreSQL donde Resolve guarda los proyectos; aquí verás cada una como una pista con sus respaldos." "href" "/bibliotecas/nueva" "action" "Crear la primera biblioteca")}}
+  {{end}}
+</section>
+
+<div class="grid2">
+  <section class="card">
+    <div class="cardhead"><h2>Tareas recientes</h2><a href="/tareas">Ver todas</a></div>
+    {{if .Data.Jobs}}{{template "joblist" .Data.Jobs}}{{else}}<p class="muted">Sin tareas todavía.</p>{{end}}
+  </section>
+  <section class="card">
+    <div class="cardhead"><h2>Avisos recientes</h2><a href="/actividad">Ver actividad</a></div>
+    {{if .Data.Events}}
+    <ul class="events">
+      {{range .Data.Events}}<li><span class="badge {{sevtone .Severity}}"><span class="dot" aria-hidden="true"></span>{{sev .Severity}}</span> {{.Message}} <time class="muted small" datetime="{{iso .TS}}" title="{{dt .TS}}">{{ago .TS}}</time></li>{{end}}
+    </ul>
+    {{else}}<p class="muted">Sin avisos. Todo lo importante aparecerá aquí.</p>{{end}}
+  </section>
+</div>
+{{end}}

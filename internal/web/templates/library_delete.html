@@ -1,0 +1,20 @@
+{{define "content"}}
+{{$l := .Data.L}}
+<section class="card narrow danger-zone">
+  <h1>Eliminar {{$l.DisplayName}}</h1>
+  <p>Esto va a pasar:</p>
+  <ol>
+    <li>Se toma un respaldo final y se verifica. Si falla, no se elimina nada.</li>
+    <li>Se bloquean las conexiones{{with .Data.Sessions}} y se cierran <strong>{{len .}} sesiones abiertas</strong>{{end}}.</li>
+    <li>La base pasa a la papelera durante {{.Data.Settings.TrashDays}} días; puedes recuperarla en ese plazo.</li>
+    <li>Después se borra del servidor. Los respaldos se quedan según la retención.</li>
+  </ol>
+  {{with .Data.Sessions}}<div class="flash error" role="alert">Hay {{len .}} conexiones abiertas: {{range $i, $s := .}}{{if $i}}, {{end}}<span class="mono">{{$s.User}}@{{$s.ClientAddr}}</span>{{end}}. Avisa antes de continuar.</div>{{end}}
+  {{with .Data.DB}}<p class="muted">Tamaño actual: {{bytes .SizeBytes}}.</p>{{end}}
+  <form method="post" action="/bibliotecas/{{$l.ID}}/eliminar" class="form">
+    {{template "csrf" .CSRF}}
+    <label>Escribe <code>{{$l.Slug}}</code> para confirmar<input name="confirm" required autocomplete="off" class="mono" data-confirm-match="{{$l.Slug}}"></label>
+    <div class="actions"><button type="submit" class="danger" data-needs-match>Eliminar biblioteca</button><a href="/bibliotecas/{{$l.ID}}">Cancelar</a></div>
+  </form>
+</section>
+{{end}}

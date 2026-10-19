@@ -1,0 +1,237 @@
+{{define "content"}}
+{{$st := .Data.Settings}}{{$p := .P}}
+<div class="pagehead"><h1>Ajustes</h1></div>
+<nav class="tabs" aria-label="Secciones de ajustes">
+  <a href="/ajustes" {{if eq .Data.Tab "general"}}aria-current="page"{{end}}>General</a>
+  {{if $p.Can "users.manage"}}<a href="/ajustes?tab=usuarios" {{if eq .Data.Tab "usuarios"}}aria-current="page"{{end}}>Usuarios</a>{{end}}
+  <a href="/ajustes?tab=notificaciones" {{if eq .Data.Tab "notificaciones"}}aria-current="page"{{end}}>Notificaciones</a>
+  <a href="/ajustes?tab=mantenimiento" {{if eq .Data.Tab "mantenimiento"}}aria-current="page"{{end}}>Mantenimiento</a>
+  <a href="/ajustes?tab=acerca" {{if eq .Data.Tab "acerca"}}aria-current="page"{{end}}>Acerca de</a>
+</nav>
+
+{{if eq .Data.Tab "general"}}
+<section class="card">
+  <form method="post" action="/ajustes/general" class="form">
+    {{template "csrf" .CSRF}}
+    <fieldset {{if not ($p.Can "settings.edit")}}disabled{{end}}>
+      <legend>Instalación</legend>
+      <label>Nombre<input name="name" value="{{$st.InstanceName}}" maxlength="60"></label>
+      <label>Dirección que usan las estaciones<input name="host" value="{{$st.AdvertisedHost}}" class="mono" placeholder="192.168.1.10"></label>
+      <p class="hint">IP o nombre del servidor tal como se escribe en Resolve, sin puerto.</p>
+    </fieldset>
+    <fieldset {{if not ($p.Can "settings.edit")}}disabled{{end}}>
+      <legend>Política por defecto para bibliotecas nuevas</legend>
+      <label>Programación (cron)<input name="default_cron" value="{{$st.DefaultPolicy.Cron}}" class="mono"></label>
+      <div class="row5">
+        <label>Últimos<input type="number" name="keep_last" value="{{$st.DefaultPolicy.KeepLast}}" min="0"></label>
+        <label>Diarios<input type="number" name="keep_daily" value="{{$st.DefaultPolicy.KeepDaily}}" min="0"></label>
+        <label>Semanales<input type="number" name="keep_weekly" value="{{$st.DefaultPolicy.KeepWeekly}}" min="0"></label>
+        <label>Mensuales<input type="number" name="keep_monthly" value="{{$st.DefaultPolicy.KeepMonthly}}" min="0"></label>
+      </div>
+    </fieldset>
+    <fieldset {{if not ($p.Can "settings.edit")}}disabled{{end}}>
+      <legend>Plazos</legend>
+      <div class="row5">
+        <label>Ventana de inicialización (min)<input type="number" name="init_window" value="{{$st.InitWindowMinutes}}" min="5" max="1440"></label>
+        <label>Papelera (días)<input type="number" name="trash_days" value="{{$st.TrashDays}}" min="1"></label>
+        <label>Estado previo tras restaurar (días)<input type="number" name="prev_days" value="{{$st.PrevDays}}" min="1"></label>
+        <label>Aviso sin respaldo (horas)<input type="number" name="stale_hours" value="{{$st.StaleHours}}" min="1"></label>
+        <label>Subida máxima (MB)<input type="number" name="import_max_mb" value="{{$st.ImportMaxMB}}" min="1"></label>
+      </div>
+    </fieldset>
+    <fieldset {{if not ($p.Can "settings.edit")}}disabled{{end}}>
+      <legend>Seguridad</legend>
+      <label class="check"><input type="checkbox" name="maintenance_db" {{if $st.MaintenanceDBAccess}}checked{{end}}> Permitir que los usuarios de biblioteca entren a la base <code>postgres</code> (Resolve la usa al crear bibliotecas)</label>
+      <label class="check"><input type="checkbox" name="require_tls" {{if $st.RequireTLS}}checked{{end}}> Exigir TLS en las conexiones de Resolve (solo si comprobaste que tu versión de Resolve usa TLS, PoC-06)</label>
+      <label class="check"><input type="checkbox" name="totp_required" {{if $st.TOTPRequiredAdmins}}checked{{end}}> Segundo factor obligatorio para administradores</label>
+    </fieldset>
+    {{if $p.Can "settings.edit"}}<div class="actions"><button type="submit">Guardar</button></div>{{end}}
+  </form>
+</section>
+{{if $p.Can "settings.edit"}}
+<section class="card">
+  <h2>Certificado del panel</h2>
+  {{with .Data.Cert}}<p>Actual: {{.Subject}}, vence {{dt .NotAfter}}.<br><span class="mono small break muted">{{.Fingerprint}}</span></p>{{end}}
+  <form method="post" action="/ajustes/certificado" class="form inline" enctype="multipart/form-data">
+    {{template "csrf" .CSRF}}
+    <label>Certificado PEM<input type="file" name="cert" required></label>
+    <label>Llave PEM<input type="file" name="key" required></label>
+    <button type="submit">Instalar</button>
+  </form>
+</section>
+{{end}}
+{{end}}
+
+{{if eq .Data.Tab "usuarios"}}
+<section class="card">
+  <h2>Usuarios del panel</h2>
+  <p class="hint">Son cuentas para administrar sqsolve. No son los usuarios con los que Resolve se conecta a las bibliotecas.</p>
+  <table class="table compact cards-on-mobile"><thead><tr><th>Usuario</th><th>Rol</th><th>Segundo factor</th><th>Último acceso</th><th>Cambios</th></tr></thead><tbody>
+  {{range .Data.Users}}
+  <tr>
+    <td data-label="Usuario"><strong>{{.Username}}</strong>{{if .DisplayName}}<br><span class="muted small">{{.DisplayName}}</span>{{end}}{{if .DisabledAt}} <span class="badge off">Desactivado</span>{{end}}</td>
+    <td data-label="Rol">{{.Role.Label}}</td>
+    <td data-label="Segundo factor">{{if .TOTPEnabled}}Sí <form method="post" action="/ajustes/usuarios/{{.ID}}/totp" class="inline-form" data-confirm="¿Quitar el segundo factor de {{.Username}}?">{{template "csrf" $.CSRF}}<button class="ghost small" type="submit">Quitar</button></form>{{else}}No{{end}}</td>
+    <td data-label="Último acceso">{{if .LastLoginAt}}{{ago .LastLoginAt}}{{else}}nunca{{end}}</td>
+    <td data-label="Cambios">
+      <details class="more"><summary>Editar</summary>
+        <form method="post" action="/ajustes/usuarios/{{.ID}}" class="form">
+          {{template "csrf" $.CSRF}}
+          <label>Nombre visible<input name="display" value="{{.DisplayName}}"></label>
+          <label>Rol<select name="role">{{$r := .Role}}{{range $.Data.Roles}}<option value="{{.}}" {{if eq . $r}}selected{{end}}>{{.Label}}</option>{{end}}</select></label>
+          <label class="check"><input type="checkbox" name="disabled" {{if .DisabledAt}}checked{{end}}> Desactivado</label>
+          <button type="submit" class="small">Guardar</button>
+        </form>
+        <form method="post" action="/ajustes/usuarios/{{.ID}}/contrasena" class="form">
+          {{template "csrf" $.CSRF}}
+          <label>Nueva contraseña<input type="password" name="password" minlength="12" required autocomplete="new-password"></label>
+          <button type="submit" class="small ghost">Cambiar contraseña</button>
+        </form>
+      </details>
+    </td>
+  </tr>
+  {{end}}
+  </tbody></table>
+</section>
+<section class="card narrow">
+  <h2>Agregar usuario</h2>
+  <form method="post" action="/ajustes/usuarios" class="form">
+    {{template "csrf" .CSRF}}
+    <label>Usuario<input name="username" required pattern="[A-Za-z][A-Za-z0-9._\-]{1,31}" autocomplete="off"></label>
+    <label>Nombre visible<input name="display"></label>
+    <label>Rol<select name="role">{{range .Data.Roles}}<option value="{{.}}">{{.Label}}</option>{{end}}</select></label>
+    <p class="hint">Lector: ve todo sin cambiar nada. Operador: además respalda, verifica y restaura como copia. Administrador: todo.</p>
+    <label>Contraseña<input type="password" name="password" required minlength="12" autocomplete="new-password"></label>
+    <label>Repítela<input type="password" name="password2" required minlength="12" autocomplete="new-password"></label>
+    <div class="actions"><button type="submit">Agregar</button></div>
+  </form>
+</section>
+{{end}}
+
+{{if eq .Data.Tab "notificaciones"}}
+<section class="card">
+  <h2>Canales</h2>
+  {{if .Data.Channels}}
+  <table class="table compact cards-on-mobile"><thead><tr><th>Nombre</th><th>Tipo</th><th>Severidad mínima</th><th>Eventos</th><th>Último envío</th><th></th></tr></thead><tbody>
+  {{range .Data.Channels}}
+  <tr>
+    <td data-label="Nombre">{{.Name}}{{if not .Enabled}} <span class="badge off">Pausado</span>{{end}}</td>
+    <td data-label="Tipo">{{.Kind}}</td>
+    <td data-label="Severidad">{{sev .MinSeverity}}</td>
+    <td data-label="Eventos" class="mono small">{{.Pattern}}</td>
+    <td data-label="Último envío">{{if .LastOK}}{{ago .LastOK}}{{else}}nunca{{end}}{{if .LastError}}<br><span class="bad small">{{.LastError}}</span>{{end}}</td>
+    <td class="actions">
+      {{if $p.Can "notify.manage"}}
+      <form method="post" action="/ajustes/notificaciones/{{.ID}}/probar">{{template "csrf" $.CSRF}}<button class="ghost small" type="submit">Probar</button></form>
+      <a class="small" href="/ajustes?tab=notificaciones&editar={{.ID}}">Editar</a>
+      <form method="post" action="/ajustes/notificaciones/{{.ID}}/borrar" data-confirm="¿Borrar el canal {{.Name}}?">{{template "csrf" $.CSRF}}<button class="ghost small danger" type="submit">Borrar</button></form>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+  </tbody></table>
+  {{else}}<p class="muted">Sin canales. sqsolve no envía nada fuera del servidor hasta que agregues uno.</p>{{end}}
+</section>
+{{if $p.Can "notify.manage"}}
+{{$edit := .Data.Edit}}{{$kind := .Data.NewKind}}
+{{$ch := false}}{{range .Data.Channels}}{{if eq .ID $edit}}{{$ch = .}}{{$kind = .Kind}}{{end}}{{end}}
+<section class="card narrow">
+  <h2>{{if $ch}}Editar canal{{else}}Nuevo canal{{end}}</h2>
+  {{if not $kind}}
+    <p>Tipo de canal:</p>
+    <div class="actions">
+      <a class="button ghost" href="/ajustes?tab=notificaciones&nuevo=webhook">Webhook</a>
+      <a class="button ghost" href="/ajustes?tab=notificaciones&nuevo=ntfy">ntfy</a>
+      <a class="button ghost" href="/ajustes?tab=notificaciones&nuevo=smtp">Correo (SMTP)</a>
+    </div>
+  {{else}}
+  <form method="post" action="/ajustes/notificaciones" class="form">
+    {{template "csrf" .CSRF}}
+    <input type="hidden" name="kind" value="{{$kind}}">
+    {{if $ch}}<input type="hidden" name="id" value="{{$ch.ID}}">{{end}}
+    <label>Nombre<input name="name" required value="{{if $ch}}{{$ch.Name}}{{end}}"></label>
+    {{if eq $kind "webhook"}}
+      <label>URL<input name="url" type="url" required value="{{if $ch}}{{index $ch.Config "url"}}{{end}}" class="mono"></label>
+      <label>Secreto para la firma HMAC {{if $ch}}<span class="muted">(vacío conserva el actual)</span>{{end}}<input name="secret" type="password" autocomplete="off"></label>
+    {{else if eq $kind "ntfy"}}
+      <label>URL del tema<input name="url" type="url" required value="{{if $ch}}{{index $ch.Config "url"}}{{end}}" class="mono" placeholder="https://ntfy.ejemplo.local/sqsolve"></label>
+      <label>Token <span class="muted">(opcional)</span><input name="token" type="password" autocomplete="off"></label>
+    {{else if eq $kind "smtp"}}
+      <label>Servidor<input name="host" required value="{{if $ch}}{{index $ch.Config "host"}}{{end}}"></label>
+      <label>Puerto<input name="port" inputmode="numeric" value="{{if $ch}}{{index $ch.Config "port"}}{{else}}587{{end}}"></label>
+      <label>Seguridad<select name="security">{{$sec := ""}}{{if $ch}}{{$sec = index $ch.Config "security"}}{{end}}<option value="starttls" {{if or (eq $sec "") (eq $sec "starttls")}}selected{{end}}>STARTTLS</option><option value="tls" {{if eq $sec "tls"}}selected{{end}}>TLS directo</option><option value="none" {{if eq $sec "none"}}selected{{end}}>Ninguna</option></select></label>
+      <label>Usuario<input name="username" value="{{if $ch}}{{index $ch.Config "username"}}{{end}}" autocomplete="off"></label>
+      <label>Contraseña <span class="muted">(vacío conserva la actual)</span><input name="password" type="password" autocomplete="off"></label>
+      <label>Remitente<input name="from" required value="{{if $ch}}{{index $ch.Config "from"}}{{end}}" placeholder="sqsolve@estudio.local"></label>
+      <label>Destinatarios (separados por coma)<input name="to" required value="{{if $ch}}{{index $ch.Config "to"}}{{end}}"></label>
+    {{end}}
+    <label>Severidad mínima<select name="severity">{{$sv := "error"}}{{if $ch}}{{$sv = $ch.MinSeverity}}{{end}}
+      <option value="info" {{if eq $sv "info"}}selected{{end}}>Info</option><option value="warning" {{if eq $sv "warning"}}selected{{end}}>Aviso</option><option value="error" {{if eq $sv "error"}}selected{{end}}>Error</option><option value="critical" {{if eq $sv "critical"}}selected{{end}}>Crítico</option></select></label>
+    <label>Eventos (patrones separados por coma)<input name="pattern" class="mono" value="{{if $ch}}{{$ch.Pattern}}{{else}}*{{end}}"></label>
+    <p class="hint">Ejemplos: <code>*</code>, <code>backup.*</code>, <code>backup.failed, storage.low</code>.</p>
+    <label class="check"><input type="checkbox" name="enabled" {{if or (not $ch) $ch.Enabled}}checked{{end}}> Activo</label>
+    <div class="actions"><button type="submit">Guardar</button><a href="/ajustes?tab=notificaciones">Cancelar</a></div>
+  </form>
+  {{end}}
+</section>
+{{end}}
+{{end}}
+
+{{if eq .Data.Tab "mantenimiento"}}
+<div class="grid2">
+  <section class="card">
+    <h2>Tareas manuales</h2>
+    {{if $p.Can "settings.edit"}}
+    <ul class="actionlist">
+      <li><form method="post" action="/ajustes/mantenimiento/verificar">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Verificar ahora el último respaldo de cada biblioteca</button></form></li>
+      <li><form method="post" action="/ajustes/mantenimiento/retencion">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Aplicar la retención ahora</button></form></li>
+      <li><form method="post" action="/ajustes/mantenimiento/optimizar">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Optimizar bibliotecas (VACUUM ANALYZE)</button></form></li>
+      <li><form method="post" action="/ajustes/mantenimiento/control">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Respaldar el plano de control</button></form></li>
+      <li><form method="post" action="/ajustes/mantenimiento/revisar">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Revisar catálogo contra archivos</button></form></li>
+      <li><form method="post" action="/ajustes/mantenimiento/catalogo">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Reconstruir catálogo desde el volumen</button></form></li>
+      <li><form method="post" action="/ajustes/mantenimiento/hba">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Regenerar pg_hba.conf</button></form></li>
+    </ul>
+    {{end}}
+  </section>
+  <section class="card">
+    <h2>Actualizar DaVinci Resolve</h2>
+    <p>Abrir proyectos en una versión nueva de Resolve puede dejarlos inaccesibles en la anterior. Antes de actualizar las estaciones, sqsolve respalda y verifica con restauración de prueba todas las bibliotecas.</p>
+    {{if $p.Can "settings.edit"}}
+    <form method="post" action="/ajustes/mantenimiento/actualizacion" class="form inline">
+      {{template "csrf" .CSRF}}
+      <label>Versión de destino<input name="target" required maxlength="20" placeholder="21.2" class="mono"></label>
+      <button type="submit">Preparar actualización</button>
+    </form>
+    <p class="hint">Cuando la tarea termine: que todos cierren Resolve, actualiza una estación, abre cada biblioteca y acepta la actualización si Resolve la ofrece, revisa un proyecto y después actualiza las demás.</p>
+    {{end}}
+  </section>
+</div>
+<div class="grid2">
+  <section class="card">
+    <h2>Recuperación</h2>
+    <p>Copias del plano de control en el volumen de respaldos: {{len .Data.Copies}}.</p>
+    {{if $p.Can "settings.edit"}}<p><a class="button ghost" href="/ajustes/kit">Descargar kit de recuperación</a></p>{{end}}
+    <p class="hint">Instalación <span class="mono">{{.Data.InstanceID}}</span>.</p>
+  </section>
+  <section class="card">
+    <h2>Diagnóstico</h2>
+    <p>Un archivo zip con versiones, configuración generada, estado de PostgreSQL, catálogo y tareas fallidas. No incluye contraseñas ni datos de proyectos.</p>
+    {{if $p.Can "diagnostics"}}<p><a class="button ghost" href="/ajustes/diagnostico">Descargar paquete de diagnóstico</a></p>{{end}}
+  </section>
+</div>
+{{end}}
+
+{{if eq .Data.Tab "acerca"}}
+<section class="card narrow">
+  <h2>sqsolve {{.Data.Version}}</h2>
+  <dl class="facts">
+    <dt>Commit</dt><dd class="mono">{{.Data.Commit}}</dd>
+    {{with .Data.PG}}<dt>PostgreSQL</dt><dd>{{.Version}}</dd>{{end}}
+    <dt>Licencia</dt><dd>GNU AGPL, solo la versión 3 (AGPL-3.0-only)</dd>
+    <dt>Código fuente</dt><dd><a href="https://github.com/donutinit/sqsolve">github.com/donutinit/sqsolve</a> (el de esta versión es el commit indicado)</dd>
+  </dl>
+  <p>Compatibilidad comprobada y pendiente: ver <code>docs/14-compatibilidad.md</code> en el repositorio.</p>
+  <p class="hint">DaVinci Resolve y Blackmagic Design son marcas de Blackmagic Design Pty. Ltd. sqsolve es un proyecto independiente, sin relación con Blackmagic Design ni con WireBear.</p>
+</section>
+{{end}}
+{{end}}

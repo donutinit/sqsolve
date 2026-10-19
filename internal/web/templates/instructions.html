@@ -1,0 +1,26 @@
+{{define "content"}}
+{{$c := .Data.C}}
+<section class="card narrow printable">
+  <h1>Conectar {{$c.LibraryName}} en DaVinci Resolve</h1>
+  <ol class="steps">
+    <li>Abre DaVinci Resolve. En el Project Manager, abre la lista de bibliotecas de proyectos.</li>
+    <li>Agrega una biblioteca en red (PostgreSQL) y elige <strong>Connect</strong>.</li>
+    <li>Escribe estos datos:
+      <dl class="facts">
+        <dt>Nombre de la biblioteca</dt><dd class="mono">{{$c.Database}}</dd>
+        <dt>Ubicación</dt><dd class="mono">{{or $c.Host "Por confirmar"}}</dd>
+        <dt>Usuario</dt><dd class="mono">{{$c.User}}</dd>
+        <dt>Contraseña</dt><dd>la entrega el administrador por un canal privado</dd>
+      </dl>
+    </li>
+    <li>Abre la biblioteca y crea o abre un proyecto.</li>
+  </ol>
+  <h2>Si algo falla</h2>
+  <ul>
+    <li>La estación debe estar en la misma red que el servidor o conectada por la VPN del estudio.</li>
+    <li>El servidor usa el puerto 5432. Resolve no pide el puerto.</li>
+    <li>Para colaborar, todas las estaciones necesitan Resolve Studio en la misma versión y los puertos TCP 50059 a 50314 abiertos entre ellas.</li>
+  </ul>
+  <p class="noprint"><button type="button" data-print>Imprimir</button> <a href="/bibliotecas/{{.Data.L.ID}}">Volver</a></p>
+</section>
+{{end}}

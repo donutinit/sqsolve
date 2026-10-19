@@ -1,0 +1,15 @@
+{{define "content"}}
+<section class="card narrow">
+  <h1>Guarda el kit de recuperación</h1>
+  <p>El kit contiene la clave maestra que cifra las contraseñas de las bibliotecas. Si este servidor se pierde, con el kit y la copia de los respaldos recuperas todo, incluidas las contraseñas que ya usan las estaciones.</p>
+  <ul>
+    <li>Guárdalo fuera de este servidor (gestor de contraseñas, USB en un cajón).</li>
+    <li>Trátalo como una contraseña: quien lo tenga junto con los volúmenes puede leer las credenciales.</li>
+  </ul>
+  <p><a class="button" href="/ajustes/kit">Descargar kit de recuperación</a></p>
+  <form class="form" action="/" method="get">
+    <label class="check"><input type="checkbox" required> Lo guardé fuera de este servidor</label>
+    <div class="actions"><button type="submit">Ir al panel</button></div>
+  </form>
+</section>
+{{end}}

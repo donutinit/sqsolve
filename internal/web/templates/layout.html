@@ -1,0 +1,56 @@
+{{define "layout"}}<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{.Title}} | {{.Instance}}</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#contenido">Saltar al contenido</a>
+{{if .P}}
+<div class="shell">
+  <aside class="nav" aria-label="Navegación principal">
+    <a class="brand" href="/"><svg viewBox="0 0 22 16" aria-hidden="true" focusable="false"><rect x="0" y="5" width="22" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/><line x1="5" x2="5" y1="1" y2="15" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><line x1="11" x2="11" y1="1" y2="15" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><line x1="17" x2="17" y1="4" y2="12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" opacity="0.6"/></svg><span>sqsolve</span></a>
+    <nav>
+      <a href="/" {{if eq .Section "panel"}}aria-current="page"{{end}}>Panel</a>
+      <a href="/bibliotecas" {{if eq .Section "bibliotecas"}}aria-current="page"{{end}}>Bibliotecas</a>
+      <a href="/respaldos" {{if eq .Section "respaldos"}}aria-current="page"{{end}}>Respaldos</a>
+      <a href="/tareas" {{if eq .Section "tareas"}}aria-current="page"{{end}}>Tareas{{if .Running}} <span class="count">{{.Running}}</span>{{end}}</a>
+      <a href="/actividad" {{if eq .Section "actividad"}}aria-current="page"{{end}}>Actividad</a>
+      <a href="/salud" {{if eq .Section "salud"}}aria-current="page"{{end}}>Salud</a>
+      <a href="/ajustes" {{if eq .Section "ajustes"}}aria-current="page"{{end}}>Ajustes</a>
+    </nav>
+    <div class="who">
+      <a href="/cuenta" {{if eq .Section "cuenta"}}aria-current="page"{{end}}>{{.P.User.Name}}</a>
+      <span class="muted small">{{.P.User.Role.Label}}</span>
+      <form method="post" action="/salir"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link" type="submit">Salir</button></form>
+    </div>
+  </aside>
+  <div class="main">
+    <header class="top">
+      <div class="crumbs">{{.Instance}}</div>
+      <div class="topstatus">
+        {{if not .PGReady}}<span class="badge bad">PostgreSQL sin conexión</span>{{end}}
+        {{if .Running}}<a class="badge run" href="/tareas">{{.Running}} en curso</a>{{end}}
+        {{if .Queued}}<a class="badge off" href="/tareas">{{.Queued}} en cola</a>{{end}}
+      </div>
+    </header>
+    {{template "flash" .}}
+    <main id="contenido">{{block "content" .}}{{end}}</main>
+    <footer class="foot">sqsolve {{.Version}} · software libre AGPL-3.0 · <a href="/ajustes?tab=acerca">Acerca de y código fuente</a></footer>
+  </div>
+</div>
+{{else}}
+<div class="bare">
+  <div class="brand big"><svg viewBox="0 0 22 16" aria-hidden="true" focusable="false"><rect x="0" y="5" width="22" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.55"/><line x1="5" x2="5" y1="1" y2="15" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><line x1="11" x2="11" y1="1" y2="15" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><line x1="17" x2="17" y1="4" y2="12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" opacity="0.6"/></svg><span>sqsolve</span></div>
+  {{template "flash" .}}
+  <main id="contenido">{{block "content" .}}{{end}}</main>
+  <footer class="foot">sqsolve {{.Version}} · software libre AGPL-3.0</footer>
+</div>
+{{end}}
+</body>
+</html>{{end}}

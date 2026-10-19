@@ -1,0 +1,19 @@
+{{define "content"}}
+<div class="pagehead"><h1>Tareas</h1></div>
+<section class="card">
+  <h2>En curso y en cola</h2>
+  {{if .Data.Active}}{{template "jobtable" .Data.Active}}{{else}}<p class="muted">Nada en curso.</p>{{end}}
+</section>
+<section class="card">
+  <div class="cardhead"><h2>Historial</h2>
+    <nav class="tabs small" aria-label="Filtro por estado">
+      <a href="/tareas" {{if eq .Data.State ""}}aria-current="page"{{end}}>Todas</a>
+      <a href="/tareas?estado=succeeded" {{if eq .Data.State "succeeded"}}aria-current="page"{{end}}>Completadas</a>
+      <a href="/tareas?estado=failed" {{if eq .Data.State "failed"}}aria-current="page"{{end}}>Fallidas</a>
+      <a href="/tareas?estado=interrupted" {{if eq .Data.State "interrupted"}}aria-current="page"{{end}}>Interrumpidas</a>
+      <a href="/tareas?estado=cancelled" {{if eq .Data.State "cancelled"}}aria-current="page"{{end}}>Canceladas</a>
+    </nav>
+  </div>
+  {{if .Data.History}}{{template "jobtable" .Data.History}}{{else}}<p class="muted">Sin tareas.</p>{{end}}
+</section>
+{{end}}

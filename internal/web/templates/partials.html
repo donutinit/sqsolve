@@ -1,0 +1,65 @@
+{{define "flash"}}{{with .Flash}}<div class="flash {{.Kind}}" role="{{if eq .Kind "error"}}alert{{else}}status{{end}}">{{.Msg}}</div>{{end}}{{end}}
+
+{{define "badge"}}<span class="badge {{.tone}}"><span class="dot" aria-hidden="true"></span>{{.label}}</span>{{end}}
+
+{{define "csrf"}}<input type="hidden" name="csrf" value="{{.}}">{{end}}
+
+{{define "copy"}}<div class="copyfield">
+  <span class="label">{{.label}}</span>
+  <code id="{{.id}}">{{.value}}</code>
+  <button type="button" class="ghost small" data-copy="#{{.id}}">Copiar</button>
+</div>{{end}}
+
+{{define "empty"}}<div class="empty"><p>{{.text}}</p>{{if .href}}<a class="button" href="{{.href}}">{{.action}}</a>{{end}}</div>{{end}}
+
+{{define "jobstate"}}{{template "badge" (dict "tone" (jobtone .State) "label" .State.Label)}}{{end}}
+
+{{define "librarystate"}}{{template "badge" (dict "tone" .State.Tone "label" .State.Label)}}{{end}}
+
+{{define "jobtable"}}
+<table class="table">
+  <thead><tr><th>Tarea</th><th>Estado</th><th>Inicio</th><th>Duración</th><th>Origen</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td><a href="/tareas/{{.ID}}">{{.Title}}</a>{{if .ErrorCode}} <span class="muted small mono">{{.ErrorCode}}</span>{{end}}</td>
+      <td>{{template "jobstate" .}}{{if eq .State "running"}} <span class="muted small">{{.Progress}} %</span>{{end}}</td>
+      <td><time datetime="{{iso .CreatedAt}}" title="{{dt .CreatedAt}}">{{ago .CreatedAt}}</time></td>
+      <td>{{dur .Duration}}</td>
+      <td class="muted">{{.CreatedBy.Label}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{define "track"}}<svg class="track{{if .big}} big{{end}}" viewBox="0 0 1000 30" preserveAspectRatio="none" role="img" aria-label="{{.t.Summary}}" focusable="false">
+  <title>{{.t.Summary}}</title>
+  <rect class="lane" x="0" y="0" width="1000" height="30" rx="3" vector-effect="non-scaling-stroke"/>
+  {{range .t.Ticks}}<line class="tick" x1="{{.}}" x2="{{.}}" y1="2" y2="28" vector-effect="non-scaling-stroke"/>{{end}}
+  {{range .t.Gaps}}<rect class="gap" x="{{.X}}" y="1" width="{{.W}}" height="28"><title>Sin respaldo verificado reciente</title></rect>{{end}}
+  <line class="now" x1="997" x2="997" y1="0" y2="30" vector-effect="non-scaling-stroke"/>
+  {{range .t.Marks}}{{if eq .Kind "failed"}}<g class="mk failed"><title>{{.Title}}</title><line x1="{{subf .X 6}}" y1="8" x2="{{addf .X 6}}" y2="22" vector-effect="non-scaling-stroke"/><line x1="{{subf .X 6}}" y1="22" x2="{{addf .X 6}}" y2="8" vector-effect="non-scaling-stroke"/></g>{{else if eq .Kind "l2"}}<line class="mk l2" x1="{{.X}}" x2="{{.X}}" y1="4" y2="26" vector-effect="non-scaling-stroke"><title>{{.Title}}</title></line>{{else if eq .Kind "l1"}}<line class="mk l1" x1="{{.X}}" x2="{{.X}}" y1="8" y2="22" vector-effect="non-scaling-stroke"><title>{{.Title}}</title></line>{{else}}<line class="mk unverified" x1="{{.X}}" x2="{{.X}}" y1="8" y2="22" vector-effect="non-scaling-stroke"><title>{{.Title}}</title></line>{{end}}{{end}}
+</svg>{{end}}
+
+{{define "tracklegend"}}<p class="legend" aria-hidden="true">
+  <span><svg viewBox="0 0 14 16"><line x1="7" x2="7" y1="1" y2="15" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>Restauración de prueba correcta</span>
+  <span><svg viewBox="0 0 14 16"><line x1="7" x2="7" y1="4" y2="12" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity="0.7"/></svg>Suma e índice correctos</span>
+  <span><svg viewBox="0 0 14 16"><line x1="7" x2="7" y1="4" y2="12" stroke="currentColor" stroke-width="2" stroke-dasharray="2 3"/></svg>Sin verificar</span>
+  <span class="bad"><svg viewBox="0 0 14 16"><path d="M3 4 L11 12 M3 12 L11 4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>Fallido</span>
+  <span><svg viewBox="0 0 14 16"><rect x="1" y="2" width="12" height="12" rx="2" class="legendgap"/></svg>Sin respaldo verificado reciente</span>
+</p>{{end}}
+
+{{define "trackrow"}}<div class="trackrow">
+  <a class="head" href="/bibliotecas/{{.t.LibraryID}}?tab=respaldos" title="{{.name}}">{{.t.Label}}</a>
+  {{template "track" (dict "t" .t "big" false)}}
+  <span class="tail">{{template "badge" (dict "tone" .t.Tone "label" .t.LastAgo)}}</span>
+</div>{{end}}
+
+{{define "joblist"}}<ul class="joblist">
+  {{range .}}<li>
+    <a href="/tareas/{{.ID}}">{{.Title}}</a>
+    {{template "jobstate" .}}
+    <span class="muted small"><time datetime="{{iso .CreatedAt}}" title="{{dt .CreatedAt}}">{{ago .CreatedAt}}</time>{{if dur .Duration}} · {{dur .Duration}}{{end}} · {{.CreatedBy.Label}}</span>
+  </li>{{end}}
+</ul>{{end}}

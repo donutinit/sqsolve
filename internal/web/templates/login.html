@@ -1,0 +1,13 @@
+{{define "content"}}
+<section class="card narrow">
+  <h1>Entrar</h1>
+  <form method="post" action="/entrar" class="form">
+    <input type="hidden" name="csrf" value="{{.Data.Pre}}">
+    <input type="hidden" name="next" value="{{.Data.Next}}">
+    <label>Usuario<input name="username" required autocomplete="username" value="{{.Data.User}}" autofocus></label>
+    <label>Contraseña<input type="password" name="password" required autocomplete="current-password"></label>
+    <div class="actions"><button type="submit">Entrar</button></div>
+  </form>
+  <p class="hint">¿Perdiste el acceso? En la consola del contenedor: <code>sqsolve admin reset-password &lt;usuario&gt;</code></p>
+</section>
+{{end}}

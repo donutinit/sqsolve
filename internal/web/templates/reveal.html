@@ -1,0 +1,14 @@
+{{define "content"}}
+{{$c := .Data.C}}
+<section class="card narrow">
+  <h1>Datos de conexión</h1>
+  <p>Biblioteca <strong>{{.Data.L.DisplayName}}</strong>. Esta consulta quedó registrada en la auditoría. No compartas la contraseña por canales públicos.</p>
+  <div class="copygrid">
+    {{template "copy" (dict "label" "Nombre de la biblioteca" "value" $c.Database "id" "r-name")}}
+    {{template "copy" (dict "label" "Ubicación" "value" (or $c.Host "Por confirmar") "id" "r-host")}}
+    {{template "copy" (dict "label" "Usuario" "value" $c.User "id" "r-user")}}
+    {{template "copy" (dict "label" "Contraseña" "value" .Data.Password "id" "r-pass")}}
+  </div>
+  <p><a href="/bibliotecas/{{.Data.L.ID}}">Volver a la biblioteca</a></p>
+</section>
+{{end}}

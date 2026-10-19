@@ -1,0 +1,51 @@
+{{define "content"}}
+{{$s := .Data.S}}
+<div class="pagehead"><h1>Salud</h1></div>
+<div class="grid2">
+  <section class="card">
+    <h2>PostgreSQL</h2>
+    {{if $s.PostgresUp}}
+    <dl class="facts">
+      <dt>Versión</dt><dd>{{$s.Postgres.Version}}</dd>
+      <dt>Encendido</dt><dd>{{dt $s.Postgres.StartedAt}}</dd>
+      <dt>Conexiones</dt><dd>{{$s.Postgres.Connections}} de {{$s.Postgres.MaxConnections}}</dd>
+      <dt>Sumas de verificación</dt><dd>{{if $s.Postgres.DataChecksums}}activadas{{else}}desactivadas{{end}}</dd>
+      <dt>TLS</dt><dd>{{if $s.Postgres.SSL}}activado{{else}}desactivado{{end}}</dd>
+    </dl>
+    {{else}}<p>{{template "badge" (dict "tone" "bad" "label" "Sin respuesta")}}</p><p class="muted small">{{$s.PostgresErr}}</p>{{end}}
+  </section>
+  <section class="card">
+    <h2>Volúmenes</h2>
+    {{range $s.Volumes}}
+      <div class="meter"><span class="mlabel">{{.Name}}</span><meter min="0" max="100" low="80" high="90" optimum="0" value="{{pctw .UsedPct}}">{{pct .UsedPct}}</meter><span class="mval">{{bytes .Free}} libres</span></div>
+      <p class="muted small mono">{{.Path}}{{if .Err}} · <span class="bad">{{.Err}}</span>{{end}}</p>
+    {{end}}
+  </section>
+</div>
+<section class="card">
+  <h2>Comprobaciones</h2>
+  <table class="table compact"><tbody>
+    {{range .Data.Checks}}<tr><td>{{template "badge" (dict "tone" .Tone "label" .Status)}}</td><td>{{.Name}}</td><td>{{.Detail}}{{if .Hint}}<br><span class="muted small">{{.Hint}}</span>{{end}}</td></tr>{{end}}
+  </tbody></table>
+</section>
+{{if $s.Databases}}
+<section class="card">
+  <h2>Bases de datos</h2>
+  <table class="table compact"><thead><tr><th>Base</th><th>Dueño</th><th>Tamaño</th><th>Sesiones</th><th>Conexiones</th></tr></thead><tbody>
+  {{range $s.Databases}}<tr><td class="mono">{{.Name}}</td><td class="mono">{{.Owner}}</td><td>{{bytes .SizeBytes}}</td><td>{{.ActiveSessions}}</td><td>{{if .AllowConn}}permitidas{{else}}bloqueadas{{end}}{{if .CollationStale}} <span class="badge warn">colación cambió</span>{{end}}</td></tr>{{end}}
+  </tbody></table>
+</section>
+{{end}}
+<div class="grid2">
+  <section class="card">
+    <h2>Certificados</h2>
+    {{range $s.Certs}}<p><strong>{{.Name}}</strong>: {{if .Err}}<span class="bad">{{.Err}}</span>{{else}}vence {{dt .NotAfter}}<br><span class="mono small break muted">{{.Fingerprint}}</span>{{end}}</p>{{end}}
+  </section>
+  <section class="card">
+    <h2>Programaciones del sistema</h2>
+    <table class="table compact"><tbody>
+    {{range .Data.Schedules}}<tr><td class="mono small">{{.Kind}}</td><td class="mono small">{{.Cron}}</td><td class="small">{{if .NextRunAt}}próxima {{dt .NextRunAt}}{{end}}</td></tr>{{end}}
+    </tbody></table>
+  </section>
+</div>
+{{end}}

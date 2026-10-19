@@ -1,0 +1,36 @@
+{{define "content"}}
+{{$j := .Data.J}}
+<div class="pagehead">
+  <div>
+    <h1>{{$j.Title}}</h1>
+    <p class="muted">{{with .Data.L}}<a href="/bibliotecas/{{.ID}}">{{.DisplayName}}</a> · {{end}}iniciada por {{$j.CreatedBy.Label}} · {{dt $j.CreatedAt}}</p>
+  </div>
+  <div class="actions">
+    {{if and $j.Cancellable (.P.Can "job.cancel")}}<form method="post" action="/tareas/{{$j.ID}}/cancelar">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Cancelar</button></form>{{end}}
+    {{if and (or (eq $j.State "failed") (eq $j.State "interrupted") (eq $j.State "cancelled")) (.P.Can "backup.create")}}<form method="post" action="/tareas/{{$j.ID}}/reintentar">{{template "csrf" .CSRF}}<button type="submit">Reintentar</button></form>{{end}}
+  </div>
+</div>
+<section class="card" data-job="{{$j.ID}}" data-job-state="{{$j.State}}">
+  <div class="jobhead">
+    <span data-job-badge>{{template "jobstate" $j}}</span>
+    <progress max="100" value="{{$j.Progress}}" data-job-bar aria-label="Progreso">{{$j.Progress}} %</progress>
+    <span data-job-pct>{{$j.Progress}} %</span>
+  </div>
+  <p class="muted" data-job-step aria-live="polite">{{if $j.CurrentStep}}{{steplabel $j.CurrentStep}}{{end}}</p>
+  {{if $j.ErrorDetail}}<div class="flash error" role="alert"><strong class="mono">{{$j.ErrorCode}}</strong> {{$j.ErrorDetail}}</div>{{end}}
+  {{with .Data.Result}}{{with index . "library_id"}}<p><a class="button" href="/bibliotecas/{{.}}">Ir a la biblioteca</a></p>{{end}}{{with index . "backup_id"}}<p><a href="/respaldos/{{.}}">Ver el respaldo</a></p>{{end}}{{end}}
+</section>
+<div class="grid2">
+  <section class="card">
+    <h2>Pasos</h2>
+    <ol class="steplist">
+      {{range .Data.Steps}}<li class="{{.State}}"><span class="badge {{if eq .State "succeeded"}}ok{{else if eq .State "running"}}run{{else if eq .State "failed"}}bad{{else}}off{{end}}"><span class="dot" aria-hidden="true"></span>{{steplabel .Name}}</span>{{if .FinishedAt}} <span class="muted small">{{dur (.FinishedAt.Sub .StartedAt)}}</span>{{end}}</li>{{else}}<li class="muted">Sin pasos todavía.</li>{{end}}
+    </ol>
+  </section>
+  <section class="card">
+    <h2>Registro</h2>
+    <pre class="log" data-job-log aria-live="polite">{{range .Data.Logs}}{{dt .TS}}  {{.Message}}
+{{end}}</pre>
+  </section>
+</div>
+{{end}}

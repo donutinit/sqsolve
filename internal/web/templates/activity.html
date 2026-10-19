@@ -1,0 +1,40 @@
+{{define "content"}}
+<div class="pagehead"><h1>Actividad</h1></div>
+<nav class="tabs" aria-label="Secciones">
+  <a href="/actividad" {{if ne .Data.Tab "auditoria"}}aria-current="page"{{end}}>Eventos</a>
+  {{if .P.Can "audit.view"}}<a href="/actividad?tab=auditoria" {{if eq .Data.Tab "auditoria"}}aria-current="page"{{end}}>Auditoría</a>{{end}}
+</nav>
+{{if eq .Data.Tab "auditoria"}}
+<section class="card">
+  <div class="cardhead"><h2>Auditoría</h2><a href="/actividad/auditoria.jsonl">Exportar JSON Lines</a></div>
+  {{if .Data.VerifyErr}}<div class="flash error">{{.Data.VerifyErr}}</div>{{else if .Data.Broken}}<div class="flash error" role="alert">La cadena de auditoría está rota en la entrada {{.Data.Broken}}: alguien modificó la base de sqsolve.</div>{{else}}<p>{{template "badge" (dict "tone" "ok" "label" (printf "Cadena íntegra: %d entradas" .Data.Count))}}</p>{{end}}
+  <table class="table compact cards-on-mobile">
+    <thead><tr><th>Fecha</th><th>Quién</th><th>Acción</th><th>Objetivo</th><th>Resultado</th></tr></thead>
+    <tbody>
+    {{range .Data.Audit}}
+      <tr><td data-label="Fecha">{{dt .TS}}</td><td data-label="Quién">{{.Actor.Label}} <span class="muted small mono">{{.Actor.IP}}</span></td>
+      <td data-label="Acción" class="mono small">{{.Action}}</td><td data-label="Objetivo" class="mono small">{{.TargetType}} {{short .TargetID}}</td>
+      <td data-label="Resultado">{{template "badge" (dict "tone" (or (and (eq .Outcome "ok") "ok") "bad") "label" .Outcome)}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{else}}
+<form method="get" class="filters">
+  <label>Severidad mínima<select name="sev"><option value="">Todas</option><option value="warning" {{if eq .Data.Sev "warning"}}selected{{end}}>Aviso</option><option value="error" {{if eq .Data.Sev "error"}}selected{{end}}>Error</option><option value="critical" {{if eq .Data.Sev "critical"}}selected{{end}}>Crítico</option></select></label>
+  <button type="submit" class="ghost">Filtrar</button>
+</form>
+<section class="card flush">
+  <table class="table compact cards-on-mobile">
+    <thead><tr><th>Fecha</th><th>Severidad</th><th>Mensaje</th><th>Tipo</th></tr></thead>
+    <tbody>
+    {{range .Data.Events}}
+      <tr><td data-label="Fecha">{{dt .TS}}</td><td data-label="Severidad"><span class="badge {{sevtone .Severity}}"><span class="dot" aria-hidden="true"></span>{{sev .Severity}}</span></td>
+      <td data-label="Mensaje">{{.Message}}{{if .JobID}} <a class="small" href="/tareas/{{.JobID}}">tarea</a>{{end}}{{if .LibraryID}} <a class="small" href="/bibliotecas/{{.LibraryID}}">biblioteca</a>{{end}}</td>
+      <td data-label="Tipo" class="mono small muted">{{.Type}}</td></tr>
+    {{else}}<tr><td colspan="4" class="muted">Sin eventos.</td></tr>{{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
+{{end}}

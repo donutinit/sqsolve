@@ -1,0 +1,50 @@
+{{define "content"}}
+<section class="card narrow">
+  {{if .Query.Get "recuperar"}}
+  <h1>Recuperar una instalación existente</h1>
+  <p>Usa esta opción en un servidor nuevo cuando montaste la copia del volumen de respaldos. Necesitas el código de instalación (está en el registro del contenedor <code>sqsolve</code>) y la clave maestra del kit de recuperación.</p>
+  {{if not .Data.Copies}}<div class="flash error" role="alert">No hay copias del plano de control en <code>_system</code> del volumen de respaldos. Sin ellas puedes instalar desde cero y luego reconstruir el catálogo desde los respaldos.</div>{{end}}
+  <form method="post" action="/instalar/recuperar" class="form">
+    <input type="hidden" name="csrf" value="{{.Data.Pre}}">
+    <label>Código de instalación<input name="code" required autocomplete="off" autocapitalize="characters" class="mono"></label>
+    <label>Clave maestra del kit<textarea name="key" required rows="2" class="mono" autocomplete="off" spellcheck="false"></textarea></label>
+    <div class="actions"><button type="submit">Recuperar y reiniciar</button><a href="/instalar">Instalar desde cero</a></div>
+  </form>
+  {{else}}
+  <h1>Bienvenido a sqsolve</h1>
+  <p>Crea la cuenta de administrador y dinos cómo verán este servidor las estaciones con DaVinci Resolve.</p>
+  <form method="post" action="/instalar" class="form">
+    <input type="hidden" name="csrf" value="{{.Data.Pre}}">
+    <fieldset>
+      <legend>1. Código de instalación</legend>
+      <p class="hint">Se imprime en la salida del contenedor <code>sqsolve</code> (en un NAS, en los registros de la app). Solo funciona hasta que exista el primer administrador.</p>
+      <label>Código<input name="code" required autocomplete="off" autocapitalize="characters" class="mono" placeholder="XXXXX-XXXXX"></label>
+    </fieldset>
+    <fieldset>
+      <legend>2. Administrador</legend>
+      <label>Usuario<input name="username" required value="{{.Data.Form.Get "username"}}" autocomplete="username" pattern="[A-Za-z][A-Za-z0-9._\-]{1,31}"></label>
+      <label>Nombre visible <span class="muted">(opcional)</span><input name="display" autocomplete="name"></label>
+      <label>Contraseña<input type="password" name="password" required minlength="12" autocomplete="new-password"></label>
+      <label>Repite la contraseña<input type="password" name="password2" required minlength="12" autocomplete="new-password"></label>
+      <p class="hint">Al menos 12 caracteres. Una frase de varias palabras funciona bien.</p>
+    </fieldset>
+    <fieldset>
+      <legend>3. Red</legend>
+      <label>Dirección que usarán las estaciones<input name="host" value="{{if .Data.Form.Get "host"}}{{.Data.Form.Get "host"}}{{else}}{{.Data.Host}}{{end}}" class="mono" required></label>
+      <p class="hint">La IP o el nombre del servidor tal como se escribe en el campo de ubicación de Resolve, sin puerto. Sugerimos la dirección con la que abriste este panel.</p>
+      <label>Nombre de esta instalación<input name="name" value="{{if .Data.Form.Get "name"}}{{.Data.Form.Get "name"}}{{else}}sqsolve{{end}}"></label>
+    </fieldset>
+    <fieldset>
+      <legend>4. Respaldos por defecto</legend>
+      <label class="radio"><input type="radio" name="preset" value="diario" checked> Diario a las 02:00</label>
+      <label class="radio"><input type="radio" name="preset" value="laboral"> Cada 4 horas entre 09:00 y 21:00, de lunes a sábado</label>
+      <label class="radio"><input type="radio" name="preset" value="cada4"> Cada 4 horas, todos los días</label>
+      <p class="hint">Zona horaria del servidor: {{.Data.TZ}}. Cada biblioteca puede tener su propia programación después.</p>
+    </fieldset>
+    <div class="actions"><button type="submit">Crear administrador</button></div>
+  </form>
+  {{if .Data.Copies}}<p class="hint">¿Estás moviendo sqsolve a otro servidor? <a href="/instalar?recuperar=1">Recuperar una instalación existente</a>.</p>{{end}}
+  {{end}}
+  {{if .Data.Fingerprint}}<p class="hint">Huella del certificado de este panel: <code class="break">{{.Data.Fingerprint}}</code></p>{{end}}
+</section>
+{{end}}

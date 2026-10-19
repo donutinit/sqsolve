@@ -1,0 +1,42 @@
+{{define "content"}}
+{{$b := .Data.B}}{{$l := .Data.L}}{{$p := .P}}
+<div class="pagehead"><h1>Restaurar el respaldo del {{dt $b.StartedAt}}</h1></div>
+{{if .Data.SchemaDiffers}}<div class="flash info" role="status">Este respaldo tiene otra estructura que la biblioteca actual: probablemente es de otra versión de Resolve{{if $b.ResolveVersion}} (declarada: {{$b.ResolveVersion}}){{end}}. Las estaciones con una versión más nueva lo actualizarán al abrirlo, y la versión anterior dejará de abrir esos proyectos.</div>{{end}}
+<div class="grid2">
+  <section class="card {{if ne .Data.Mode "reemplazar"}}emphasis{{end}}">
+    <h2>Como biblioteca nueva <span class="badge ok">Recomendado</span></h2>
+    <p>No toca la biblioteca actual. Úsalo para recuperar un proyecto: abre la copia en Resolve, exporta el proyecto (.drp) e impórtalo en la biblioteca original.</p>
+    <form method="post" action="/respaldos/{{$b.ID}}/restaurar" class="form">
+      {{template "csrf" .CSRF}}
+      <input type="hidden" name="mode" value="nueva">
+      <label>Nombre visible<input name="name" required value="{{.Data.SuggestName}}"></label>
+      <label>Identificador<input name="slug" required class="mono" pattern="[a-z][a-z0-9_]{2,39}" value="{{.Data.SuggestSlug}}"></label>
+      <div class="actions"><button type="submit">Restaurar como nueva</button></div>
+    </form>
+  </section>
+  {{if and .Data.CanReplace ($p.Can "restore.replace")}}
+  <section class="card danger-zone {{if eq .Data.Mode "reemplazar"}}emphasis{{end}}">
+    <h2>Reemplazar {{$l.DisplayName}}</h2>
+    <p>La biblioteca vuelve al momento del respaldo: <strong>se pierden los cambios hechos {{ago $b.StartedAt}}</strong> hasta ahora.</p>
+    <ol>
+      <li>Se toma un respaldo del estado actual.</li>
+      <li>El respaldo se restaura en una base aparte y se compara con su manifiesto.</li>
+      <li>Solo entonces se bloquean las conexiones y se intercambian las bases.</li>
+      <li>El estado actual se conserva {{.Data.Settings.PrevDays}} días para revertir.</li>
+    </ol>
+    {{with .Data.Sessions}}<div class="flash error" role="alert">Hay {{len .}} conexiones abiertas: {{range $i, $s := .}}{{if $i}}, {{end}}<span class="mono">{{$s.User}}@{{$s.ClientAddr}}</span>{{end}}. Pide que cierren Resolve.</div>{{end}}
+    <form method="post" action="/respaldos/{{$b.ID}}/restaurar" class="form">
+      {{template "csrf" .CSRF}}
+      <input type="hidden" name="mode" value="reemplazar">
+      <label class="check"><input type="checkbox" name="terminate"> Cerrar las sesiones abiertas (si no, la tarea espera hasta 10 minutos a que se cierren)</label>
+      <label>Escribe <code>{{$l.Slug}}</code> para confirmar<input name="confirm" required autocomplete="off" class="mono" data-confirm-match="{{$l.Slug}}"></label>
+      <div class="actions"><button type="submit" class="danger" data-needs-match>Reemplazar biblioteca</button></div>
+    </form>
+  </section>
+  {{end}}
+</div>
+<section class="card">
+  <h2>Restaurar desde Resolve</h2>
+  <p>También puedes <a href="/respaldos/{{$b.ID}}/descargar">descargar el archivo</a> y restaurarlo desde el Project Manager de Resolve. La compatibilidad del formato con cada versión de Resolve está pendiente de comprobar (PoC-04).</p>
+</section>
+{{end}}

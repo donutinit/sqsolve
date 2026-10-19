@@ -1,0 +1,18 @@
+{{define "content"}}
+<section class="card narrow">
+  <h1>Activar segundo factor</h1>
+  <ol class="steps">
+    <li>En tu aplicación de autenticación agrega una cuenta nueva con esta clave (o pega el enlace otpauth si tu aplicación lo acepta):
+      {{template "copy" (dict "label" "Clave" "value" .Data.Grouped "id" "t-secret")}}
+      {{template "copy" (dict "label" "Enlace" "value" .Data.URI "id" "t-uri")}}
+    </li>
+    <li>Escribe el código de 6 dígitos que muestra la aplicación.</li>
+  </ol>
+  <form method="post" action="/cuenta/totp/activar" class="form">
+    {{template "csrf" .CSRF}}
+    <input type="hidden" name="secret" value="{{.Data.Secret}}">
+    <label>Código<input name="code" required inputmode="numeric" autocomplete="one-time-code" class="mono" maxlength="6" autofocus></label>
+    <div class="actions"><button type="submit">Activar</button><a href="/cuenta">Cancelar</a></div>
+  </form>
+</section>
+{{end}}
