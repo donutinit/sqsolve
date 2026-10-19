@@ -51,8 +51,9 @@ Makefile
 
 Implementado hoy (2026-10-18) en `.github/workflows`:
 
-- `ci.yml`: trabajo `check` (formato, `go vet`, staticcheck, pruebas con `-race` incluidas las de
-  integración contra PostgreSQL 18 del repositorio PGDG, govulncheck) y trabajo `smoke` (construye
+- `ci.yml`: trabajo `check` con el último parche de Go 1.26 (mínimo de `go.mod`) y de Go 1.27
+  (el de la imagen): formato, `go vet`, staticcheck, pruebas con `-race` incluidas las de
+  integración contra PostgreSQL 18 del repositorio PGDG, govulncheck y trabajo `smoke` (construye
   la imagen, levanta `deploy/compose.yaml` tal cual con rutas temporales, espera `/readyz`, corre
   `sqsolve doctor` y comprueba que los datos sobreviven a un reinicio).
 - `image.yml`: en cada push a `main` y en etiquetas `v*`, imagen amd64 y arm64 en
