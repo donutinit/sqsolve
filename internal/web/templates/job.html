@@ -24,7 +24,7 @@
   <section class="card">
     <h2>Pasos</h2>
     <ol class="steplist">
-      {{range .Data.Steps}}<li class="{{.State}}"><span class="badge {{if eq .State "succeeded"}}ok{{else if eq .State "running"}}run{{else if eq .State "failed"}}bad{{else}}off{{end}}"><span class="dot" aria-hidden="true"></span>{{steplabel .Name}}</span>{{if .FinishedAt}} <span class="muted small">{{dur (.FinishedAt.Sub .StartedAt)}}</span>{{end}}</li>{{else}}<li class="muted">Sin pasos todavía.</li>{{end}}
+      {{range .Data.Steps}}<li class="{{.State}}">{{template "badge" (dict "tone" (steptone .State) "label" (steplabel .Name))}}{{if .FinishedAt}} <span class="muted small">{{dur (.FinishedAt.Sub .StartedAt)}}</span>{{end}}</li>{{else}}<li class="muted">Sin pasos todavía.</li>{{end}}
     </ol>
   </section>
   <section class="card">

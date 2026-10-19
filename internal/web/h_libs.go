@@ -150,6 +150,9 @@ func (s *Server) library(w http.ResponseWriter, r *http.Request) {
 	if tab == "conexion" && l.State == core.StateActive {
 		data["Sessions"], _ = s.A.Svc.Sessions(ctx, l.ID)
 	}
+	if l.State == core.StateAwaitingInit || l.State == core.StateInitExpired {
+		data["Misnamed"] = s.A.Svc.MisnamedDatabases(ctx, l)
+	}
 	s.render(w, r, "library", l.DisplayName, "bibliotecas", data)
 }
 

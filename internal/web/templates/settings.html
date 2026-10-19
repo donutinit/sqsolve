@@ -69,9 +69,9 @@
   <table class="table compact cards-on-mobile"><thead><tr><th>Usuario</th><th>Rol</th><th>Segundo factor</th><th>Último acceso</th><th>Cambios</th></tr></thead><tbody>
   {{range .Data.Users}}
   <tr>
-    <td data-label="Usuario"><strong>{{.Username}}</strong>{{if .DisplayName}}<br><span class="muted small">{{.DisplayName}}</span>{{end}}{{if .DisabledAt}} <span class="badge off">Desactivado</span>{{end}}</td>
+    <td data-label="Usuario"><strong>{{.Username}}</strong>{{if .DisplayName}}<br><span class="muted small">{{.DisplayName}}</span>{{end}}{{if .DisabledAt}} {{template "badge" (dict "tone" "off" "label" "Desactivado")}}{{end}}</td>
     <td data-label="Rol">{{.Role.Label}}</td>
-    <td data-label="Segundo factor">{{if .TOTPEnabled}}Sí <form method="post" action="/ajustes/usuarios/{{.ID}}/totp" class="inline-form" data-confirm="¿Quitar el segundo factor de {{.Username}}?">{{template "csrf" $.CSRF}}<button class="ghost small" type="submit">Quitar</button></form>{{else}}No{{end}}</td>
+    <td data-label="Segundo factor">{{if .TOTPEnabled}}Sí <form method="post" action="/ajustes/usuarios/{{.ID}}/totp" class="inline-form" data-confirm="La cuenta de {{.Username}} quedará protegida solo con la contraseña. ¿Quitar su segundo factor?">{{template "csrf" $.CSRF}}<button class="ghost small danger" type="submit">Quitar</button></form>{{else}}No{{end}}</td>
     <td data-label="Último acceso">{{if .LastLoginAt}}{{ago .LastLoginAt}}{{else}}nunca{{end}}</td>
     <td data-label="Cambios">
       <details class="more"><summary>Editar</summary>
@@ -115,7 +115,7 @@
   <table class="table compact cards-on-mobile"><thead><tr><th>Nombre</th><th>Tipo</th><th>Severidad mínima</th><th>Eventos</th><th>Último envío</th><th></th></tr></thead><tbody>
   {{range .Data.Channels}}
   <tr>
-    <td data-label="Nombre">{{.Name}}{{if not .Enabled}} <span class="badge off">Pausado</span>{{end}}</td>
+    <td data-label="Nombre">{{.Name}}{{if not .Enabled}} {{template "badge" (dict "tone" "off" "label" "Pausado")}}{{end}}</td>
     <td data-label="Tipo">{{.Kind}}</td>
     <td data-label="Severidad">{{sev .MinSeverity}}</td>
     <td data-label="Eventos" class="mono small">{{.Pattern}}</td>

@@ -1,15 +1,15 @@
 {{define "content"}}
 {{$b := .Data.B}}{{$l := .Data.L}}{{$p := .P}}
 <div class="pagehead"><h1>Restaurar el respaldo del {{dt $b.StartedAt}}</h1></div>
-{{if .Data.SchemaDiffers}}<div class="flash info" role="status">Este respaldo tiene otra estructura que la biblioteca actual: probablemente es de otra versión de Resolve{{if $b.ResolveVersion}} (declarada: {{$b.ResolveVersion}}){{end}}. Las estaciones con una versión más nueva lo actualizarán al abrirlo, y la versión anterior dejará de abrir esos proyectos.</div>{{end}}
+{{if .Data.SchemaDiffers}}<div class="flash warn" role="status">Este respaldo tiene otra estructura que la biblioteca actual: probablemente es de otra versión de Resolve{{if $b.ResolveVersion}} (declarada: {{$b.ResolveVersion}}){{end}}. Las estaciones con una versión más nueva lo actualizarán al abrirlo, y la versión anterior dejará de abrir esos proyectos.</div>{{end}}
 <div class="grid2">
   <section class="card {{if ne .Data.Mode "reemplazar"}}emphasis{{end}}">
-    <h2>Como biblioteca nueva <span class="badge ok">Recomendado</span></h2>
+    <h2>Como biblioteca nueva {{template "badge" (dict "tone" "ok" "label" "Recomendado")}}</h2>
     <p>No toca la biblioteca actual. Úsalo para recuperar un proyecto: abre la copia en Resolve, exporta el proyecto (.drp) e impórtalo en la biblioteca original.</p>
     <form method="post" action="/respaldos/{{$b.ID}}/restaurar" class="form">
       {{template "csrf" .CSRF}}
       <input type="hidden" name="mode" value="nueva">
-      <label>Nombre visible<input name="name" required value="{{.Data.SuggestName}}"></label>
+      <label>Nombre visible<input name="name" required maxlength="80" value="{{.Data.SuggestName}}"></label>
       <label>Identificador<input name="slug" required class="mono" pattern="[a-z][a-z0-9_]{2,39}" value="{{.Data.SuggestSlug}}"></label>
       <div class="actions"><button type="submit">Restaurar como nueva</button></div>
     </form>
@@ -24,7 +24,7 @@
       <li>Solo entonces se bloquean las conexiones y se intercambian las bases.</li>
       <li>El estado actual se conserva {{.Data.Settings.PrevDays}} días para revertir.</li>
     </ol>
-    {{with .Data.Sessions}}<div class="flash error" role="alert">Hay {{len .}} conexiones abiertas: {{range $i, $s := .}}{{if $i}}, {{end}}<span class="mono">{{$s.User}}@{{$s.ClientAddr}}</span>{{end}}. Pide que cierren Resolve.</div>{{end}}
+    {{with .Data.Sessions}}<div class="flash warn" role="status">Hay {{len .}} conexiones abiertas: {{range $i, $s := .}}{{if $i}}, {{end}}<span class="mono">{{$s.User}}@{{$s.ClientAddr}}</span>{{end}}. Pide que cierren Resolve.</div>{{end}}
     <form method="post" action="/respaldos/{{$b.ID}}/restaurar" class="form">
       {{template "csrf" .CSRF}}
       <input type="hidden" name="mode" value="reemplazar">

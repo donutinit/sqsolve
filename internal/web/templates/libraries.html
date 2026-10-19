@@ -1,12 +1,12 @@
 {{define "content"}}
 <div class="pagehead">
   <h1>Bibliotecas</h1>
-  {{if .P.Can "library.create"}}<a class="button" href="/bibliotecas/nueva">Nueva biblioteca</a>{{end}}
+  {{if .P.Can "library.create"}}<div class="actions"><a class="button" href="/bibliotecas/nueva">Nueva biblioteca</a></div>{{end}}
 </div>
 <nav class="tabs" aria-label="Filtro">
   <a href="/bibliotecas" {{if eq .Data.Show ""}}aria-current="page"{{end}}>En uso</a>
   <a href="/bibliotecas?ver=papelera" {{if eq .Data.Show "papelera"}}aria-current="page"{{end}}>Papelera</a>
-  <a href="/bibliotecas?ver=eliminadas" {{if eq .Data.Show "eliminadas"}}aria-current="page"{{end}}>Eliminadas (con respaldos)</a>
+  <a href="/bibliotecas?ver=eliminadas" {{if eq .Data.Show "eliminadas"}}aria-current="page"{{end}}>Purgadas (con respaldos)</a>
 </nav>
 {{if .Data.Rows}}
 <section class="card flush">
@@ -27,6 +27,6 @@
 </table>
 </section>
 {{else}}
-  {{if eq .Data.Show ""}}{{template "empty" (dict "text" "Aún no hay bibliotecas. Una biblioteca es una base de datos de PostgreSQL donde Resolve guarda proyectos; las estaciones se conectan a ella." "href" "/bibliotecas/nueva" "action" "Crear la primera")}}{{else}}<p class="muted">No hay nada aquí.</p>{{end}}
+  {{if eq .Data.Show ""}}{{template "empty" (dict "text" "Aún no hay bibliotecas. Una biblioteca es una base de datos de PostgreSQL donde Resolve guarda proyectos; las estaciones se conectan a ella." "href" "/bibliotecas/nueva" "action" "Crear la primera")}}{{else if eq .Data.Show "papelera"}}<p class="muted">Sin bibliotecas en la papelera.</p>{{else}}<p class="muted">Sin bibliotecas purgadas.</p>{{end}}
 {{end}}
 {{end}}

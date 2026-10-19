@@ -3,10 +3,12 @@
 package web_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -231,6 +233,67 @@ func TestPanelEndToEnd(t *testing.T) {
 		t.Fatalf("restored copy: %v %+v", err, cp)
 	}
 
+	// Import by upload: the CSRF part comes first and the file is streamed
+	// into the import folder, then moved into the catalog.
+	_, _, archive := b.do("GET", "/respaldos/"+bid[1]+"/descargar", nil)
+	if !strings.HasPrefix(archive, "PGDMP") {
+		t.Fatal("download is not a pg_dump archive")
+	}
+	upload := func(fields [][2]string) (int, string) {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		for _, f := range fields {
+			if f[0] == "upload" {
+				fw, _ := mw.CreateFormFile("upload", f[1])
+				fw.Write([]byte(archive))
+				continue
+			}
+			mw.WriteField(f[0], f[1])
+		}
+		mw.Close()
+		req, _ := http.NewRequest("POST", srv.URL+"/respaldos/importar", &body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		resp, err := b.c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode, resp.Header.Get("Location")
+	}
+	if st, _ := upload([][2]string{{"library", libID}, {"csrf", tok}, {"upload", "x.backup"}}); st != http.StatusForbidden {
+		t.Fatalf("multipart with the CSRF part after others: %d", st)
+	}
+	st, loc = upload([][2]string{{"csrf", tok}, {"library", libID}, {"upload", "subido.backup"}})
+	if st != http.StatusSeeOther || !strings.HasPrefix(loc, "/tareas/") {
+		t.Fatalf("upload import: %d %s", st, loc)
+	}
+	waitJob(t, a, strings.TrimPrefix(loc, "/tareas/"))
+	if left, _ := os.ReadDir(a.Svc.ImportDir()); len(left) != 0 {
+		t.Fatalf("upload left %d files in the import folder", len(left))
+	}
+
+	// A database created in Resolve with another name is pointed out.
+	_, loc2, _ := b.do("POST", "/bibliotecas/nueva", url.Values{"csrf": {tok}, "name": {"Comercial"}, "slug": {"comercial"}, "strategy": {"resolve"}})
+	lib2 := strings.TrimPrefix(loc2, "/bibliotecas/")
+	for i := 0; i < 50; i++ {
+		if l2, _ := a.Svc.Library(ctx, lib2); l2 != nil && l2.State == core.StateAwaitingInit {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	_, _, reveal2 := b.do("POST", loc2+"/contrasena/ver", url.Values{"csrf": {tok}})
+	pw2 := regexp.MustCompile(`id="r-pass">([^<]+)<`).FindStringSubmatch(reveal2)
+	conn2, err := c.ConnectTCP(ctx, "comercial", secrets.New(pw2[1]), "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn2.Exec(ctx, `CREATE DATABASE "Comercial"`)
+	conn2.Close(ctx)
+	a.Svc.WatchInit(ctx)
+	if !strings.Contains(b.page(loc2), "<code>Comercial</code>, pero la biblioteca debe llamarse exactamente") {
+		t.Fatal("misnamed database not pointed out")
+	}
+
 	// Policy form round trip.
 	if _, loc, _ := b.do("POST", libPath+"/politica", url.Values{"csrf": {tok}, "enabled": {"on"}, "preset": {"cadahora"},
 		"keep_last": {"5"}, "keep_daily": {"7"}, "keep_weekly": {"4"}, "keep_monthly": {"3"}, "min_verified": {"1"}}); !strings.Contains(loc, "programacion") {
@@ -258,7 +321,7 @@ func TestPanelEndToEnd(t *testing.T) {
 		json.NewDecoder(resp.Body).Decode(&out)
 		return resp.StatusCode, out
 	}
-	if st, out := apiGet("/api/v1/libraries"); st != 200 || len(out["items"].([]any)) != 2 {
+	if st, out := apiGet("/api/v1/libraries"); st != 200 || len(out["items"].([]any)) != 3 {
 		t.Fatalf("api libraries: %d %v", st, out)
 	}
 	req, _ := http.NewRequest("POST", srv.URL+"/api/v1/libraries", strings.NewReader(`{"display_name":"x"}`))

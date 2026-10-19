@@ -15,9 +15,9 @@
     {{else}}<p>{{template "badge" (dict "tone" "bad" "label" "Sin respuesta")}}</p><p class="muted small">{{$s.PostgresErr}}</p>{{end}}
   </section>
   <section class="card">
-    <h2>Volúmenes</h2>
+    <h2>Almacenamiento</h2>
     {{range $s.Volumes}}
-      <div class="meter"><span class="mlabel">{{.Name}}</span><meter min="0" max="100" low="80" high="90" optimum="0" value="{{pctw .UsedPct}}">{{pct .UsedPct}}</meter><span class="mval">{{bytes .Free}} libres</span></div>
+      <div class="meter"><span class="mlabel">{{.Name}}</span><meter min="0" max="100" low="80" high="90" optimum="0" value="{{pctw .UsedPct}}" title="{{pct .UsedPct}} usado">{{pct .UsedPct}}</meter><span class="mval">{{bytes .Free}} libres</span></div>
       <p class="muted small mono">{{.Path}}{{if .Err}} · <span class="bad">{{.Err}}</span>{{end}}</p>
     {{end}}
   </section>
@@ -25,14 +25,14 @@
 <section class="card">
   <h2>Comprobaciones</h2>
   <table class="table compact"><tbody>
-    {{range .Data.Checks}}<tr><td>{{template "badge" (dict "tone" .Tone "label" .Status)}}</td><td>{{.Name}}</td><td>{{.Detail}}{{if .Hint}}<br><span class="muted small">{{.Hint}}</span>{{end}}</td></tr>{{end}}
+    {{range .Data.Checks}}<tr><td>{{template "badge" (dict "tone" .Tone "label" (checklabel .Status))}}</td><td>{{.Name}}</td><td>{{.Detail}}{{if .Hint}}<br><span class="muted small">{{.Hint}}</span>{{end}}</td></tr>{{end}}
   </tbody></table>
 </section>
 {{if $s.Databases}}
 <section class="card">
   <h2>Bases de datos</h2>
-  <table class="table compact"><thead><tr><th>Base</th><th>Dueño</th><th>Tamaño</th><th>Sesiones</th><th>Conexiones</th></tr></thead><tbody>
-  {{range $s.Databases}}<tr><td class="mono">{{.Name}}</td><td class="mono">{{.Owner}}</td><td>{{bytes .SizeBytes}}</td><td>{{.ActiveSessions}}</td><td>{{if .AllowConn}}permitidas{{else}}bloqueadas{{end}}{{if .CollationStale}} <span class="badge warn">colación cambió</span>{{end}}</td></tr>{{end}}
+  <table class="table compact"><thead><tr><th>Base</th><th>Dueño</th><th>Tamaño</th><th>Sesiones</th><th>Acceso</th></tr></thead><tbody>
+  {{range $s.Databases}}<tr><td class="mono">{{.Name}}</td><td class="mono">{{.Owner}}</td><td>{{bytes .SizeBytes}}</td><td>{{.ActiveSessions}}</td><td>{{if .AllowConn}}permitido{{else}}bloqueado{{end}}{{if .CollationStale}} {{template "badge" (dict "tone" "warn" "label" "Colación cambió")}}{{end}}</td></tr>{{end}}
   </tbody></table>
 </section>
 {{end}}

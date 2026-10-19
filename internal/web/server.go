@@ -15,8 +15,10 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log/slog"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/netip"
@@ -170,7 +172,20 @@ func (s *Server) principal(r *http.Request, allowPending bool) (*auth.Principal,
 
 type ctxKey int
 
-const principalKey ctxKey = 1
+const (
+	principalKey ctxKey = iota + 1
+	multipartKey
+)
+
+func isMultipart(r *http.Request) bool {
+	return strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data")
+}
+
+// multipartOf returns the reader left by page after checking the CSRF part.
+func multipartOf(r *http.Request) *multipart.Reader {
+	mr, _ := r.Context().Value(multipartKey).(*multipart.Reader)
+	return mr
+}
 
 func withPrincipal(r *http.Request, p *auth.Principal) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), principalKey, p))
@@ -205,7 +220,22 @@ func (s *Server) page(action auth.Action, h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if r.Method == http.MethodPost {
-			if !s.A.Auth.CheckCSRF(raw, r.FormValue("csrf")) {
+			ok := false
+			if isMultipart(r) {
+				// Multipart bodies are streamed by the handler; parsing them here
+				// would spill uploads to /tmp. The token must be the first part.
+				if mr, err := r.MultipartReader(); err == nil {
+					if part, err := mr.NextPart(); err == nil && part.FormName() == "csrf" {
+						b, _ := io.ReadAll(io.LimitReader(part, 512))
+						if ok = s.A.Auth.CheckCSRF(raw, string(b)); ok {
+							r = r.WithContext(context.WithValue(r.Context(), multipartKey, mr))
+						}
+					}
+				}
+			} else {
+				ok = s.A.Auth.CheckCSRF(raw, r.FormValue("csrf"))
+			}
+			if !ok {
 				s.renderError(w, r, p, http.StatusForbidden, "SQS-A031 El formulario venció o no viene de este panel. Recarga la página e inténtalo de nuevo.")
 				return
 			}
@@ -281,6 +311,12 @@ type View struct {
 }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name, title, section string, data any) {
+	s.renderStatus(w, r, http.StatusOK, name, title, section, data)
+}
+
+// renderStatus sets every header (including the cookie that consumes the
+// flash) before writing the status line.
+func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int, name, title, section string, data any) {
 	t, ok := s.pages[name]
 	if !ok {
 		http.Error(w, "plantilla desconocida: "+name, 500)
@@ -302,15 +338,15 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name, title, sec
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
 	w.Write(buf.Bytes())
 }
 
 func (s *Server) renderError(w http.ResponseWriter, r *http.Request, p *auth.Principal, status int, msg string) {
-	w.WriteHeader(status)
 	if p != nil {
 		r = withPrincipal(r, p)
 	}
-	s.render(w, r, "error", "Error", "", map[string]any{"Status": status, "Message": msg})
+	s.renderStatus(w, r, status, "error", "Error", "", map[string]any{"Status": status, "Message": msg})
 }
 
 // fail shows an error from a service as a flash and redirects back.
@@ -465,7 +501,7 @@ func (s *Server) routes() {
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	var problems []string
-	if !s.A.PGReady() {
+	if !s.A.PGAlive(r.Context()) {
 		problems = append(problems, "postgresql")
 	}
 	if err := s.A.Svc.BackupVolumeOK(); err != nil {

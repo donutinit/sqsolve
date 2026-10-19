@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/donutinit/sqsolve/internal/core"
 	"github.com/donutinit/sqsolve/internal/fsx"
@@ -203,42 +205,101 @@ func (s *Server) importForm(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) importSubmit(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
-	lib := r.FormValue("library")
-	name := r.FormValue("file")
-	if mf, hdr, err := r.FormFile("upload"); err == nil {
-		defer mf.Close()
-		base := filepath.Base(hdr.Filename)
-		if base == "." || base == "/" || strings.HasPrefix(base, ".") {
-			s.fail(w, r, "/respaldos/importar", errors.New("SQS-B050 nombre de archivo inválido"))
-			return
-		}
-		if err := os.MkdirAll(s.A.Svc.ImportDir(), 0o700); err != nil {
-			s.fail(w, r, "/respaldos/importar", err)
-			return
-		}
-		dst := filepath.Join(s.A.Svc.ImportDir(), base)
-		out, err := os.OpenFile(dst+".partial", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	back := "/respaldos/importar"
+	mr := multipartOf(r)
+	if mr == nil {
+		j, err := s.A.Svc.Import(r.Context(), p.Actor(), r.FormValue("library"), r.FormValue("file"), r.FormValue("delete") == "on")
 		if err != nil {
-			s.fail(w, r, "/respaldos/importar", fmt.Errorf("SQS-B052 no se pudo guardar la subida: %w", err))
+			s.fail(w, r, back, err)
 			return
 		}
-		if _, err := io.Copy(out, mf); err != nil {
-			out.Close()
-			os.Remove(dst + ".partial")
-			s.fail(w, r, "/respaldos/importar", err)
-			return
-		}
-		out.Close()
-		if err := fsx.SealFile(dst+".partial", dst); err != nil {
-			s.fail(w, r, "/respaldos/importar", err)
-			return
-		}
-		name = base
+		s.ok(w, r, "/tareas/"+j.ID, "")
+		return
 	}
-	j, err := s.A.Svc.Import(r.Context(), p.Actor(), lib, name, r.FormValue("delete") == "on")
+	// A multi-gigabyte upload over a slow link outlives the server's
+	// ReadTimeout; the size is still capped by ImportMaxMB.
+	http.NewResponseController(w).SetReadDeadline(time.Now().Add(12 * time.Hour))
+	fields := map[string]string{}
+	uploaded := ""
+	for {
+		part, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			if uploaded != "" {
+				os.Remove(filepath.Join(s.A.Svc.ImportDir(), uploaded))
+			}
+			s.fail(w, r, back, fmt.Errorf("SQS-B052 la subida se interrumpió: %w", err))
+			return
+		}
+		if part.FormName() == "upload" {
+			if part.FileName() == "" || uploaded != "" {
+				io.Copy(io.Discard, part)
+				continue
+			}
+			name, err := s.saveUpload(part)
+			if err != nil {
+				s.fail(w, r, back, err)
+				return
+			}
+			uploaded = name
+			continue
+		}
+		b, _ := io.ReadAll(io.LimitReader(part, 4096))
+		fields[part.FormName()] = string(b)
+	}
+	name, deleteSource := fields["file"], fields["delete"] == "on"
+	if uploaded != "" {
+		// The upload is only a transfer copy: it never stays in _import.
+		name, deleteSource = uploaded, true
+	}
+	if name == "" {
+		s.fail(w, r, back, errors.New("SQS-B050 elige un archivo de la carpeta de importación o súbelo"))
+		return
+	}
+	j, err := s.A.Svc.Import(r.Context(), p.Actor(), fields["library"], name, deleteSource)
 	if err != nil {
-		s.fail(w, r, "/respaldos/importar", err)
+		if uploaded != "" {
+			os.Remove(filepath.Join(s.A.Svc.ImportDir(), uploaded))
+		}
+		s.fail(w, r, back, err)
 		return
 	}
 	s.ok(w, r, "/tareas/"+j.ID, "")
+}
+
+// saveUpload streams a file part into the import folder of the backups
+// volume and returns its name there.
+func (s *Server) saveUpload(part *multipart.Part) (string, error) {
+	base := filepath.Base(strings.ReplaceAll(part.FileName(), "\\", "/"))
+	if base == "." || base == "/" || base == ".." || strings.HasPrefix(base, ".") || strings.HasSuffix(base, ".partial") {
+		return "", errors.New("SQS-B050 nombre de archivo inválido")
+	}
+	dir := s.A.Svc.ImportDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(dir, base)
+	if _, err := os.Lstat(dst); err == nil {
+		return "", fmt.Errorf("SQS-B054 ya hay un archivo llamado %s en la carpeta de importación; impórtalo desde la lista o cámbiale el nombre", base)
+	}
+	out, err := os.OpenFile(dst+".partial", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("SQS-B052 no se pudo guardar la subida: %w", err)
+	}
+	if _, err := io.Copy(out, part); err != nil {
+		out.Close()
+		os.Remove(dst + ".partial")
+		return "", fmt.Errorf("SQS-B052 la subida se interrumpió: %s", humanError(err))
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(dst + ".partial")
+		return "", err
+	}
+	if err := fsx.SealFile(dst+".partial", dst); err != nil {
+		os.Remove(dst + ".partial")
+		return "", err
+	}
+	return base, nil
 }

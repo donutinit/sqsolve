@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/donutinit/sqsolve/internal/app"
+	"github.com/donutinit/sqsolve/internal/audit"
 	"github.com/donutinit/sqsolve/internal/core"
 	"github.com/donutinit/sqsolve/internal/events"
 	"github.com/donutinit/sqsolve/internal/jobs"
@@ -84,6 +85,45 @@ func funcs(a *app.App) template.FuncMap {
 				return "bad"
 			case jobs.Running, jobs.Queued:
 				return "run"
+			}
+			return "off"
+		},
+		"outcometone": func(o string) string {
+			if o == audit.OK {
+				return "ok"
+			}
+			return "bad"
+		},
+		"outcomelabel": func(o string) string {
+			switch o {
+			case audit.OK:
+				return "Correcto"
+			case audit.Denied:
+				return "Denegado"
+			case audit.Failed:
+				return "Fallido"
+			}
+			return o
+		},
+		"checklabel": func(st string) string {
+			switch st {
+			case "ok":
+				return "Correcto"
+			case "warn":
+				return "Aviso"
+			case "fail":
+				return "Fallido"
+			}
+			return st
+		},
+		"steptone": func(st string) string {
+			switch st {
+			case "succeeded":
+				return "ok"
+			case "running":
+				return "run"
+			case "failed":
+				return "bad"
 			}
 			return "off"
 		},

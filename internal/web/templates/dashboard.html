@@ -5,9 +5,9 @@
     <h1>Panel</h1>
     <p class="muted">¿Están protegidos los proyectos y pueden trabajar las estaciones?</p>
   </div>
-  {{if .P.Can "library.create"}}<a class="button" href="/bibliotecas/nueva">Nueva biblioteca</a>{{end}}
+  {{if .P.Can "library.create"}}<div class="actions"><a class="button" href="/bibliotecas/nueva">Nueva biblioteca</a></div>{{end}}
 </div>
-{{if not .Data.Host}}<div class="flash info" role="status">Falta la dirección que usarán las estaciones. <a href="/ajustes">Defínela en Ajustes</a>.</div>{{end}}
+{{if not .Data.Host}}<div class="flash info" role="status">Falta la dirección que usan las estaciones. <a href="/ajustes">Defínela en Ajustes</a>.</div>{{end}}
 
 <div class="strip">
   <div>
@@ -37,7 +37,7 @@
 <section class="card" aria-labelledby="atencion">
   <h2 id="atencion">Atención</h2>
   <ul class="attention">
-    {{range $s.Attention}}<li><span class="badge {{sevtone .Severity}}"><span class="dot" aria-hidden="true"></span>{{sev .Severity}}</span> <a href="{{.Link}}">{{.Message}}</a></li>{{end}}
+    {{range $s.Attention}}<li>{{template "badge" (dict "tone" (sevtone .Severity) "label" (sev .Severity))}} <a href="{{.Link}}">{{.Message}}</a></li>{{end}}
   </ul>
 </section>
 {{end}}
@@ -61,12 +61,12 @@
     {{if .Data.Jobs}}{{template "joblist" .Data.Jobs}}{{else}}<p class="muted">Sin tareas todavía.</p>{{end}}
   </section>
   <section class="card">
-    <div class="cardhead"><h2>Avisos recientes</h2><a href="/actividad">Ver actividad</a></div>
+    <div class="cardhead"><h2>Eventos recientes</h2><a href="/actividad">Ver actividad</a></div>
     {{if .Data.Events}}
     <ul class="events">
-      {{range .Data.Events}}<li><span class="badge {{sevtone .Severity}}"><span class="dot" aria-hidden="true"></span>{{sev .Severity}}</span> {{.Message}} <time class="muted small" datetime="{{iso .TS}}" title="{{dt .TS}}">{{ago .TS}}</time></li>{{end}}
+      {{range .Data.Events}}<li>{{template "badge" (dict "tone" (sevtone .Severity) "label" (sev .Severity))}} {{.Message}} <time class="muted small" datetime="{{iso .TS}}" title="{{dt .TS}}">{{ago .TS}}</time></li>{{end}}
     </ul>
-    {{else}}<p class="muted">Sin avisos. Todo lo importante aparecerá aquí.</p>{{end}}
+    {{else}}<p class="muted">Sin eventos. Todo lo importante aparecerá aquí.</p>{{end}}
   </section>
 </div>
 {{end}}

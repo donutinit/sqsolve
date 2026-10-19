@@ -24,6 +24,8 @@
   --run: #1f64b0;
   --primary-bg: #1a1a1a;
   --primary-text: #ffffff;
+  --on-run: #ffffff;
+  --on-danger: #ffffff;
   --focus: #000000;
   --radius: 5px;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Ubuntu, Cantarell, sans-serif;
@@ -49,6 +51,7 @@
     --run: #62a8f0;
     --primary-bg: #ececec;
     --primary-text: #1c1c1c;
+    --on-run: #0d1a29;
     --focus: #ffffff;
   }
 }
@@ -88,8 +91,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 .nav nav a { color: var(--muted); padding: 7px 10px; border-radius: var(--radius); display: flex; align-items: center; justify-content: space-between; text-decoration: none; min-height: 34px; }
 .nav nav a:hover { color: var(--text); background: var(--raised); }
 .nav nav a[aria-current="page"] { color: var(--text); background: var(--raised); font-weight: 600; box-shadow: inset 2px 0 0 var(--text); }
-.nav .count { background: var(--run); color: #fff; border-radius: 10px; font-size: 0.78rem; padding: 0 7px; font-weight: 600; }
-@media (prefers-color-scheme: dark) { .nav .count { color: #0d1a29; } }
+.nav .count { background: var(--run); color: var(--on-run); border-radius: 10px; font-size: 0.78rem; padding: 0 7px; font-weight: 600; }
 .who { margin-top: auto; display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--line); padding: 12px 10px 0; }
 .who a { text-decoration: none; font-weight: 600; }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 650; font-size: 1.07rem; letter-spacing: 0.01em; text-decoration: none; padding: 0 10px; }
@@ -149,7 +151,7 @@ button, .button {
 button:hover, .button:hover { opacity: 0.88; }
 button.ghost, .button.ghost { background: transparent; color: var(--text); border-color: var(--control-line); font-weight: 500; }
 button.ghost:hover, .button.ghost:hover { opacity: 1; background: var(--sunken); }
-button.danger, .button.danger { background: var(--bad-strong); border-color: var(--bad-strong); color: #ffffff; }
+button.danger, .button.danger { background: var(--bad-strong); border-color: var(--bad-strong); color: var(--on-danger); }
 button.ghost.danger { background: transparent; color: var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, var(--line)); }
 button.warn, .button.warn { background: transparent; border-color: var(--warn); color: var(--warn); }
 button.small, .button.small { padding: 3px 10px; font-size: 0.86rem; min-height: 30px; }
@@ -206,6 +208,7 @@ main .flash, .card .flash, .bare .flash { margin: 0 0 12px; }
 .flash.ok { border-left-color: var(--ok); }
 .flash.error { border-left-color: var(--bad); }
 .flash.info { border-left-color: var(--text); }
+.flash.warn { border-left-color: var(--warn); }
 .empty { text-align: center; padding: 40px 20px; border: 1px dashed var(--control-line); border-radius: var(--radius); color: var(--muted); }
 .empty p { max-width: 520px; margin: 0 auto 14px; }
 .copygrid { display: grid; gap: 8px; margin: 14px 0; }
@@ -224,7 +227,7 @@ details.more[open] summary { margin-bottom: 8px; }
 .attention, .events { list-style: none; margin: 0; padding: 0; }
 .attention li, .events li { padding: 8px 0; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
 .attention li:last-child, .events li:last-child { border-bottom: 0; }
-.dangercard, .danger-zone { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.danger-zone { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
 .dz-item { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .dz-item:last-child { border-bottom: 0; }
 .dz-item p { margin: 0; color: var(--muted); }
@@ -266,7 +269,6 @@ progress::-moz-progress-bar { background: var(--run); }
 .track .lane { fill: var(--sunken); stroke: var(--line); stroke-width: 1; }
 .track .tick { stroke: var(--line); stroke-width: 1; }
 .track .gap { fill: var(--warn-fill); fill-opacity: 0.28; }
-.track .gapedge { fill: var(--warn-fill); }
 .track .mk { stroke-linecap: round; fill: none; }
 .track .mk.l2 { stroke: var(--text); stroke-width: 3; }
 .track .mk.l1 { stroke: var(--muted); stroke-width: 3; }

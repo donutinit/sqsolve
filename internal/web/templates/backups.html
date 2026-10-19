@@ -1,10 +1,10 @@
 {{define "content"}}
 <div class="pagehead">
   <h1>Respaldos</h1>
-  {{if .P.Can "backup.import"}}<a class="button ghost" href="/respaldos/importar">Importar{{if .Data.Imports}} ({{.Data.Imports}} esperando){{end}}</a>{{end}}
+  {{if .P.Can "backup.import"}}<div class="actions"><a class="button ghost" href="/respaldos/importar">Importar{{if .Data.Imports}} ({{.Data.Imports}} esperando){{end}}</a></div>{{end}}
 </div>
 <form method="get" class="filters">
-  <label>Biblioteca<select name="biblioteca"><option value="">Todas</option>{{range .Data.Libraries}}<option value="{{.ID}}" {{if eq .ID $.Data.Filter.LibraryID}}selected{{end}}>{{.DisplayName}}{{if eq .State "purged"}} (eliminada){{end}}</option>{{end}}</select></label>
+  <label>Biblioteca<select name="biblioteca"><option value="">Todas</option>{{range .Data.Libraries}}<option value="{{.ID}}" {{if eq .ID $.Data.Filter.LibraryID}}selected{{end}}>{{.DisplayName}}{{if eq .State "purged"}} (purgada){{end}}</option>{{end}}</select></label>
   <label>Estado<select name="estado"><option value="">Disponibles y fallidos</option><option value="ok" {{if has .Data.Filter.Statuses "ok"}}selected{{end}}>Disponibles</option><option value="failed" {{if has .Data.Filter.Statuses "failed"}}selected{{end}}>Fallidos</option><option value="deleted" {{if has .Data.Filter.Statuses "deleted"}}selected{{end}}>Borrados</option></select></label>
   <button type="submit" class="ghost">Filtrar</button>
 </form>
@@ -16,8 +16,8 @@
   <tbody>
   {{range .Data.Rows}}
   <tr>
-    <td data-label="Fecha"><a href="/respaldos/{{.B.ID}}">{{dt .B.StartedAt}}</a>{{if .B.Pinned}} <span class="badge info">Fijado</span>{{end}}</td>
-    <td data-label="Biblioteca">{{with .L}}<a href="/bibliotecas/{{.ID}}">{{.DisplayName}}</a>{{if eq .State "purged"}} <span class="muted small">(eliminada)</span>{{end}}{{end}}</td>
+    <td data-label="Fecha"><a href="/respaldos/{{.B.ID}}">{{dt .B.StartedAt}}</a>{{if .B.Pinned}} {{template "badge" (dict "tone" "info" "label" "Fijado")}}{{end}}</td>
+    <td data-label="Biblioteca">{{with .L}}<a href="/bibliotecas/{{.ID}}">{{.DisplayName}}</a>{{if eq .State "purged"}} <span class="muted small">(purgada)</span>{{end}}{{end}}</td>
     <td data-label="Tipo">{{kind .B.Kind}}</td>
     <td data-label="Estado">{{template "badge" (dict "tone" (backuptone .B.Status) "label" (backuplabel .B.Status))}}</td>
     <td data-label="Verificación">{{if eq .B.Status "ok"}}{{template "badge" (dict "tone" (verifytone .B.VerifyStatus) "label" (verifylabel .B.VerifyStatus))}}{{end}}</td>

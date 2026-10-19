@@ -12,7 +12,7 @@
       <label class="radio"><input type="radio" name="strategy" value="precreate" {{if eq .Data.Strategy "precreate"}}checked{{end}}> <span><strong>Base vacía</strong> (experimental). sqsolve crea la base y en Resolve se usa "Connect". Pendiente de comprobar con cada versión de Resolve (PoC-01).</span></label>
     </fieldset>
     <label>Notas <span class="muted">(opcional: cliente, rutas de medios, convenciones)</span><textarea name="notes" rows="3">{{.Data.Notes}}</textarea></label>
-    {{if not .Data.Host}}<div class="flash info">Aún no hay una dirección anunciada para las estaciones. <a href="/ajustes">Configúrala</a> para que las instrucciones salgan completas.</div>{{end}}
+    {{if not .Data.Host}}<div class="flash info" role="status">Falta la dirección que usan las estaciones. <a href="/ajustes">Defínela en Ajustes</a> para que las instrucciones salgan completas.</div>{{end}}
     <div class="actions"><button type="submit">Crear biblioteca</button><a href="/bibliotecas">Cancelar</a></div>
   </form>
 </section>

@@ -1,6 +1,6 @@
 {{define "content"}}
 {{$l := .Data.L}}{{$id := $l.ID}}{{$csrf := .CSRF}}{{$p := .P}}
-<div class="pagehead">
+<div class="pagehead" data-state="{{$l.State}}">
   <div>
     <h1>{{$l.DisplayName}}</h1>
     <p class="muted"><span class="mono">{{$l.Slug}}</span> · {{template "librarystate" $l}}{{if $l.ResolveVersion}} · Resolve {{$l.ResolveVersion}}{{end}}</p>
@@ -27,6 +27,7 @@
   {{if eq $l.State "provisioning"}}
     <section class="card"><p>Preparando la biblioteca. Esta página se actualiza sola.</p><div data-autorefresh="3"></div></section>
   {{else if eq $l.State "awaiting_init"}}
+    {{with .Data.Misnamed}}<div class="flash warn" role="status">Resolve creó {{range $i, $d := .}}{{if $i}}, {{end}}<code>{{$d}}</code>{{end}}, pero la biblioteca debe llamarse exactamente <code>{{$l.Slug}}</code>. En Resolve quita esa biblioteca de la lista y vuelve a crearla con el nombre correcto. sqsolve no borra la base con el nombre equivocado por su cuenta.</div>{{end}}
     <section class="card emphasis">
       <h2>Inicializa la biblioteca desde Resolve</h2>
       <p>Tienes {{until $l.InitWindowExpiresAt}} para hacerlo. En <strong>una sola estación</strong>:</p>
@@ -63,7 +64,7 @@
         <a class="button danger" href="/bibliotecas/{{$id}}/purgar">Purgar ahora</a></div>{{end}}
     </section>
   {{else if eq $l.State "purged"}}
-    <section class="card"><h2>Eliminada</h2><p>Ya no existe en el servidor. Sus respaldos siguen en el catálogo y se pueden restaurar como una biblioteca nueva.</p><p><a href="?tab=respaldos">Ver respaldos</a></p></section>
+    <section class="card"><h2>Purgada</h2><p>Ya no existe en el servidor. Sus respaldos siguen en el catálogo y se pueden restaurar como una biblioteca nueva.</p><p><a href="?tab=respaldos">Ver respaldos</a></p></section>
   {{else}}
     {{if eq $l.State "maintenance"}}<div class="flash info" role="status">En mantenimiento: no acepta conexiones nuevas. <a href="?tab=peligro">Reabrir</a></div>{{end}}
     <section class="card">
@@ -94,7 +95,7 @@
     {{with .Data.Sessions}}
     <section class="card">
       <h2>Conectadas ahora</h2>
-      <table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Desde hace</th></tr></thead><tbody>
+      <table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Conectada</th></tr></thead><tbody>
       {{range .}}<tr><td class="mono">{{.User}}</td><td class="mono">{{.ClientAddr}}</td><td>{{.Application}}</td><td>{{ago .Started}}</td></tr>{{end}}
       </tbody></table>
     </section>
@@ -121,7 +122,7 @@
     <tbody>
     {{range .Data.Backups}}
       <tr>
-        <td data-label="Fecha"><a href="/respaldos/{{.ID}}">{{dt .StartedAt}}</a>{{if .Pinned}} <span class="badge info">Fijado</span>{{end}}</td>
+        <td data-label="Fecha"><a href="/respaldos/{{.ID}}">{{dt .StartedAt}}</a>{{if .Pinned}} {{template "badge" (dict "tone" "info" "label" "Fijado")}}{{end}}</td>
         <td data-label="Tipo">{{kind .Kind}}</td>
         <td data-label="Estado">{{template "badge" (dict "tone" (backuptone .Status) "label" (backuplabel .Status))}}</td>
         <td data-label="Verificación">{{if eq .Status "ok"}}{{template "badge" (dict "tone" (verifytone .VerifyStatus) "label" (verifylabel .VerifyStatus))}}{{end}}</td>
@@ -172,7 +173,7 @@
 </section>
 <div class="grid2">
   <section class="card"><h2>Próximas ejecuciones</h2>
-    <ul>{{range .Data.Upcoming}}<li>{{dt .}}</li>{{else}}<li class="muted">Sin próximas ejecuciones</li>{{end}}</ul>
+    <ul>{{range .Data.Upcoming}}<li>{{dt .}}</li>{{else}}<li class="muted">Sin próximas ejecuciones.</li>{{end}}</ul>
     {{with .Data.Schedule}}{{if .LastRunAt}}<p class="muted small">Última: {{dt .LastRunAt}}</p>{{end}}{{end}}
     <p class="hint">Cada biblioteca arranca unos minutos después de la hora exacta para no coincidir con las demás.</p>
   </section>
@@ -190,7 +191,7 @@
   {{range .Data.Creds}}
     <tr class="{{if .RevokedAt}}revoked{{end}}">
       <td class="mono">{{.PGRole}}</td>
-      <td>{{if eq .Kind "owner"}}Principal{{else}}{{.PersonLabel}}{{end}}{{if .RevokedAt}} <span class="badge off">Revocada</span>{{end}}</td>
+      <td>{{if eq .Kind "owner"}}Principal{{else}}{{.PersonLabel}}{{end}}{{if .RevokedAt}} {{template "badge" (dict "tone" "off" "label" "Revocada")}}{{end}}</td>
       <td>{{dt .CreatedAt}}</td>
       <td>{{if .RotatedAt}}{{dt .RotatedAt}}{{else}}<span class="muted">nunca</span>{{end}}</td>
       <td class="actions">
@@ -230,7 +231,7 @@
 <section class="card">
   <h2>Sesiones activas</h2>
   {{if .Data.Sessions}}
-  <table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Inicio</th><th>Estado</th><th></th></tr></thead><tbody>
+  <table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Conectada</th><th>Estado</th><th></th></tr></thead><tbody>
   {{range .Data.Sessions}}<tr><td class="mono">{{.User}}</td><td class="mono">{{.ClientAddr}}</td><td>{{.Application}}</td><td>{{ago .Started}}</td><td>{{.State}}</td>
     <td>{{if $p.Can "library.session.terminate"}}<form method="post" action="/bibliotecas/{{$id}}/sesiones/{{.PID}}/cerrar" data-confirm="Resolve perderá esta conexión. ¿Cerrarla?">{{template "csrf" $csrf}}<button class="ghost small danger" type="submit">Cerrar</button></form>{{end}}</td></tr>{{end}}
   </tbody></table>
@@ -238,7 +239,7 @@
 </section>
 <section class="card"><h2>Tareas</h2>{{if .Data.Jobs}}{{template "jobtable" .Data.Jobs}}{{else}}<p class="muted">Sin tareas.</p>{{end}}</section>
 <section class="card"><h2>Eventos</h2>
-  <ul class="events">{{range .Data.Events}}<li><span class="badge {{sevtone .Severity}}"><span class="dot" aria-hidden="true"></span>{{sev .Severity}}</span> {{.Message}} <time class="muted small" title="{{dt .TS}}">{{ago .TS}}</time></li>{{else}}<li class="muted">Sin eventos.</li>{{end}}</ul>
+  <ul class="events">{{range .Data.Events}}<li>{{template "badge" (dict "tone" (sevtone .Severity) "label" (sev .Severity))}} {{.Message}} <time class="muted small" datetime="{{iso .TS}}" title="{{dt .TS}}">{{ago .TS}}</time></li>{{else}}<li class="muted">Sin eventos.</li>{{end}}</ul>
   {{if $l.Fingerprint}}<p class="hint">Huella de estructura actual: <code class="break">{{$l.Fingerprint}}</code> ({{$l.TableCount}} tablas, revisada {{ago $l.FingerprintCheckedAt}}).</p>{{end}}
 </section>
 {{end}}

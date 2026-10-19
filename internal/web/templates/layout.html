@@ -34,9 +34,9 @@
     <header class="top">
       <div class="crumbs">{{.Instance}}</div>
       <div class="topstatus">
-        {{if not .PGReady}}<span class="badge bad">PostgreSQL sin conexión</span>{{end}}
-        {{if .Running}}<a class="badge run" href="/tareas">{{.Running}} en curso</a>{{end}}
-        {{if .Queued}}<a class="badge off" href="/tareas">{{.Queued}} en cola</a>{{end}}
+        {{if not .PGReady}}{{template "badge" (dict "tone" "bad" "label" "PostgreSQL sin respuesta")}}{{end}}
+        {{if .Running}}<a class="badge run" href="/tareas"><span class="dot" aria-hidden="true"></span>{{.Running}} en curso</a>{{end}}
+        {{if .Queued}}<a class="badge off" href="/tareas"><span class="dot" aria-hidden="true"></span>{{.Queued}} en cola</a>{{end}}
       </div>
     </header>
     {{template "flash" .}}
