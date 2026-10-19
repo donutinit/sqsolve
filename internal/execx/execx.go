@@ -151,7 +151,7 @@ func (r *Runner) Run(ctx context.Context, c Cmd) (Result, error) {
 		max = 64 << 10
 	}
 	cmd := exec.CommandContext(ctx, path, c.Args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = sysProcAttr()
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return nil

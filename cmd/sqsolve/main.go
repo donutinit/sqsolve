@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -133,6 +134,11 @@ func serve() error {
 		return err
 	}
 	log := newLogger(c)
+	if uid, gid := os.Getuid(), os.Getgid(); uid != c.UID || gid != c.GID {
+		return fmt.Errorf("SQS-C053 el servicio corre como %d:%d pero SQSOLVE_UID y SQSOLVE_GID dicen %d:%d. "+
+			"En el compose, la línea user: del servicio sqsolve debe ser igual a SQSOLVE_UID:SQSOLVE_GID; "+
+			"después vuelve a correr sqsolve-init para que ajuste los dueños", uid, gid, c.UID, c.GID)
+	}
 	if err := app.ApplyPendingRecovery(c, os.Stderr); err != nil {
 		return fmt.Errorf("aplicando la recuperación: %w", err)
 	}
@@ -175,13 +181,16 @@ func serve() error {
 	}()
 	if c.HTTPRedirect != "" {
 		go func() {
+			_, port, err := net.SplitHostPort(c.Listen)
+			if err != nil || port == "" {
+				port = "9432"
+			}
 			red := &http.Server{Addr: c.HTTPRedirect, ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				host := r.Host
-				if i := strings.LastIndexByte(host, ':'); i > 0 {
-					host = host[:i]
+				host, _, err := net.SplitHostPort(r.Host)
+				if err != nil {
+					host = strings.Trim(r.Host, "[]")
 				}
-				_, port, _ := strings.Cut(c.Listen, ":")
-				http.Redirect(w, r, "https://"+host+":"+port+r.URL.RequestURI(), http.StatusMovedPermanently)
+				http.Redirect(w, r, "https://"+net.JoinHostPort(host, port)+r.URL.RequestURI(), http.StatusMovedPermanently)
 			})}
 			if err := red.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errCh <- err

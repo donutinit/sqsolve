@@ -447,11 +447,42 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 			"--lock-wait-timeout=60000", "--file="+partial)
 		var wg sync.WaitGroup
 		var dumpErr error
+		dumped, ticking := make(chan struct{}), make(chan struct{})
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer close(dumped)
 			_, dumpErr = s.Exec.Run(ctx, execx.Cmd{Name: "pg_dump", Args: args, Credential: s.PG.AdminCredential()})
 		}()
+		if r != nil {
+			// The archive grows while pg_dump runs; compare it with the last
+			// backup of this library, or a quarter of the database size.
+			expected := dbSize / 4
+			if last, _ := s.LatestVerified(ctx, l.ID); last != nil && last.SizeBytes > 0 {
+				expected = last.SizeBytes
+			}
+			go func() {
+				defer close(ticking)
+				t := time.NewTicker(2 * time.Second)
+				defer t.Stop()
+				for {
+					select {
+					case <-dumped:
+						return
+					case <-t.C:
+						if st, err := os.Stat(partial); err == nil && expected > 0 {
+							frac := float64(st.Size()) / float64(expected)
+							if frac > 0.95 {
+								frac = 0.95
+							}
+							r.Progress(10 + int(frac*55))
+						}
+					}
+				}
+			}()
+		} else {
+			close(ticking)
+		}
 		tables, estimate, cerr := pg.PublicTables(ctx, tx.Conn())
 		if cerr == nil {
 			exact = estimate <= 10_000_000
@@ -461,6 +492,7 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 			fp, cerr = pg.SchemaFingerprint(ctx, tx.Conn())
 		}
 		wg.Wait()
+		<-ticking
 		if dumpErr != nil {
 			return fmt.Errorf("SQS-B010 pg_dump falló: %w", dumpErr)
 		}

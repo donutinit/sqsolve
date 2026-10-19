@@ -679,6 +679,14 @@ func (l *limiter) blocked(ip, user string, now time.Time) time.Time {
 func (l *limiter) fail(ip, user string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if len(l.m) > 10000 {
+		// Random usernames must not grow the map without bound.
+		for k, a := range l.m {
+			if now.Sub(a.last) > time.Hour && !a.until.After(now) {
+				delete(l.m, k)
+			}
+		}
+	}
 	burst := false
 	for _, k := range l.keys(ip, user) {
 		a := l.m[k]

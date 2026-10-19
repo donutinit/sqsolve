@@ -45,6 +45,7 @@ type Service struct {
 	hbaMu    sync.Mutex
 	stableMu sync.Mutex
 	stable   map[string]int
+	warned   map[string]bool
 }
 
 // Settings are the runtime settings editable in the UI.

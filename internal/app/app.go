@@ -149,8 +149,22 @@ func (a *App) Close() {
 	a.DB.Close()
 }
 
-// PGReady reports whether PostgreSQL was reached and reconciled.
-func (a *App) PGReady() bool { return a.pgReady.Load() }
+// PGAlive pings PostgreSQL now. Readiness probes use it instead of the
+// monitor's last check, which can be seconds old.
+func (a *App) PGAlive(ctx context.Context) bool {
+	if !a.pgReady.Load() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return a.PG.Ping(ctx) == nil
+}
+
+// PGReady reports whether PostgreSQL was reached and reconciled at startup
+// and still answers.
+func (a *App) PGReady() bool {
+	return a.pgReady.Load() && (a.Monitor == nil || a.Monitor.PostgresUp())
+}
 
 // InstallCode returns the one-time setup code while there is no admin.
 func (a *App) InstallCode() string {

@@ -90,7 +90,7 @@ type Monitor struct {
 
 // Run loops until ctx ends.
 func (m *Monitor) Run(ctx context.Context) {
-	fast := time.NewTicker(15 * time.Second)
+	fast := time.NewTicker(5 * time.Second)
 	slow := time.NewTicker(5 * time.Minute)
 	daily := time.NewTicker(24 * time.Hour)
 	defer fast.Stop()
@@ -114,6 +114,14 @@ func (m *Monitor) Run(ctx context.Context) {
 			m.checkCerts(ctx)
 		}
 	}
+}
+
+// PostgresUp reports the last check. Before the first one it trusts the
+// startup connection.
+func (m *Monitor) PostgresUp() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.pgUp == nil || *m.pgUp
 }
 
 func (m *Monitor) isUp() bool {

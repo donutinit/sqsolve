@@ -522,10 +522,31 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 	}); err != nil {
 		return err
 	}
+	s.dropSupersededPrev(ctx, r, l, prev)
 	s.Events.Emit(ctx, events.Event{Type: events.RestoreSucceeded, LibraryID: l.ID, JobID: r.Job.ID,
 		Message: fmt.Sprintf("Se reemplazó %q con el respaldo del %s. El estado anterior se conserva %d días para revertir", l.DisplayName,
 			b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"), s.Settings(ctx).PrevDays)})
 	return nil
+}
+
+// dropSupersededPrev removes the state kept by an earlier restore once a new
+// restore keeps a newer one. The library only tracks one previous state, so
+// the older database would otherwise stay forever and block a purge. Its
+// content is in the pre_restore backup taken by that earlier restore.
+func (s *Service) dropSupersededPrev(ctx context.Context, r *jobs.Run, before *Library, current string) {
+	old := before.PrevDB
+	if old == "" || old == current {
+		return
+	}
+	if b, err := s.Backup(ctx, before.PrevBackupID); err != nil || !b.Usable() {
+		r.Warnf("Se conserva %s: no se encontró el respaldo que lo cubre; se borrará al vencer", old)
+		return
+	}
+	if err := s.PG.DropDatabase(ctx, old); err != nil {
+		r.Warnf("No se pudo borrar el estado anterior %s: %v", old, err)
+		return
+	}
+	r.Infof("Se borró %s, el estado que conservaba la restauración anterior", old)
 }
 
 func (s *Service) reopenAfterSwap(ctx context.Context, l *Library, prev, preBackupID string, stateBefore State, fp string, tables int) error {
@@ -602,7 +623,7 @@ func (s *Service) runRevert(ctx context.Context, r *jobs.Run) error {
 		_, err := s.PG.TerminateAll(ctx, l.DBName)
 		return err
 	}); err != nil {
-		s.PG.SetAllowConnections(context.WithoutCancel(ctx), l.DBName, true)
+		s.PG.SetAllowConnections(context.WithoutCancel(ctx), l.DBName, stateBefore != StateMaintenance)
 		s.setState(context.WithoutCancel(ctx), l.ID, stateBefore)
 		return err
 	}
@@ -621,7 +642,7 @@ func (s *Service) runRevert(ctx context.Context, r *jobs.Run) error {
 		j.Phase = "swapped"
 		return r.Journal(j)
 	}); err != nil {
-		s.PG.SetAllowConnections(context.WithoutCancel(ctx), l.DBName, true)
+		s.PG.SetAllowConnections(context.WithoutCancel(ctx), l.DBName, stateBefore != StateMaintenance)
 		s.setState(context.WithoutCancel(ctx), l.ID, stateBefore)
 		return err
 	}
@@ -705,33 +726,59 @@ func (s *Service) runImport(ctx context.Context, r *jobs.Run) error {
 	now := s.now()
 	rel := filepath.Join("libraries", l.Slug, now.UTC().Format("2006"), now.UTC().Format("01"), fmt.Sprintf("%s_%s_%s.backup", l.Slug, now.UTC().Format("20060102T150405Z"), id))
 	abs := filepath.Join(s.Cfg.BackupDir, rel)
+	moved := false
 	err = r.Step("copiar", func() error {
 		if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
 			return err
+		}
+		// _import lives in the backups volume, so a source that will be
+		// deleted anyway is moved instead of copied.
+		if p.DeleteSource {
+			if err := os.Rename(src, abs+".partial"); err == nil {
+				moved = true
+				return fsx.SealFile(abs+".partial", abs)
+			}
 		}
 		in, err := os.Open(src)
 		if err != nil {
 			return err
 		}
 		defer in.Close()
+		st, err := in.Stat()
+		if err != nil {
+			return err
+		}
 		out, err := os.OpenFile(abs+".partial", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(out, in); err != nil {
+		if _, err := io.Copy(out, &progressReader{r: in, total: st.Size(), run: r}); err != nil {
 			out.Close()
 			os.Remove(abs + ".partial")
 			return err
 		}
-		out.Close()
+		if err := out.Close(); err != nil {
+			os.Remove(abs + ".partial")
+			return err
+		}
 		return fsx.SealFile(abs+".partial", abs)
 	})
 	if err != nil {
 		return err
 	}
+	// Until the catalog row exists, a failure puts the file back where it was.
+	undo := func(err error) error {
+		if moved {
+			os.Rename(abs, src)
+		} else {
+			os.Remove(abs)
+		}
+		os.Remove(manifestPath(abs))
+		return err
+	}
 	sum, size, err := fileSHA256(abs)
 	if err != nil {
-		return err
+		return undo(err)
 	}
 	m := Manifest{ManifestVersion: 1, BackupID: id, Kind: KindImported, File: filepath.Base(abs), Size: size, SHA256: sum,
 		StartedAt: now.UTC(), FinishedAt: now.UTC(), SqsolveVersion: Version, InstanceID: s.InstanceID, ResolveVersion: l.ResolveVersion}
@@ -740,7 +787,7 @@ func (s *Service) runImport(ctx context.Context, r *jobs.Run) error {
 	m.Server.PostgresVersion = info.DumpedFrom
 	mb, _ := jsonIndent(m)
 	if err := fsx.WriteFileAtomic(manifestPath(abs), mb, 0o600); err != nil {
-		return err
+		return undo(err)
 	}
 	_, err = s.DB.ExecContext(ctx, `INSERT INTO backups(id, library_id, job_id, kind, status, file_path, size_bytes, sha256, pg_server_version, pg_dump_version,
 		archive_version, compression, counts_exact, resolve_version, source_db, started_at, finished_at, verify_status, verify_level, verified_at, verify_detail)
@@ -748,9 +795,9 @@ func (s *Service) runImport(ctx context.Context, r *jobs.Run) error {
 		id, l.ID, r.Job.ID, rel, size, sum, info.DumpedFrom, info.DumpedBy, info.ArchiveVersion, info.Compression, l.ResolveVersion, p.Path,
 		store.T(now), store.T(now), store.NowT(), "Importado: índice legible; sin conteos de filas")
 	if err != nil {
-		return err
+		return undo(err)
 	}
-	if p.DeleteSource {
+	if p.DeleteSource && !moved {
 		os.Remove(src)
 	}
 	r.Infof("Importado %s (%s, %s)", p.Path, HumanBytes(size), info.DumpedBy)
@@ -886,4 +933,25 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 	s.Events.Emit(ctx, events.Event{Type: events.RestoreSucceeded, LibraryID: l.ID, JobID: r.Job.ID,
 		Message: fmt.Sprintf("Se recreó %q desde el respaldo del %s", l.DisplayName, b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"))})
 	return nil
+}
+
+// progressReader reports copy progress to a job every few percent.
+type progressReader struct {
+	r     io.Reader
+	total int64
+	done  int64
+	last  int
+	run   *jobs.Run
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	p.done += int64(n)
+	if p.total > 0 {
+		if pct := int(p.done * 100 / p.total); pct >= p.last+2 {
+			p.last = pct
+			p.run.Progress(pct)
+		}
+	}
+	return n, err
 }

@@ -177,12 +177,12 @@ func (a *API) Register(m *http.ServeMux) {
 }
 
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
-	ready := a.A.PGReady() && a.A.Svc.BackupVolumeOK() == nil
+	pgOK, volOK := a.A.PGAlive(r.Context()), a.A.Svc.BackupVolumeOK() == nil
 	status := http.StatusOK
-	if !ready {
+	if !pgOK || !volOK {
 		status = http.StatusServiceUnavailable
 	}
-	writeJSON(w, status, map[string]any{"ready": ready, "postgres": a.A.PGReady(), "backup_volume": a.A.Svc.BackupVolumeOK() == nil})
+	writeJSON(w, status, map[string]any{"ready": pgOK && volOK, "postgres": pgOK, "backup_volume": volOK})
 }
 
 func (a *API) status(w http.ResponseWriter, r *http.Request, p *auth.Principal) {

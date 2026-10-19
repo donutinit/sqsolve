@@ -298,6 +298,36 @@ func (s *Service) PurgeExpired(ctx context.Context, r *jobs.Run) error {
 			s.DB.ExecContext(ctx, `UPDATE libraries SET prev_db_name = '', prev_expires_at = NULL, prev_backup_id = '' WHERE id = ?`, l.ID)
 			r.Infof("Se borró el estado anterior %s", l.PrevDB)
 		}
+		s.sweepOrphanPrev(ctx, r, l, now)
 	}
 	return nil
+}
+
+// sweepOrphanPrev drops previous-state databases that no library row points
+// to anymore (left by older versions or by an interrupted job) once they are
+// older than the retention for previous states.
+func (s *Service) sweepOrphanPrev(ctx context.Context, r *jobs.Run, l *Library, now time.Time) {
+	if !l.Live() {
+		return
+	}
+	owned, err := s.PG.DatabasesOwnedBy(ctx, l.OwnerRole)
+	if err != nil {
+		return
+	}
+	keep := time.Duration(s.Settings(ctx).PrevDays) * 24 * time.Hour
+	prefix := l.Slug + "__prev_"
+	for _, name := range owned {
+		if !strings.HasPrefix(name, prefix) || name == l.PrevDB {
+			continue
+		}
+		t, err := time.Parse("200601021504", strings.TrimPrefix(name, prefix))
+		if err != nil || now.Sub(t) < keep {
+			continue
+		}
+		if err := s.PG.DropDatabase(ctx, name); err != nil {
+			r.Warnf("No se pudo borrar %s: %v", name, err)
+			continue
+		}
+		r.Infof("Se borró %s, un estado anterior que ya nadie usaba", name)
+	}
 }

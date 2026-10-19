@@ -55,7 +55,7 @@ func (s State) Label() string {
 	case StateTrashed:
 		return "En la papelera"
 	case StatePurged:
-		return "Eliminada"
+		return "Purgada"
 	case StateMissing:
 		return "Sin base en el servidor"
 	}
@@ -457,8 +457,12 @@ func (s *Service) checkInit(ctx context.Context, l *Library) error {
 		return nil
 	}
 	db, err := s.PG.Database(ctx, l.DBName)
-	if err != nil || db == nil {
+	if err != nil {
 		return err
+	}
+	if db == nil {
+		s.warnMisnamed(ctx, l)
+		return nil
 	}
 	if db.Owner != l.OwnerRole {
 		return fmt.Errorf("la base %s pertenece a %s, no a %s", l.DBName, db.Owner, l.OwnerRole)
@@ -490,6 +494,41 @@ func (s *Service) checkInit(ctx context.Context, l *Library) error {
 		return nil
 	}
 	return s.activate(ctx, l, fp)
+}
+
+// MisnamedDatabases lists databases the library role created with a name
+// other than the expected one, which happens when the name typed in Resolve
+// is not exactly the identifier.
+func (s *Service) MisnamedDatabases(ctx context.Context, l *Library) []string {
+	owned, err := s.PG.DatabasesOwnedBy(ctx, l.OwnerRole)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, d := range owned {
+		if d != l.DBName && !pg.IsAuxiliary(d) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func (s *Service) warnMisnamed(ctx context.Context, l *Library) {
+	for _, d := range s.MisnamedDatabases(ctx, l) {
+		key := l.ID + "/" + d
+		s.stableMu.Lock()
+		if s.warned == nil {
+			s.warned = map[string]bool{}
+		}
+		seen := s.warned[key]
+		s.warned[key] = true
+		s.stableMu.Unlock()
+		if seen {
+			continue
+		}
+		s.Events.Emit(ctx, events.Event{Type: events.LibraryExtraDatabase, Severity: events.Warning, LibraryID: l.ID,
+			Message: fmt.Sprintf("Resolve creó la base %q, pero la biblioteca debe llamarse exactamente %q. Vuelve a crearla en Resolve con ese nombre", d, l.DBName)})
+	}
 }
 
 func (s *Service) activate(ctx context.Context, l *Library, fp pg.Fingerprint) error {

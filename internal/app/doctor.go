@@ -39,7 +39,7 @@ func Doctor(ctx context.Context, a *App) []Check {
 	add := func(name, status, detail, hint string) { out = append(out, Check{name, status, detail, hint}) }
 	c := a.Cfg
 
-	for _, v := range []struct{ name, path string }{{"Volumen de la aplicación", c.AppDir}, {"Volumen de respaldos", c.BackupDir}, {"Configuración de PostgreSQL", c.PGConfDir()}} {
+	for _, v := range []struct{ name, path string }{{"Volumen de la aplicación", c.AppDir}, {"Volumen de respaldos", c.BackupDir}, {"Volumen de la base de datos", c.PGConfDir()}} {
 		probe := filepath.Join(v.path, ".sqsolve-probe")
 		if err := os.WriteFile(probe, []byte("x"), 0o600); err != nil {
 			add(v.name, "fail", "no se puede escribir en "+v.path+": "+err.Error(), "revisa que el volumen esté montado y que SQSOLVE_UID coincida con user: del compose")

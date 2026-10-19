@@ -106,6 +106,23 @@ type migration struct {
 	name     string
 	sql      string
 	checksum string
+	legacy   string // checksum of the raw file, used before 0.1
+}
+
+// sqlChecksum hashes the statements only: comment lines and blank lines do
+// not count, so editing a comment (a license header, say) never makes an
+// installed database refuse to start.
+func sqlChecksum(b []byte) string {
+	var kept []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "--") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(kept, "\n")))
+	return hex.EncodeToString(sum[:])
 }
 
 func loadMigrations() ([]migration, error) {
@@ -127,8 +144,8 @@ func loadMigrations() ([]migration, error) {
 		if err != nil {
 			return nil, err
 		}
-		sum := sha256.Sum256(b)
-		out = append(out, migration{v, name, string(b), hex.EncodeToString(sum[:])})
+		raw := sha256.Sum256(b)
+		out = append(out, migration{v, name, string(b), sqlChecksum(b), hex.EncodeToString(raw[:])})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
 	return out, nil
@@ -161,6 +178,12 @@ func (db *DB) migrate(ctx context.Context, existed bool, backupDir string) error
 	var pending []migration
 	for _, m := range all {
 		if c, ok := applied[m.version]; ok {
+			if c == m.legacy {
+				if _, err := db.ExecContext(ctx, `UPDATE schema_migrations SET checksum = ? WHERE version = ?`, m.checksum, m.version); err != nil {
+					return err
+				}
+				continue
+			}
 			if c != m.checksum {
 				return fmt.Errorf("SQS-X011 la migración %s cambió después de aplicarse", m.name)
 			}
