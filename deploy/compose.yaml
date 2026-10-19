@@ -38,6 +38,9 @@ services:
 
   postgres:
     image: *postgres-image
+    # Como en las apps de TrueNAS: sqsolve-init le prepara la carpeta de datos y PostgreSQL corre
+    # con su propio usuario, nunca como root.
+    user: "999:999"
     command: ["postgres", "-c", "config_file=/var/lib/postgresql/sqsolve/postgresql.conf"]
     environment:
       TZ: "America/Mexico_City"

@@ -30,31 +30,20 @@ func panelCertPath(c *config.Config) string  { return filepath.Join(c.AppDir, "t
 func panelKeyPath(c *config.Config) string   { return filepath.Join(c.AppDir, "tls", "panel.key") }
 func stateBackupDir(c *config.Config) string { return filepath.Join(c.AppDir, "state-backups") }
 
-// permProbe checks the db volume before PostgreSQL gets it. A variable so
-// tests can simulate a volume that ignores chmod.
-var permProbe = keepsPermissions
+// dataDirCheck checks PGDATA once init has prepared it. A variable so tests
+// can simulate a volume that does not keep the mode.
+var dataDirCheck = dataDirMode
 
-// keepsPermissions reports whether dir keeps the permission bits a chmod
-// sets. PostgreSQL depends on them; a volume whose permissions come from an
-// NFSv4 ACL (a TrueNAS dataset created with a preset other than Generic)
-// rewrites them, and the server never starts.
-func keepsPermissions(dir string) error {
-	f, err := os.CreateTemp(dir, ".sqsolve-perms-*")
+// dataDirMode fails unless PGDATA has a mode PostgreSQL accepts (0700 or
+// 0750). Volumes whose permissions come from an NFSv4 ACL can refuse or
+// rewrite the chmod, and then the server never starts.
+func dataDirMode(path string) error {
+	st, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	name := f.Name()
-	f.Close()
-	defer os.Remove(name)
-	if err := os.Chmod(name, 0o640); err != nil {
-		return err
-	}
-	st, err := os.Stat(name)
-	if err != nil {
-		return err
-	}
-	if got := st.Mode().Perm(); got != 0o640 {
-		return fmt.Errorf("se pidió 0640 y quedó %04o", got)
+	if p := st.Mode().Perm(); p != 0o700 && p != 0o750 {
+		return fmt.Errorf("su carpeta quedó en %04o y PostgreSQL exige 0700", p)
 	}
 	return nil
 }
@@ -159,10 +148,18 @@ func Init(c *config.Config, out io.Writer) error {
 	if err := mkdir(c.PGDir, 0o755, -1, -1); err != nil {
 		return err
 	}
-	if err := permProbe(c.PGDir); err != nil {
-		return fmt.Errorf("SQS-C054 el volumen de la base de datos no respeta los permisos de archivo (%v), "+
-			"así que PostgreSQL no puede arrancar. Pasa con carpetas que usan ACL de tipo NFSv4: "+
-			"en TrueNAS, crea el dataset con el preset Generic", err)
+	// PGDATA is prepared here, like the permissions container of TrueNAS
+	// apps, so the postgres container runs as its own user and never needs
+	// root on the volume.
+	if err := os.MkdirAll(filepath.Dir(c.PGDataDir), 0o755); err != nil {
+		return fmt.Errorf("SQS-C050 no se pudo crear %s: %w", filepath.Dir(c.PGDataDir), err)
+	}
+	if err := mkdir(c.PGDataDir, 0o700, c.PGUID, c.PGGID); err != nil {
+		return err
+	}
+	if err := dataDirCheck(c.PGDataDir); err != nil {
+		return fmt.Errorf("SQS-C054 el volumen de la base de datos no conserva los permisos que pide PostgreSQL (%v). "+
+			"Pasa con carpetas que usan ACL de tipo NFSv4: en TrueNAS, crea el dataset con el preset Generic", err)
 	}
 	if err := mkdir(conf, 0o750, c.UID, c.PGGID); err != nil {
 		return err

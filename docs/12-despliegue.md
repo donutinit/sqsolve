@@ -36,7 +36,8 @@ cambio (trabajo `smoke`). Servicios:
 - `sqsolve-init`: como root y sin red, prepara volúmenes, secretos, `postgresql.conf`,
   `pg_hba.conf` inicial y certificado TLS de PostgreSQL. Corre en cada `up` y es idempotente.
 - `postgres`: imagen oficial fijada por digest, arrancada con
-  `postgres -c config_file=/var/lib/postgresql/sqsolve/postgresql.conf`.
+  `postgres -c config_file=/var/lib/postgresql/sqsolve/postgresql.conf` y con el usuario 999
+  de la imagen (`user: "999:999"`); nunca corre como root, igual que en las apps de TrueNAS.
 - `sqsolve`: usuario sin privilegios, sistema de archivos de solo lectura, sin capacidades;
   publica 9432. Arranca aunque PostgreSQL no esté listo, para poder diagnosticarlo.
 
@@ -78,7 +79,9 @@ Para instalar se cambian las tres rutas, `TZ` y, si hace falta, la IP donde se p
    identidad para una recuperación); genera secretos que falten con `crypto/rand`; genera
    `postgresql.conf` y un `pg_hba.conf` inicial; genera el certificado TLS de PostgreSQL
    (autofirmado, ECDSA P-256, 10 años, con dueño root y grupo 999 en modo 0640 como exige
-   PostgreSQL); ajusta dueños y permisos; termina.
+   PostgreSQL); crea la carpeta de datos de PostgreSQL con dueño 999 y modo 0700, y se detiene
+   con `SQS-C054` si el volumen no conserva ese modo (ACL de tipo NFSv4); ajusta dueños y
+   permisos; termina.
 2. `postgres` inicializa el clúster la primera vez con la contraseña del superusuario.
 3. `sqsolve` crea o repara `sqsolve_admin` con el superusuario por socket, imprime el **código
    de instalación** en su registro si aún no hay administrador y abre el asistente.

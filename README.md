@@ -98,9 +98,9 @@ Tres carpetas vacías: dos en SSD y la de respaldos de preferencia en otro disco
 /mnt/discos/sqsolve-respaldos
 ```
 
-En TrueNAS conviene un dataset por carpeta, todos con el preset **Generic**. Los otros presets
-dejan ACL de tipo NFSv4 y con eso PostgreSQL no arranca (`sqsolve-init` lo detecta y se detiene
-con el error `SQS-C054`).
+En TrueNAS conviene un dataset por carpeta. Lo probado es el preset **Generic** (permisos POSIX).
+Con otros presets el dataset usa ACL de tipo NFSv4: `sqsolve-init` revisa que la carpeta de
+PostgreSQL quede con los permisos que exige y, si no, se detiene con el error `SQS-C054`.
 
 ### 2. Ajusta el compose
 
@@ -348,7 +348,7 @@ código `SQS-...` que también aparece en la API.
 | `SQS-S004` en `sqsolve-init` | La carpeta de respaldos tiene archivos que no son de sqsolve | Monta una carpeta vacía. Si de verdad es la correcta, `SQSOLVE_BACKUPS_ADOPT=1` |
 | `SQS-S003` | Ese volumen de respaldos es de otra instalación | Revisa que montaste la carpeta correcta |
 | Errores de permisos tras cambiar de usuario o copiar carpetas | Los dueños no corresponden | Agrega `SQSOLVE_FIX_PERMS: "1"` al servicio `sqsolve-init`, levanta una vez y quítalo |
-| `SQS-C054` en `sqsolve-init`, o PostgreSQL se reinicia con `mkdir: cannot create directory '/var/lib/postgresql/18': Permission denied` o `data directory ... has invalid permissions` | La carpeta `db` usa ACL de tipo NFSv4 y no respeta los permisos que PostgreSQL necesita | Crea la carpeta `db` en un dataset con permisos POSIX (en TrueNAS, preset Generic) |
+| `SQS-C054` en `sqsolve-init`, o PostgreSQL se reinicia con `mkdir: cannot create directory '/var/lib/postgresql/18': Permission denied` o `data directory ... has invalid permissions` | La carpeta `db` usa ACL de tipo NFSv4 y no conserva los permisos que PostgreSQL exige (la `0.1.0` además intentaba crear la carpeta como root) | Crea la carpeta `db` en un dataset con permisos POSIX (en TrueNAS, preset Generic) |
 | `port is already allocated` en 5432 | Otro PostgreSQL en el host (Synology) | Publica `"IP-de-la-LAN:5432:5432"` |
 | Resolve no conecta | Red, firewall, dirección o regla de red | Desde la estación, que llegue a `IP:5432`; revisa la dirección anunciada en Ajustes y las reglas de la biblioteca; el registro de `postgres` dice por qué rechazó (`pg_hba.conf rejects connection for host ...`) |
 | Rechazos con una IP `172.x` en el registro de `postgres` | Tu Docker reescribe la IP de origen | Las reglas de red no ven la IP real de la estación: quítalas o pon esa red |

@@ -14,23 +14,43 @@ import (
 	"github.com/donutinit/sqsolve/internal/config"
 )
 
-func TestKeepsPermissionsOnPOSIXDir(t *testing.T) {
-	dir := t.TempDir()
-	if err := keepsPermissions(dir); err != nil {
+func testConfig(t *testing.T) *config.Config {
+	pg := t.TempDir()
+	return &config.Config{AppDir: t.TempDir(), BackupDir: t.TempDir(), PGDir: pg, PGDataDir: filepath.Join(pg, "18", "docker"),
+		PGSocket: t.TempDir(), PGPort: 5432, PGListen: "*", PGMaxConnections: 50, PGMemoryMB: 256,
+		UID: os.Getuid(), GID: os.Getgid(), PGUID: os.Getuid(), PGGID: os.Getgid(), Location: time.UTC}
+}
+
+func TestInitPreparesDataDir(t *testing.T) {
+	cfg := testConfig(t)
+	if err := Init(cfg, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if left, _ := filepath.Glob(filepath.Join(dir, ".sqsolve-perms-*")); len(left) != 0 {
-		t.Fatalf("probe left files behind: %v", left)
+	for path, want := range map[string]os.FileMode{cfg.PGDataDir: 0o700, filepath.Dir(cfg.PGDataDir): 0o755} {
+		st, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := st.Mode().Perm(); got != want {
+			t.Errorf("%s: mode %04o, want %04o", path, got, want)
+		}
+	}
+	if err := os.Chmod(cfg.PGDataDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := Init(cfg, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(cfg.PGDataDir); st.Mode().Perm() != 0o700 {
+		t.Errorf("a second init left PGDATA at %04o", st.Mode().Perm())
 	}
 }
 
 func TestInitRefusesVolumeThatIgnoresChmod(t *testing.T) {
-	permProbe = func(string) error { return errors.New("se pidió 0640 y quedó 0740") }
-	defer func() { permProbe = keepsPermissions }()
-	pg := t.TempDir()
-	cfg := &config.Config{AppDir: t.TempDir(), BackupDir: t.TempDir(), PGDir: pg, PGDataDir: filepath.Join(pg, "18", "docker"),
-		PGSocket: t.TempDir(), PGPort: 5432, PGListen: "*", PGMaxConnections: 50, PGMemoryMB: 256,
-		UID: os.Getuid(), GID: os.Getgid(), PGUID: os.Getuid(), PGGID: os.Getgid(), Location: time.UTC}
+	dataDirCheck = func(string) error { return errors.New("su carpeta quedó en 0770 y PostgreSQL exige 0700") }
+	defer func() { dataDirCheck = dataDirMode }()
+	cfg := testConfig(t)
+	pg := cfg.PGDir
 	err := Init(cfg, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "SQS-C054") || !strings.Contains(err.Error(), "preset Generic") {
 		t.Fatalf("want SQS-C054 naming the Generic preset, got %v", err)
