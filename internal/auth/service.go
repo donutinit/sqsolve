@@ -1,0 +1,711 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+// Package auth handles panel accounts, sessions, second factor, API tokens
+// and the authorization policy shared by the web UI, the API and the CLI.
+package auth
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/donutinit/sqsolve/internal/audit"
+	"github.com/donutinit/sqsolve/internal/events"
+	"github.com/donutinit/sqsolve/internal/secrets"
+	"github.com/donutinit/sqsolve/internal/store"
+	"github.com/donutinit/sqsolve/internal/ulid"
+)
+
+// Session lifetimes (docs 08 T-03).
+const (
+	SessionIdle     = 8 * time.Hour
+	SessionAbsolute = 7 * 24 * time.Hour
+	ReauthWindow    = 5 * time.Minute
+)
+
+// User is a panel account.
+type User struct {
+	ID          string
+	Username    string
+	DisplayName string
+	Role        Role
+	TOTPEnabled bool
+	CreatedAt   time.Time
+	LastLoginAt *time.Time
+	DisabledAt  *time.Time
+	hash        string
+	totpEnc     string
+	totpLast    int64
+}
+
+// Name returns the display name or the username.
+func (u *User) Name() string {
+	if u.DisplayName != "" {
+		return u.DisplayName
+	}
+	return u.Username
+}
+
+// Principal is an authenticated caller.
+type Principal struct {
+	User      *User
+	SessionID string
+	TokenID   string
+	Scopes    []string
+	ReauthAt  time.Time
+	IP        string
+	CSRF      string
+}
+
+// Can reports whether the principal may perform a.
+func (p *Principal) Can(a Action) bool {
+	if p == nil || p.User == nil || p.User.DisabledAt != nil {
+		return false
+	}
+	if !RoleAllows(p.User.Role, a) {
+		return false
+	}
+	if p.TokenID != "" {
+		return ScopeAllows(p.Scopes, a)
+	}
+	return true
+}
+
+// FreshAuth reports whether a dangerous action can proceed without asking
+// for the password again.
+func (p *Principal) FreshAuth() bool {
+	if p.TokenID != "" {
+		return true
+	}
+	return time.Since(p.ReauthAt) < ReauthWindow
+}
+
+// Actor for audit entries.
+func (p *Principal) Actor() audit.Actor {
+	if p == nil || p.User == nil {
+		return audit.Actor{Type: "anonymous", ID: "", Name: "anónimo", IP: ipOf(p)}
+	}
+	t := "user"
+	if p.TokenID != "" {
+		t = "token"
+	}
+	return audit.Actor{Type: t, ID: p.User.ID, Name: p.User.Username, IP: p.IP}
+}
+
+func ipOf(p *Principal) string {
+	if p == nil {
+		return ""
+	}
+	return p.IP
+}
+
+// Service is the authentication service.
+type Service struct {
+	db      *store.DB
+	box     *secrets.Box
+	audit   *audit.Log
+	ev      *events.Recorder
+	csrfKey []byte
+	limiter *limiter
+	Now     func() time.Time
+}
+
+// New creates the service.
+func New(db *store.DB, box *secrets.Box, a *audit.Log, ev *events.Recorder, masterKey []byte) *Service {
+	m := hmac.New(sha256.New, masterKey)
+	m.Write([]byte("sqsolve csrf v1"))
+	return &Service{db: db, box: box, audit: a, ev: ev, csrfKey: m.Sum(nil), limiter: newLimiter(), Now: time.Now}
+}
+
+const userCols = `id, username, display_name, password_hash, role, totp_secret_enc, totp_enabled, totp_last_counter, created_at, last_login_at, disabled_at`
+
+func scanUser(row interface{ Scan(...any) error }) (*User, error) {
+	var u User
+	var role, created string
+	var last, disabled sql.NullString
+	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.hash, &role, &u.totpEnc, &u.TOTPEnabled, &u.totpLast, &created, &last, &disabled); err != nil {
+		return nil, err
+	}
+	u.Role = Role(role)
+	u.CreatedAt = store.ParseT(created)
+	u.LastLoginAt = store.NullT(last)
+	u.DisabledAt = store.NullT(disabled)
+	return &u, nil
+}
+
+// ErrUserNotFound is returned for unknown users.
+var ErrUserNotFound = errors.New("SQS-A001 usuario no encontrado")
+
+// UserByID returns a user.
+func (s *Service) UserByID(ctx context.Context, id string) (*User, error) {
+	u, err := scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM admin_users WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	return u, err
+}
+
+// UserByName returns a user by username (case-insensitive).
+func (s *Service) UserByName(ctx context.Context, name string) (*User, error) {
+	u, err := scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM admin_users WHERE username = ?`, name))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	return u, err
+}
+
+// Users lists accounts.
+func (s *Service) Users(ctx context.Context) ([]*User, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+userCols+` FROM admin_users ORDER BY username`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// HasAdmin reports whether at least one active administrator exists.
+func (s *Service) HasAdmin(ctx context.Context) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM admin_users WHERE role = 'admin' AND disabled_at IS NULL`).Scan(&n)
+	return n > 0, err
+}
+
+var usernameRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9._-]{1,31}$`)
+
+// CreateUser adds an account.
+func (s *Service) CreateUser(ctx context.Context, by audit.Actor, username, display, password string, role Role) (*User, error) {
+	username = strings.TrimSpace(username)
+	if !usernameRe.MatchString(username) {
+		return nil, errors.New("SQS-A011 usuario inválido: de 2 a 32 caracteres, letras, números, punto, guion o guion bajo")
+	}
+	if !role.Valid() {
+		return nil, errors.New("SQS-A012 rol inválido")
+	}
+	if err := ValidatePassword(password, username); err != nil {
+		return nil, err
+	}
+	id := ulid.New()
+	now := store.NowT()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO admin_users(id, username, display_name, password_hash, role, created_at, password_changed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, username, strings.TrimSpace(display), HashPassword(password), string(role), now, now)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return nil, errors.New("SQS-A013 ya existe un usuario con ese nombre")
+		}
+		return nil, err
+	}
+	s.audit.Record(ctx, by, "user.create", "user", id, audit.OK, map[string]any{"username": username, "role": role})
+	return s.UserByID(ctx, id)
+}
+
+// SetPassword changes a password and ends the user's other sessions.
+func (s *Service) SetPassword(ctx context.Context, by audit.Actor, userID, password, keepSession string) error {
+	u, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := ValidatePassword(password, u.Username); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET password_hash = ?, password_changed_at = ? WHERE id = ?`, HashPassword(password), store.NowT(), userID); err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND id_hash <> ?`, userID, keepSession)
+	return s.audit.Record(ctx, by, "user.password", "user", userID, audit.OK, map[string]any{"username": u.Username})
+}
+
+// UpdateUser changes display name and role, and enables or disables.
+func (s *Service) UpdateUser(ctx context.Context, by audit.Actor, userID, display string, role Role, disabled bool) error {
+	if !role.Valid() {
+		return errors.New("SQS-A012 rol inválido")
+	}
+	u, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if u.Role == RoleAdmin && (role != RoleAdmin || disabled) {
+		var n int
+		s.db.QueryRowContext(ctx, `SELECT count(*) FROM admin_users WHERE role = 'admin' AND disabled_at IS NULL AND id <> ?`, userID).Scan(&n)
+		if n == 0 {
+			return errors.New("SQS-A014 debe quedar al menos un administrador activo")
+		}
+	}
+	var dis any
+	if disabled {
+		dis = store.NowT()
+		if u.DisabledAt != nil {
+			dis = store.T(*u.DisabledAt)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET display_name = ?, role = ?, disabled_at = ? WHERE id = ?`, strings.TrimSpace(display), string(role), dis, userID); err != nil {
+		return err
+	}
+	if disabled {
+		s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
+		s.db.ExecContext(ctx, `UPDATE api_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`, store.NowT(), userID)
+	}
+	return s.audit.Record(ctx, by, "user.update", "user", userID, audit.OK, map[string]any{"username": u.Username, "role": role, "disabled": disabled})
+}
+
+// ErrBadCredentials hides whether the user exists.
+var ErrBadCredentials = errors.New("SQS-A002 usuario o contraseña incorrectos")
+
+// ErrLocked is returned while a login is rate limited.
+type ErrLocked struct{ Until time.Time }
+
+func (e ErrLocked) Error() string {
+	return fmt.Sprintf("SQS-A003 demasiados intentos; espera %s", time.Until(e.Until).Round(time.Second))
+}
+
+// Login checks credentials and creates a session. When the user has TOTP the
+// session starts as pending until VerifySecondFactor succeeds.
+func (s *Service) Login(ctx context.Context, username, password, ip, ua string) (token string, p *Principal, mfa bool, err error) {
+	now := s.Now()
+	if until := s.limiter.blocked(ip, username, now); !until.IsZero() {
+		return "", nil, false, ErrLocked{until}
+	}
+	u, uerr := s.UserByName(ctx, username)
+	hash := dummyHash
+	if uerr == nil {
+		hash = u.hash
+	}
+	ok := CheckPassword(hash, password)
+	if uerr != nil || !ok || u.DisabledAt != nil {
+		if s.limiter.fail(ip, username, now) {
+			s.ev.Emit(ctx, events.Event{Type: events.AuthBruteforce, Severity: events.Warning,
+				Message: fmt.Sprintf("Muchos intentos fallidos de inicio de sesión desde %s", ip), Data: map[string]any{"ip": ip, "username": username}})
+		}
+		s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: username, IP: ip}, "auth.login", "user", username, audit.Denied, nil)
+		return "", nil, false, ErrBadCredentials
+	}
+	s.limiter.success(ip, username)
+	token, p, err = s.newSession(ctx, u, ip, ua, u.TOTPEnabled)
+	if err != nil {
+		return "", nil, false, err
+	}
+	if !u.TOTPEnabled {
+		s.db.ExecContext(ctx, `UPDATE admin_users SET last_login_at = ? WHERE id = ?`, store.NowT(), u.ID)
+		s.audit.Record(ctx, p.Actor(), "auth.login", "user", u.ID, audit.OK, nil)
+	}
+	return token, p, u.TOTPEnabled, nil
+}
+
+func hashToken(t string) string {
+	sum := sha256.Sum256([]byte(t))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Service) newSession(ctx context.Context, u *User, ip, ua string, pending bool) (string, *Principal, error) {
+	raw := secrets.RandomToken(32)
+	id := hashToken(raw)
+	now := s.Now()
+	if len(ua) > 300 {
+		ua = ua[:300]
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions(id_hash, user_id, created_at, expires_at, last_seen_at, reauth_at, mfa_pending, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, u.ID, store.T(now), store.T(now.Add(SessionAbsolute)), store.T(now), store.T(now), pending, ip, ua)
+	if err != nil {
+		return "", nil, err
+	}
+	return raw, &Principal{User: u, SessionID: id, ReauthAt: now, IP: ip, CSRF: s.csrfFor(raw)}, nil
+}
+
+func (s *Service) csrfFor(raw string) string {
+	m := hmac.New(sha256.New, s.csrfKey)
+	m.Write([]byte(raw))
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
+// CheckCSRF validates a form or header token against the session cookie.
+func (s *Service) CheckCSRF(rawSession, token string) bool {
+	if rawSession == "" || token == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(s.csrfFor(rawSession)), []byte(token)) == 1
+}
+
+// ErrNoSession means the cookie is missing, expired or revoked.
+var ErrNoSession = errors.New("SQS-A004 sesión no válida o vencida")
+
+// ErrMFAPending means the session still needs the second factor.
+var ErrMFAPending = errors.New("SQS-A005 falta el segundo factor")
+
+// Session resolves a session cookie. allowPending accepts sessions waiting
+// for the second factor (only for the TOTP page).
+func (s *Service) Session(ctx context.Context, raw, ip string, allowPending bool) (*Principal, error) {
+	if raw == "" {
+		return nil, ErrNoSession
+	}
+	id := hashToken(raw)
+	var userID, expires, last, reauth string
+	var pending bool
+	err := s.db.QueryRowContext(ctx, `SELECT user_id, expires_at, last_seen_at, reauth_at, mfa_pending FROM sessions WHERE id_hash = ?`, id).
+		Scan(&userID, &expires, &last, &reauth, &pending)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNoSession
+	}
+	if err != nil {
+		return nil, err
+	}
+	now := s.Now()
+	if now.After(store.ParseT(expires)) || now.Sub(store.ParseT(last)) > SessionIdle {
+		s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id_hash = ?`, id)
+		return nil, ErrNoSession
+	}
+	if pending && !allowPending {
+		return nil, ErrMFAPending
+	}
+	u, err := s.UserByID(ctx, userID)
+	if err != nil || u.DisabledAt != nil {
+		return nil, ErrNoSession
+	}
+	if now.Sub(store.ParseT(last)) > time.Minute {
+		s.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = ?, ip = ? WHERE id_hash = ?`, store.T(now), ip, id)
+	}
+	return &Principal{User: u, SessionID: id, ReauthAt: store.ParseT(reauth), IP: ip, CSRF: s.csrfFor(raw)}, nil
+}
+
+// Logout deletes a session.
+func (s *Service) Logout(ctx context.Context, p *Principal) {
+	if p == nil {
+		return
+	}
+	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id_hash = ?`, p.SessionID)
+	s.audit.Record(ctx, p.Actor(), "auth.logout", "user", p.User.ID, audit.OK, nil)
+}
+
+// LogoutEverywhere deletes every session of the user except the current one.
+func (s *Service) LogoutEverywhere(ctx context.Context, p *Principal) {
+	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND id_hash <> ?`, p.User.ID, p.SessionID)
+	s.audit.Record(ctx, p.Actor(), "auth.logout_all", "user", p.User.ID, audit.OK, nil)
+}
+
+// Reauth confirms the password (and second factor if enabled) and refreshes
+// the reauthentication mark.
+func (s *Service) Reauth(ctx context.Context, p *Principal, password, code string) error {
+	now := s.Now()
+	if until := s.limiter.blocked(p.IP, p.User.Username, now); !until.IsZero() {
+		return ErrLocked{until}
+	}
+	u, err := s.UserByID(ctx, p.User.ID)
+	if err != nil {
+		return err
+	}
+	if !CheckPassword(u.hash, password) {
+		s.limiter.fail(p.IP, u.Username, now)
+		s.audit.Record(ctx, p.Actor(), "auth.reauth", "user", u.ID, audit.Denied, nil)
+		return ErrBadCredentials
+	}
+	if u.TOTPEnabled {
+		if err := s.checkSecondFactor(ctx, u, code); err != nil {
+			s.limiter.fail(p.IP, u.Username, now)
+			return err
+		}
+	}
+	s.db.ExecContext(ctx, `UPDATE sessions SET reauth_at = ? WHERE id_hash = ?`, store.T(now), p.SessionID)
+	p.ReauthAt = now
+	return s.audit.Record(ctx, p.Actor(), "auth.reauth", "user", u.ID, audit.OK, nil)
+}
+
+// ErrBadCode is returned for a wrong second factor.
+var ErrBadCode = errors.New("SQS-A006 código incorrecto")
+
+func (s *Service) checkSecondFactor(ctx context.Context, u *User, code string) error {
+	code = strings.TrimSpace(code)
+	secret, err := s.box.Open(u.totpEnc, "admin_users.totp_secret_enc."+u.ID)
+	if err != nil {
+		return err
+	}
+	if n, ok := VerifyTOTP(secret.Reveal(), code, s.Now()); ok {
+		if int64(n) <= u.totpLast {
+			return ErrBadCode
+		}
+		s.db.ExecContext(ctx, `UPDATE admin_users SET totp_last_counter = ? WHERE id = ?`, int64(n), u.ID)
+		return nil
+	}
+	// Recovery code.
+	h := hashToken(strings.ToLower(strings.ReplaceAll(code, " ", "")))
+	res, err := s.db.ExecContext(ctx, `UPDATE recovery_codes SET used_at = ? WHERE user_id = ? AND code_hash = ? AND used_at IS NULL`, store.NowT(), u.ID, h)
+	if err == nil {
+		if n, _ := res.RowsAffected(); n == 1 {
+			s.audit.Record(ctx, audit.Actor{Type: "user", ID: u.ID, Name: u.Username}, "auth.recovery_code", "user", u.ID, audit.OK, nil)
+			return nil
+		}
+	}
+	return ErrBadCode
+}
+
+// VerifySecondFactor completes a pending login.
+func (s *Service) VerifySecondFactor(ctx context.Context, p *Principal, code string) error {
+	now := s.Now()
+	if until := s.limiter.blocked(p.IP, p.User.Username, now); !until.IsZero() {
+		return ErrLocked{until}
+	}
+	if err := s.checkSecondFactor(ctx, p.User, code); err != nil {
+		s.limiter.fail(p.IP, p.User.Username, now)
+		s.audit.Record(ctx, p.Actor(), "auth.totp", "user", p.User.ID, audit.Denied, nil)
+		return err
+	}
+	s.limiter.success(p.IP, p.User.Username)
+	s.db.ExecContext(ctx, `UPDATE sessions SET mfa_pending = 0, reauth_at = ? WHERE id_hash = ?`, store.T(now), p.SessionID)
+	s.db.ExecContext(ctx, `UPDATE admin_users SET last_login_at = ? WHERE id = ?`, store.NowT(), p.User.ID)
+	return s.audit.Record(ctx, p.Actor(), "auth.login", "user", p.User.ID, audit.OK, map[string]any{"mfa": true})
+}
+
+// BeginTOTP generates a secret for enrolment (not yet enabled).
+func (s *Service) BeginTOTP(u *User) (secret, uri string) {
+	secret = NewTOTPSecret()
+	return secret, OTPAuthURI(secret, u.Username, "sqsolve")
+}
+
+// EnableTOTP stores the secret after the user proves it works and returns
+// fresh recovery codes.
+func (s *Service) EnableTOTP(ctx context.Context, p *Principal, secret, code string) ([]string, error) {
+	n, ok := VerifyTOTP(secret, code, s.Now())
+	if !ok {
+		return nil, ErrBadCode
+	}
+	enc, err := s.box.Seal(secrets.New(secret), "admin_users.totp_secret_enc."+p.User.ID)
+	if err != nil {
+		return nil, err
+	}
+	codes := make([]string, 10)
+	err = s.db.Tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE admin_users SET totp_secret_enc = ?, totp_enabled = 1, totp_last_counter = ? WHERE id = ?`, enc, int64(n), p.User.ID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM recovery_codes WHERE user_id = ?`, p.User.ID); err != nil {
+			return err
+		}
+		for i := range codes {
+			c := strings.ToLower(b32.EncodeToString(secrets.RandomBytes(5)))
+			codes[i] = c[:4] + " " + c[4:]
+			if _, err := tx.ExecContext(ctx, `INSERT INTO recovery_codes(user_id, code_hash) VALUES (?, ?)`, p.User.ID, hashToken(c)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.audit.Record(ctx, p.Actor(), "auth.totp_enable", "user", p.User.ID, audit.OK, nil)
+	return codes, nil
+}
+
+// DisableTOTP turns the second factor off.
+func (s *Service) DisableTOTP(ctx context.Context, by audit.Actor, userID string) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET totp_secret_enc = '', totp_enabled = 0 WHERE id = ?`, userID); err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, `DELETE FROM recovery_codes WHERE user_id = ?`, userID)
+	return s.audit.Record(ctx, by, "auth.totp_disable", "user", userID, audit.OK, nil)
+}
+
+// Token is an API token (without its secret).
+type Token struct {
+	ID         string
+	UserID     string
+	Name       string
+	Scopes     []string
+	CreatedAt  time.Time
+	ExpiresAt  *time.Time
+	LastUsedAt *time.Time
+	RevokedAt  *time.Time
+}
+
+// CreateToken issues a token; the secret is returned only once.
+func (s *Service) CreateToken(ctx context.Context, p *Principal, name string, scopes []string, ttl time.Duration) (string, *Token, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 80 {
+		return "", nil, errors.New("SQS-A020 el token necesita un nombre de hasta 80 caracteres")
+	}
+	for _, sc := range scopes {
+		if _, ok := Scopes[sc]; !ok {
+			return "", nil, fmt.Errorf("SQS-A021 alcance desconocido: %s", sc)
+		}
+	}
+	if len(scopes) == 0 {
+		return "", nil, errors.New("SQS-A022 elige al menos un alcance")
+	}
+	if ttl <= 0 || ttl > 365*24*time.Hour {
+		ttl = 365 * 24 * time.Hour
+	}
+	raw := "sqs_" + secrets.RandomToken(32)
+	id := ulid.New()
+	sc, _ := json.Marshal(scopes)
+	exp := s.Now().Add(ttl)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO api_tokens(id, user_id, name, token_hash, scopes, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, p.User.ID, name, hashToken(raw), string(sc), store.NowT(), store.T(exp))
+	if err != nil {
+		return "", nil, err
+	}
+	s.audit.Record(ctx, p.Actor(), "token.create", "token", id, audit.OK, map[string]any{"name": name, "scopes": scopes})
+	return raw, &Token{ID: id, UserID: p.User.ID, Name: name, Scopes: scopes, CreatedAt: s.Now(), ExpiresAt: &exp}, nil
+}
+
+// Tokens lists tokens of a user (all users if userID is empty).
+func (s *Service) Tokens(ctx context.Context, userID string) ([]*Token, error) {
+	q := `SELECT id, user_id, name, scopes, created_at, expires_at, last_used_at, revoked_at FROM api_tokens`
+	var args []any
+	if userID != "" {
+		q += ` WHERE user_id = ?`
+		args = append(args, userID)
+	}
+	rows, err := s.db.QueryContext(ctx, q+` ORDER BY created_at DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Token
+	for rows.Next() {
+		var t Token
+		var scopes, created string
+		var exp, used, rev sql.NullString
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &scopes, &created, &exp, &used, &rev); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(scopes), &t.Scopes)
+		t.CreatedAt = store.ParseT(created)
+		t.ExpiresAt, t.LastUsedAt, t.RevokedAt = store.NullT(exp), store.NullT(used), store.NullT(rev)
+		out = append(out, &t)
+	}
+	return out, rows.Err()
+}
+
+// RevokeToken revokes a token owned by the principal (or any, for admins).
+func (s *Service) RevokeToken(ctx context.Context, p *Principal, id string) error {
+	q := `UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`
+	args := []any{store.NowT(), id}
+	if !p.Can(ActUsersManage) {
+		q += ` AND user_id = ?`
+		args = append(args, p.User.ID)
+	}
+	res, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("SQS-A023 token no encontrado")
+	}
+	return s.audit.Record(ctx, p.Actor(), "token.revoke", "token", id, audit.OK, nil)
+}
+
+// ErrBadToken is returned for invalid API tokens.
+var ErrBadToken = errors.New("SQS-A024 token inválido, vencido o revocado")
+
+// TokenPrincipal resolves a bearer token.
+func (s *Service) TokenPrincipal(ctx context.Context, raw, ip string) (*Principal, error) {
+	if !strings.HasPrefix(raw, "sqs_") {
+		return nil, ErrBadToken
+	}
+	var id, userID, scopes string
+	var exp, rev sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT id, user_id, scopes, expires_at, revoked_at FROM api_tokens WHERE token_hash = ?`, hashToken(raw)).
+		Scan(&id, &userID, &scopes, &exp, &rev)
+	if err != nil {
+		return nil, ErrBadToken
+	}
+	if rev.Valid || (exp.Valid && s.Now().After(store.ParseT(exp.String))) {
+		return nil, ErrBadToken
+	}
+	u, err := s.UserByID(ctx, userID)
+	if err != nil || u.DisabledAt != nil {
+		return nil, ErrBadToken
+	}
+	var sc []string
+	json.Unmarshal([]byte(scopes), &sc)
+	s.db.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = ? WHERE id = ?`, store.NowT(), id)
+	return &Principal{User: u, TokenID: id, Scopes: sc, IP: ip}, nil
+}
+
+// PurgeSessions deletes expired sessions.
+func (s *Service) PurgeSessions(ctx context.Context) {
+	now := s.Now()
+	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at < ? OR last_seen_at < ?`, store.T(now), store.T(now.Add(-SessionIdle)))
+}
+
+// limiter tracks failed logins per IP and per username.
+type limiter struct {
+	mu sync.Mutex
+	m  map[string]*attempts
+}
+
+type attempts struct {
+	failures int
+	last     time.Time
+	until    time.Time
+}
+
+func newLimiter() *limiter { return &limiter{m: map[string]*attempts{}} }
+
+func (l *limiter) keys(ip, user string) []string {
+	return []string{"ip:" + ip, "user:" + strings.ToLower(user)}
+}
+
+func (l *limiter) blocked(ip, user string, now time.Time) time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var until time.Time
+	for _, k := range l.keys(ip, user) {
+		if a := l.m[k]; a != nil && a.until.After(now) && a.until.After(until) {
+			until = a.until
+		}
+	}
+	return until
+}
+
+// fail records a failure and reports whether the burst threshold was hit.
+func (l *limiter) fail(ip, user string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	burst := false
+	for _, k := range l.keys(ip, user) {
+		a := l.m[k]
+		if a == nil || now.Sub(a.last) > time.Hour {
+			a = &attempts{}
+			l.m[k] = a
+		}
+		a.failures++
+		a.last = now
+		if a.failures >= 5 {
+			d := time.Duration(1<<uint(min(a.failures-5, 10))) * time.Second
+			if d > 15*time.Minute {
+				d = 15 * time.Minute
+			}
+			a.until = now.Add(d)
+			if a.failures == 5 {
+				burst = true
+			}
+		}
+	}
+	return burst
+}
+
+func (l *limiter) success(ip, user string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, k := range l.keys(ip, user) {
+		delete(l.m, k)
+	}
+}

@@ -1,0 +1,828 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+// Package jobs is the persistent task queue. Every long operation runs as a
+// job with steps, progress and a log, survives restarts as "interrupted" and
+// respects per-library locks.
+package jobs
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"regexp"
+	"runtime/debug"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/donutinit/sqsolve/internal/audit"
+	"github.com/donutinit/sqsolve/internal/events"
+	"github.com/donutinit/sqsolve/internal/store"
+	"github.com/donutinit/sqsolve/internal/ulid"
+)
+
+// State of a job.
+type State string
+
+// States.
+const (
+	Queued      State = "queued"
+	Running     State = "running"
+	Succeeded   State = "succeeded"
+	Failed      State = "failed"
+	Cancelled   State = "cancelled"
+	Interrupted State = "interrupted"
+)
+
+// Label in Spanish.
+func (s State) Label() string {
+	switch s {
+	case Queued:
+		return "En cola"
+	case Running:
+		return "En curso"
+	case Succeeded:
+		return "Completada"
+	case Failed:
+		return "Fallida"
+	case Cancelled:
+		return "Cancelada"
+	case Interrupted:
+		return "Interrumpida"
+	}
+	return string(s)
+}
+
+// Finished reports whether the state is final.
+func (s State) Finished() bool { return s != Queued && s != Running }
+
+// LockMode on the job's library.
+type LockMode int
+
+// Lock modes.
+const (
+	LockNone LockMode = iota
+	LockRead
+	LockWrite
+)
+
+// Spec defines a job type.
+type Spec struct {
+	Type        string
+	Title       string
+	Priority    int
+	Heavy       bool
+	Lock        LockMode
+	Cancellable bool
+	Run         func(ctx context.Context, r *Run) error
+}
+
+// Job is a stored job.
+type Job struct {
+	ID           string          `json:"id"`
+	Type         string          `json:"type"`
+	Title        string          `json:"title"`
+	LibraryID    string          `json:"library_id,omitempty"`
+	Params       json.RawMessage `json:"params"`
+	State        State           `json:"state"`
+	Priority     int             `json:"priority"`
+	ScheduledFor time.Time       `json:"scheduled_for"`
+	CreatedAt    time.Time       `json:"created_at"`
+	StartedAt    *time.Time      `json:"started_at,omitempty"`
+	FinishedAt   *time.Time      `json:"finished_at,omitempty"`
+	Progress     int             `json:"progress"`
+	CurrentStep  string          `json:"current_step"`
+	ErrorCode    string          `json:"error_code,omitempty"`
+	ErrorDetail  string          `json:"error_detail,omitempty"`
+	CreatedBy    audit.Actor     `json:"created_by"`
+	ScheduleID   string          `json:"schedule_id,omitempty"`
+	Attempt      int             `json:"attempt"`
+	Result       json.RawMessage `json:"result"`
+	Cancellable  bool            `json:"cancellable"`
+}
+
+// Duration of the run so far or in total.
+func (j *Job) Duration() time.Duration {
+	if j.StartedAt == nil {
+		return 0
+	}
+	end := time.Now()
+	if j.FinishedAt != nil {
+		end = *j.FinishedAt
+	}
+	return end.Sub(*j.StartedAt)
+}
+
+// Step is a recorded step.
+type Step struct {
+	Seq        int             `json:"seq"`
+	Name       string          `json:"name"`
+	State      string          `json:"state"`
+	StartedAt  time.Time       `json:"started_at"`
+	FinishedAt *time.Time      `json:"finished_at,omitempty"`
+	Data       json.RawMessage `json:"data"`
+}
+
+// LogLine is a job log line.
+type LogLine struct {
+	Seq     int       `json:"seq"`
+	TS      time.Time `json:"ts"`
+	Level   string    `json:"level"`
+	Message string    `json:"message"`
+}
+
+// Update is published on the bus while a job runs.
+type Update struct {
+	JobID    string   `json:"job_id"`
+	State    State    `json:"state"`
+	Progress int      `json:"progress"`
+	Step     string   `json:"step"`
+	Log      *LogLine `json:"log,omitempty"`
+	Error    string   `json:"error,omitempty"`
+}
+
+// Manager runs jobs.
+type Manager struct {
+	db    *store.DB
+	ev    *events.Recorder
+	bus   *events.Bus
+	log   *slog.Logger
+	specs map[string]Spec
+
+	workers int
+	heavy   chan struct{}
+	locks   *lockTable
+
+	mu      sync.Mutex
+	running map[string]*runningJob
+	busy    int
+	wake    chan struct{}
+	stop    atomic.Bool
+	wg      sync.WaitGroup
+}
+
+type runningJob struct {
+	cancel      context.CancelFunc
+	cancellable bool
+}
+
+// NewManager creates a manager.
+func NewManager(db *store.DB, ev *events.Recorder, bus *events.Bus, log *slog.Logger, workers, heavy int) *Manager {
+	return &Manager{
+		db: db, ev: ev, bus: bus, log: log,
+		specs:   map[string]Spec{},
+		workers: workers,
+		heavy:   make(chan struct{}, heavy),
+		locks:   newLockTable(),
+		running: map[string]*runningJob{},
+		wake:    make(chan struct{}, 1),
+	}
+}
+
+// Register adds a job type.
+func (m *Manager) Register(s Spec) {
+	if s.Priority == 0 {
+		s.Priority = 50
+	}
+	m.specs[s.Type] = s
+}
+
+// Title returns the label of a job type.
+func (m *Manager) Title(typ string) string {
+	if s, ok := m.specs[typ]; ok && s.Title != "" {
+		return s.Title
+	}
+	return typ
+}
+
+// Option changes how a job is enqueued.
+type Option func(*enqueueOpts)
+
+type enqueueOpts struct {
+	at         time.Time
+	scheduleID string
+	priority   int
+	unique     bool
+}
+
+// At delays a job.
+func At(t time.Time) Option { return func(o *enqueueOpts) { o.at = t } }
+
+// FromSchedule tags a job with its schedule.
+func FromSchedule(id string) Option { return func(o *enqueueOpts) { o.scheduleID = id } }
+
+// Priority overrides the default priority.
+func Priority(p int) Option { return func(o *enqueueOpts) { o.priority = p } }
+
+// Unique returns the existing queued or running job of the same type and
+// library instead of creating another.
+func Unique() Option { return func(o *enqueueOpts) { o.unique = true } }
+
+// ErrUnknownType is returned for unregistered job types.
+var ErrUnknownType = errors.New("SQS-J001 tipo de tarea desconocido")
+
+// Enqueue stores a new job.
+func (m *Manager) Enqueue(ctx context.Context, typ, libraryID string, params any, by audit.Actor, opts ...Option) (*Job, error) {
+	spec, ok := m.specs[typ]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownType, typ)
+	}
+	o := enqueueOpts{at: time.Now(), priority: spec.Priority}
+	for _, f := range opts {
+		f(&o)
+	}
+	if o.unique {
+		var id string
+		err := m.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE type = ? AND library_id = ? AND state IN ('queued', 'running') ORDER BY created_at LIMIT 1`, typ, libraryID).Scan(&id)
+		if err == nil {
+			return m.Get(ctx, id)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
+	p, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	if params == nil {
+		p = []byte("{}")
+	}
+	id := ulid.New()
+	now := store.NowT()
+	_, err = m.db.ExecContext(ctx, `INSERT INTO jobs(id, type, library_id, params, state, priority, scheduled_for, created_at, created_by_type, created_by_id, created_by_name, schedule_id)
+		VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)`,
+		id, typ, libraryID, string(p), o.priority, store.T(o.at), now, by.Type, by.ID, by.Name, o.scheduleID)
+	if err != nil {
+		return nil, err
+	}
+	m.Wake()
+	m.bus.Publish("jobs", Update{JobID: id, State: Queued})
+	return m.Get(ctx, id)
+}
+
+// Wake nudges the dispatcher.
+func (m *Manager) Wake() {
+	select {
+	case m.wake <- struct{}{}:
+	default:
+	}
+}
+
+const jobCols = `id, type, library_id, params, state, priority, scheduled_for, created_at, started_at, finished_at, progress, current_step,
+	error_code, error_detail, created_by_type, created_by_id, created_by_name, schedule_id, attempt, result`
+
+func (m *Manager) scanJob(row interface{ Scan(...any) error }) (*Job, error) {
+	var j Job
+	var params, result, sched, created string
+	var started, finished sql.NullString
+	var state string
+	err := row.Scan(&j.ID, &j.Type, &j.LibraryID, &params, &state, &j.Priority, &sched, &created, &started, &finished, &j.Progress,
+		&j.CurrentStep, &j.ErrorCode, &j.ErrorDetail, &j.CreatedBy.Type, &j.CreatedBy.ID, &j.CreatedBy.Name, &j.ScheduleID, &j.Attempt, &result)
+	if err != nil {
+		return nil, err
+	}
+	j.State = State(state)
+	j.Params = json.RawMessage(params)
+	j.Result = json.RawMessage(result)
+	j.ScheduledFor = store.ParseT(sched)
+	j.CreatedAt = store.ParseT(created)
+	j.StartedAt = store.NullT(started)
+	j.FinishedAt = store.NullT(finished)
+	j.Title = m.Title(j.Type)
+	if s, ok := m.specs[j.Type]; ok {
+		j.Cancellable = s.Cancellable && !j.State.Finished()
+	}
+	return &j, nil
+}
+
+// ErrNotFound is returned for unknown jobs.
+var ErrNotFound = errors.New("SQS-J002 tarea no encontrada")
+
+// Get returns one job.
+func (m *Manager) Get(ctx context.Context, id string) (*Job, error) {
+	j, err := m.scanJob(m.db.QueryRowContext(ctx, `SELECT `+jobCols+` FROM jobs WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return j, err
+}
+
+// Filter for List.
+type Filter struct {
+	States    []State
+	Type      string
+	LibraryID string
+	Before    string
+	Limit     int
+}
+
+// List returns jobs, newest first.
+func (m *Manager) List(ctx context.Context, f Filter) ([]*Job, error) {
+	if f.Limit <= 0 || f.Limit > 500 {
+		f.Limit = 50
+	}
+	q := `SELECT ` + jobCols + ` FROM jobs WHERE 1=1`
+	var args []any
+	if len(f.States) > 0 {
+		q += ` AND state IN (`
+		for i, s := range f.States {
+			if i > 0 {
+				q += `,`
+			}
+			q += `?`
+			args = append(args, string(s))
+		}
+		q += `)`
+	}
+	if f.Type != "" {
+		q += ` AND type = ?`
+		args = append(args, f.Type)
+	}
+	if f.LibraryID != "" {
+		q += ` AND library_id = ?`
+		args = append(args, f.LibraryID)
+	}
+	if f.Before != "" {
+		q += ` AND id < ?`
+		args = append(args, f.Before)
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, f.Limit)
+	rows, err := m.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Job
+	for rows.Next() {
+		j, err := m.scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// Steps returns the steps of a job.
+func (m *Manager) Steps(ctx context.Context, id string) ([]Step, error) {
+	rows, err := m.db.QueryContext(ctx, `SELECT seq, name, state, started_at, finished_at, data FROM job_steps WHERE job_id = ? ORDER BY seq`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Step
+	for rows.Next() {
+		var s Step
+		var started, data string
+		var finished sql.NullString
+		if err := rows.Scan(&s.Seq, &s.Name, &s.State, &started, &finished, &data); err != nil {
+			return nil, err
+		}
+		s.StartedAt = store.ParseT(started)
+		s.FinishedAt = store.NullT(finished)
+		s.Data = json.RawMessage(data)
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// Logs returns log lines after seq.
+func (m *Manager) Logs(ctx context.Context, id string, after int) ([]LogLine, error) {
+	rows, err := m.db.QueryContext(ctx, `SELECT seq, ts, level, message FROM job_logs WHERE job_id = ? AND seq > ? ORDER BY seq LIMIT 5000`, id, after)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LogLine
+	for rows.Next() {
+		var l LogLine
+		var ts string
+		if err := rows.Scan(&l.Seq, &ts, &l.Level, &l.Message); err != nil {
+			return nil, err
+		}
+		l.TS = store.ParseT(ts)
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// Counts returns the number of jobs per state among queued and running.
+func (m *Manager) Counts(ctx context.Context) (queued, running int, err error) {
+	err = m.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(state = 'queued'), 0), COALESCE(SUM(state = 'running'), 0) FROM jobs WHERE state IN ('queued', 'running')`).Scan(&queued, &running)
+	return
+}
+
+// FailedSince counts failed jobs since t.
+func (m *Manager) FailedSince(ctx context.Context, t time.Time) (int, error) {
+	var n int
+	err := m.db.QueryRowContext(ctx, `SELECT count(*) FROM jobs WHERE state = 'failed' AND finished_at >= ?`, store.T(t)).Scan(&n)
+	return n, err
+}
+
+// ErrNotCancellable is returned when a running job cannot be cancelled.
+var ErrNotCancellable = errors.New("SQS-J003 esta tarea no se puede cancelar en este momento")
+
+// Cancel stops a queued or cancellable running job.
+func (m *Manager) Cancel(ctx context.Context, id string) error {
+	res, err := m.db.ExecContext(ctx, `UPDATE jobs SET state = 'cancelled', finished_at = ? WHERE id = ? AND state = 'queued'`, store.NowT(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 1 {
+		m.bus.Publish("job:"+id, Update{JobID: id, State: Cancelled})
+		m.bus.Publish("jobs", Update{JobID: id, State: Cancelled})
+		return nil
+	}
+	m.mu.Lock()
+	rj, ok := m.running[id]
+	m.mu.Unlock()
+	if !ok {
+		return ErrNotFound
+	}
+	if !rj.cancellable {
+		return ErrNotCancellable
+	}
+	rj.cancel()
+	return nil
+}
+
+// Retry re-enqueues a failed or interrupted job.
+func (m *Manager) Retry(ctx context.Context, id string, by audit.Actor) (*Job, error) {
+	j, err := m.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if j.State != Failed && j.State != Interrupted && j.State != Cancelled {
+		return nil, errors.New("SQS-J004 solo se reintentan tareas fallidas, canceladas o interrumpidas")
+	}
+	var params any
+	json.Unmarshal(j.Params, &params)
+	nj, err := m.Enqueue(ctx, j.Type, j.LibraryID, params, by)
+	if err != nil {
+		return nil, err
+	}
+	m.db.ExecContext(ctx, `UPDATE jobs SET attempt = ? WHERE id = ?`, j.Attempt+1, nj.ID)
+	return m.Get(ctx, nj.ID)
+}
+
+// MarkInterrupted turns running jobs left by a previous process into
+// interrupted ones and returns them (for reconciliation).
+func (m *Manager) MarkInterrupted(ctx context.Context) ([]*Job, error) {
+	running, err := m.List(ctx, Filter{States: []State{Running}, Limit: 500})
+	if err != nil {
+		return nil, err
+	}
+	for _, j := range running {
+		m.db.ExecContext(ctx, `UPDATE jobs SET state = 'interrupted', finished_at = ?, error_code = 'SQS-J010', error_detail = 'El proceso se detuvo mientras la tarea corría' WHERE id = ?`, store.NowT(), j.ID)
+		m.db.ExecContext(ctx, `UPDATE job_steps SET state = 'interrupted', finished_at = ? WHERE job_id = ? AND state = 'running'`, store.NowT(), j.ID)
+		m.ev.Emit(ctx, events.Event{Type: events.JobInterrupted, Severity: events.Warning, LibraryID: j.LibraryID, JobID: j.ID,
+			Message: fmt.Sprintf("La tarea %q quedó interrumpida por un reinicio", m.Title(j.Type))})
+		j.State = Interrupted
+	}
+	return running, nil
+}
+
+// Purge deletes finished jobs older than before.
+func (m *Manager) Purge(ctx context.Context, before time.Time) (int64, error) {
+	res, err := m.db.ExecContext(ctx, `DELETE FROM jobs WHERE state IN ('succeeded', 'failed', 'cancelled', 'interrupted') AND finished_at < ?`, store.T(before))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// Start runs the dispatcher until ctx ends.
+func (m *Manager) Start(ctx context.Context) {
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-m.wake:
+			case <-t.C:
+			}
+			if !m.stop.Load() {
+				m.dispatch(ctx)
+			}
+		}
+	}()
+}
+
+// Shutdown stops dispatching, cancels cancellable jobs and waits up to
+// timeout for the rest.
+func (m *Manager) Shutdown(timeout time.Duration) {
+	m.stop.Store(true)
+	m.mu.Lock()
+	for _, rj := range m.running {
+		if rj.cancellable {
+			rj.cancel()
+		}
+	}
+	m.mu.Unlock()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		m.mu.Lock()
+		n := m.busy
+		m.mu.Unlock()
+		if n == 0 {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// Busy reports how many jobs are running in this process.
+func (m *Manager) Busy() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.busy
+}
+
+func (m *Manager) dispatch(ctx context.Context) {
+	m.mu.Lock()
+	free := m.workers - m.busy
+	m.mu.Unlock()
+	if free <= 0 {
+		return
+	}
+	rows, err := m.db.QueryContext(ctx, `SELECT `+jobCols+` FROM jobs WHERE state = 'queued' AND scheduled_for <= ?
+		ORDER BY priority DESC, scheduled_for, id LIMIT 50`, store.NowT())
+	if err != nil {
+		m.log.Error("cola de tareas", "err", err)
+		return
+	}
+	var queued []*Job
+	for rows.Next() {
+		j, err := m.scanJob(rows)
+		if err == nil {
+			queued = append(queued, j)
+		}
+	}
+	rows.Close()
+	for _, j := range queued {
+		if free <= 0 {
+			return
+		}
+		spec, ok := m.specs[j.Type]
+		if !ok {
+			m.finish(ctx, j, Failed, fmt.Errorf("%w: %s", ErrUnknownType, j.Type))
+			continue
+		}
+		if !m.locks.tryAcquire(j.LibraryID, spec.Lock) {
+			continue
+		}
+		if spec.Heavy {
+			select {
+			case m.heavy <- struct{}{}:
+			default:
+				m.locks.release(j.LibraryID, spec.Lock)
+				continue
+			}
+		}
+		res, err := m.db.ExecContext(ctx, `UPDATE jobs SET state = 'running', started_at = ? WHERE id = ? AND state = 'queued'`, store.NowT(), j.ID)
+		if n, _ := res.RowsAffected(); err != nil || n != 1 {
+			m.locks.release(j.LibraryID, spec.Lock)
+			if spec.Heavy {
+				<-m.heavy
+			}
+			continue
+		}
+		now := time.Now()
+		j.StartedAt = &now
+		j.State = Running
+		free--
+		jctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		m.mu.Lock()
+		m.busy++
+		m.running[j.ID] = &runningJob{cancel: cancel, cancellable: spec.Cancellable}
+		m.mu.Unlock()
+		m.wg.Add(1)
+		go m.execute(jctx, cancel, j, spec)
+	}
+}
+
+var codeRe = regexp.MustCompile(`SQS-[A-Z][0-9]{3}`)
+
+func (m *Manager) execute(ctx context.Context, cancel context.CancelFunc, j *Job, spec Spec) {
+	defer m.wg.Done()
+	r := &Run{Job: j, m: m, ctx: ctx}
+	m.bus.Publish("job:"+j.ID, Update{JobID: j.ID, State: Running})
+	m.bus.Publish("jobs", Update{JobID: j.ID, State: Running})
+	err := func() (err error) {
+		defer func() {
+			if p := recover(); p != nil {
+				err = fmt.Errorf("SQS-X999 error interno: %v", p)
+				m.log.Error("pánico en tarea", "job", j.ID, "panic", p, "stack", string(debug.Stack()))
+			}
+		}()
+		return spec.Run(ctx, r)
+	}()
+	state := Succeeded
+	if err != nil {
+		state = Failed
+		if ctx.Err() != nil && errors.Is(err, context.Canceled) || ctx.Err() != nil && spec.Cancellable {
+			state = Cancelled
+		}
+	}
+	m.finish(context.Background(), j, state, err)
+	cancel()
+	m.mu.Lock()
+	m.busy--
+	delete(m.running, j.ID)
+	m.mu.Unlock()
+	m.locks.release(j.LibraryID, spec.Lock)
+	if spec.Heavy {
+		<-m.heavy
+	}
+	m.Wake()
+}
+
+func (m *Manager) finish(ctx context.Context, j *Job, state State, err error) {
+	code, detail := "", ""
+	if err != nil {
+		detail = err.Error()
+		code = codeRe.FindString(detail)
+		if code == "" {
+			code = "SQS-X900"
+		}
+	}
+	progress := j.Progress
+	if state == Succeeded {
+		progress = 100
+	}
+	m.db.ExecContext(ctx, `UPDATE jobs SET state = ?, finished_at = ?, error_code = ?, error_detail = ?, progress = ? WHERE id = ?`,
+		string(state), store.NowT(), code, detail, progress, j.ID)
+	m.db.ExecContext(ctx, `UPDATE job_steps SET state = ?, finished_at = ? WHERE job_id = ? AND state = 'running'`,
+		map[bool]string{true: "failed", false: "cancelled"}[state == Failed], store.NowT(), j.ID)
+	u := Update{JobID: j.ID, State: state, Progress: progress, Error: detail}
+	m.bus.Publish("job:"+j.ID, u)
+	m.bus.Publish("jobs", u)
+	if state == Failed {
+		m.ev.Emit(ctx, events.Event{Type: events.JobFailed, Severity: events.Error, LibraryID: j.LibraryID, JobID: j.ID,
+			Message: fmt.Sprintf("Falló la tarea %q: %s", m.Title(j.Type), shorten(detail, 300)), Data: map[string]any{"code": code}})
+	}
+}
+
+func shorten(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+// Run is the handle a job uses while it executes.
+type Run struct {
+	Job    *Job
+	m      *Manager
+	ctx    context.Context
+	step   int
+	logSeq int
+	mu     sync.Mutex
+}
+
+// Params decodes the job parameters.
+func (r *Run) Params(out any) error { return json.Unmarshal(r.Job.Params, out) }
+
+// Step records and runs one named step.
+func (r *Run) Step(name string, fn func() error) error {
+	r.mu.Lock()
+	r.step++
+	seq := r.step
+	r.mu.Unlock()
+	db := r.m.db
+	ctx := context.WithoutCancel(r.ctx)
+	db.ExecContext(ctx, `INSERT INTO job_steps(job_id, seq, name, state, started_at) VALUES (?, ?, ?, 'running', ?)`, r.Job.ID, seq, name, store.NowT())
+	db.ExecContext(ctx, `UPDATE jobs SET current_step = ? WHERE id = ?`, name, r.Job.ID)
+	r.Job.CurrentStep = name
+	r.m.bus.Publish("job:"+r.Job.ID, Update{JobID: r.Job.ID, State: Running, Progress: r.Job.Progress, Step: name})
+	err := fn()
+	state := "succeeded"
+	if err != nil {
+		state = "failed"
+		if r.ctx.Err() != nil {
+			state = "cancelled"
+		}
+	}
+	db.ExecContext(ctx, `UPDATE job_steps SET state = ?, finished_at = ? WHERE job_id = ? AND seq = ?`, state, store.NowT(), r.Job.ID, seq)
+	return err
+}
+
+// Journal stores data on the current step before an irreversible action, so
+// reconciliation knows what was about to happen.
+func (r *Run) Journal(data any) error {
+	r.mu.Lock()
+	seq := r.step
+	r.mu.Unlock()
+	_, err := r.m.db.ExecContext(context.WithoutCancel(r.ctx), `UPDATE job_steps SET data = ? WHERE job_id = ? AND seq = ?`, store.JSON(data), r.Job.ID, seq)
+	return err
+}
+
+// Progress sets the percentage.
+func (r *Run) Progress(p int) {
+	if p < 0 {
+		p = 0
+	}
+	if p > 100 {
+		p = 100
+	}
+	r.Job.Progress = p
+	r.m.db.ExecContext(context.WithoutCancel(r.ctx), `UPDATE jobs SET progress = ? WHERE id = ?`, p, r.Job.ID)
+	r.m.bus.Publish("job:"+r.Job.ID, Update{JobID: r.Job.ID, State: Running, Progress: p, Step: r.Job.CurrentStep})
+}
+
+// Logf appends a log line.
+func (r *Run) Logf(level, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	r.mu.Lock()
+	r.logSeq++
+	seq := r.logSeq
+	r.mu.Unlock()
+	l := LogLine{Seq: seq, TS: time.Now(), Level: level, Message: msg}
+	r.m.db.ExecContext(context.WithoutCancel(r.ctx), `INSERT INTO job_logs(job_id, seq, ts, level, message) VALUES (?, ?, ?, ?, ?)`, r.Job.ID, seq, store.T(l.TS), level, msg)
+	r.m.bus.Publish("job:"+r.Job.ID, Update{JobID: r.Job.ID, State: Running, Progress: r.Job.Progress, Step: r.Job.CurrentStep, Log: &l})
+	r.m.log.Debug(msg, "job", r.Job.ID, "level", level)
+}
+
+// Infof logs at info level.
+func (r *Run) Infof(format string, args ...any) { r.Logf("info", format, args...) }
+
+// Warnf logs at warning level.
+func (r *Run) Warnf(format string, args ...any) { r.Logf("warn", format, args...) }
+
+// SetResult stores the job result (for example the backup id).
+func (r *Run) SetResult(v any) {
+	b := store.JSON(v)
+	r.Job.Result = json.RawMessage(b)
+	r.m.db.ExecContext(context.WithoutCancel(r.ctx), `UPDATE jobs SET result = ? WHERE id = ?`, b, r.Job.ID)
+}
+
+// Context returns the job context.
+func (r *Run) Context() context.Context { return r.ctx }
+
+type lockState struct {
+	readers int
+	writer  bool
+}
+
+type lockTable struct {
+	mu sync.Mutex
+	m  map[string]*lockState
+}
+
+func newLockTable() *lockTable { return &lockTable{m: map[string]*lockState{}} }
+
+func (t *lockTable) tryAcquire(key string, mode LockMode) bool {
+	if mode == LockNone || key == "" {
+		return true
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.m[key]
+	if s == nil {
+		s = &lockState{}
+		t.m[key] = s
+	}
+	switch mode {
+	case LockRead:
+		if s.writer {
+			return false
+		}
+		s.readers++
+	case LockWrite:
+		if s.writer || s.readers > 0 {
+			return false
+		}
+		s.writer = true
+	}
+	return true
+}
+
+func (t *lockTable) release(key string, mode LockMode) {
+	if mode == LockNone || key == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.m[key]
+	if s == nil {
+		return
+	}
+	switch mode {
+	case LockRead:
+		s.readers--
+	case LockWrite:
+		s.writer = false
+	}
+	if s.readers <= 0 && !s.writer {
+		delete(t.m, key)
+	}
+}
