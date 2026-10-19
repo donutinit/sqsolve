@@ -34,6 +34,7 @@ const (
 	StateRestoring    State = "restoring"
 	StateTrashed      State = "trashed"
 	StatePurged       State = "purged"
+	StateMissing      State = "missing"
 )
 
 // Label in Spanish.
@@ -55,6 +56,8 @@ func (s State) Label() string {
 		return "En la papelera"
 	case StatePurged:
 		return "Eliminada"
+	case StateMissing:
+		return "Sin base en el servidor"
 	}
 	return string(s)
 }
@@ -70,6 +73,8 @@ func (s State) Tone() string {
 		return "warn"
 	case StateTrashed, StatePurged:
 		return "off"
+	case StateMissing:
+		return "bad"
 	}
 	return "off"
 }

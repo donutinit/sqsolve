@@ -517,7 +517,9 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return cleanup(err)
 	}
-	if err := r.Step("reabrir", func() error { return s.reopenAfterSwap(ctx, l, prev, pre.ID, stateBefore, m.Schema.Fingerprint, m.Schema.Tables) }); err != nil {
+	if err := r.Step("reabrir", func() error {
+		return s.reopenAfterSwap(ctx, l, prev, pre.ID, stateBefore, m.Schema.Fingerprint, m.Schema.Tables)
+	}); err != nil {
 		return err
 	}
 	s.Events.Emit(ctx, events.Event{Type: events.RestoreSucceeded, LibraryID: l.ID, JobID: r.Job.ID,
@@ -753,5 +755,135 @@ func (s *Service) runImport(ctx context.Context, r *jobs.Run) error {
 	}
 	r.Infof("Importado %s (%s, %s)", p.Path, HumanBytes(size), info.DumpedBy)
 	r.SetResult(map[string]string{"backup_id": id})
+	return nil
+}
+
+// Recreate rebuilds a library whose database is missing (for example after
+// moving to a new server) from a backup, keeping its slug and, when the
+// master key is the same, its passwords: workstations reconnect unchanged.
+func (s *Service) Recreate(ctx context.Context, by audit.Actor, libraryID, backupID string) (*jobs.Job, error) {
+	l, err := s.Library(ctx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	if l.State != StateMissing {
+		return nil, errors.New("SQS-R040 solo se recrean bibliotecas sin base en el servidor")
+	}
+	if backupID == "" {
+		b, err := s.LatestVerified(ctx, l.ID)
+		if err != nil {
+			return nil, err
+		}
+		if b == nil {
+			return nil, errors.New("SQS-R041 la biblioteca no tiene respaldos verificados")
+		}
+		backupID = b.ID
+	}
+	s.Audit.Record(ctx, by, "restore.recreate", "library", l.ID, audit.OK, map[string]any{"backup_id": backupID})
+	return s.Jobs.Enqueue(ctx, JobRestoreRecreate, l.ID, RestoreParams{BackupID: backupID}, by, jobs.Priority(100))
+}
+
+func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
+	var p RestoreParams
+	r.Params(&p)
+	l, err := s.Library(ctx, r.Job.LibraryID)
+	if err != nil {
+		return err
+	}
+	b, err := s.Backup(ctx, p.BackupID)
+	if err != nil {
+		return err
+	}
+	var m *Manifest
+	if err := r.Step("verificar_respaldo", func() error {
+		if err := s.verifyL1(ctx, b.ID); err != nil {
+			return err
+		}
+		m, err = ReadManifest(manifestPath(s.AbsPath(b)))
+		return err
+	}); err != nil {
+		return err
+	}
+	if err := r.Step("roles", func() error {
+		creds, err := s.Credentials(ctx, l.ID)
+		if err != nil {
+			return err
+		}
+		for _, c := range creds {
+			if c.RevokedAt != nil {
+				continue
+			}
+			if ok, _ := s.PG.RoleExists(ctx, c.PGRole); ok {
+				continue
+			}
+			pass, err := s.Box.Open(c.passwordEnc, credAAD(c.ID))
+			kept := err == nil
+			if !kept {
+				pass = secrets.GeneratePassword(24)
+				enc, err := s.Box.Seal(pass, credAAD(c.ID))
+				if err != nil {
+					return err
+				}
+				s.DB.ExecContext(ctx, `UPDATE library_credentials SET password_enc = ?, rotated_at = ? WHERE id = ?`, enc, store.NowT(), c.ID)
+			}
+			v, err := pg.ScramVerifier(pass)
+			if err != nil {
+				return err
+			}
+			if err := s.PG.CreateLibraryRole(ctx, c.PGRole, pg.RoleOptions{Verifier: v, Login: true, ConnLimit: -1}); err != nil {
+				return err
+			}
+			if c.Kind == "member" {
+				s.PG.GrantRole(ctx, l.OwnerRole, c.PGRole)
+				s.PG.SetRoleDefaultRole(ctx, c.PGRole, l.DBName, l.OwnerRole)
+			}
+			if kept {
+				r.Infof("Rol %s recreado con su contraseña original", c.PGRole)
+			} else {
+				r.Warnf("Rol %s recreado con contraseña nueva (la clave maestra no coincide)", c.PGRole)
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := r.Step("restaurar", func() error {
+		if err := s.PG.CreateDatabase(ctx, l.DBName, l.OwnerRole); err != nil {
+			return err
+		}
+		return s.pgRestore(ctx, s.AbsPath(b), l.DBName, l.OwnerRole)
+	}); err != nil {
+		s.PG.DropDatabase(context.WithoutCancel(ctx), l.DBName)
+		return err
+	}
+	if err := r.Step("comparar", func() error {
+		detail, err := s.compareWithManifest(ctx, l.DBName, m)
+		if err == nil {
+			r.Infof("%s", detail)
+		}
+		return err
+	}); err != nil {
+		s.PG.DropDatabase(context.WithoutCancel(ctx), l.DBName)
+		return err
+	}
+	if err := r.Step("activar", func() error {
+		roles, err := s.activeRoles(ctx, l.ID)
+		if err != nil {
+			return err
+		}
+		if err := s.PG.SecureDatabase(ctx, l.DBName, roles); err != nil {
+			return err
+		}
+		s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'active', schema_fingerprint = ?, schema_table_count = ?, prev_db_name = '', updated_at = ? WHERE id = ?`,
+			m.Schema.Fingerprint, m.Schema.Tables, store.NowT(), l.ID)
+		if err := s.ensurePolicy(ctx, l.ID); err != nil {
+			return err
+		}
+		return s.SyncHBA(ctx)
+	}); err != nil {
+		return err
+	}
+	s.Events.Emit(ctx, events.Event{Type: events.RestoreSucceeded, LibraryID: l.ID, JobID: r.Job.ID,
+		Message: fmt.Sprintf("Se recreó %q desde el respaldo del %s", l.DisplayName, b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"))})
 	return nil
 }

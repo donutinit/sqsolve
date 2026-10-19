@@ -27,6 +27,7 @@ type Config struct {
 	PGDataDir string // PGDATA inside the db volume
 	PGSocket  string
 	PGPort    int
+	PGListen  string
 	PGBinDir  string
 
 	PGMemoryMB       int
@@ -110,6 +111,7 @@ func load(get func(string) string) (*Config, error) {
 	c.PGDataDir = str("SQSOLVE_PG_DATA_DIR", filepath.Join(c.PGDir, "18", "docker"))
 	c.PGSocket = str("SQSOLVE_PG_SOCKET_DIR", "/var/run/postgresql")
 	c.PGPort = num("SQSOLVE_PG_PORT", 5432, 1, 65535)
+	c.PGListen = str("SQSOLVE_PG_LISTEN", "*")
 	c.PGBinDir = str("SQSOLVE_PG_BIN_DIR", "")
 	c.PGMemoryMB = num("SQSOLVE_PG_MEMORY_MB", 2048, 256, 1<<20)
 	c.PGMaxConnections = num("SQSOLVE_PG_MAX_CONNECTIONS", 200, 20, 5000)

@@ -33,6 +33,7 @@ const (
 	JobRestoreNew      = "restore.new"
 	JobRestoreReplace  = "restore.replace"
 	JobRestoreRevert   = "restore.revert"
+	JobRestoreRecreate = "restore.recreate"
 	JobRetention       = "system.retention"
 	JobVerifyAll       = "system.verify_all"
 	JobVacuum          = "system.vacuum"
@@ -63,6 +64,7 @@ func (s *Service) Register() {
 	j.Register(jobs.Spec{Type: JobRestoreNew, Title: "Restaurar como biblioteca nueva", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Cancellable: true, Run: s.runRestoreNew})
 	j.Register(jobs.Spec{Type: JobRestoreReplace, Title: "Restaurar reemplazando", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRestoreReplace})
 	j.Register(jobs.Spec{Type: JobRestoreRevert, Title: "Revertir restauración", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRevert})
+	j.Register(jobs.Spec{Type: JobRestoreRecreate, Title: "Recrear desde respaldo", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRecreate})
 	j.Register(jobs.Spec{Type: JobRetention, Title: "Aplicar retención", Priority: 20, Run: s.runRetentionAll})
 	j.Register(jobs.Spec{Type: JobVerifyAll, Title: "Verificar últimos respaldos", Priority: 30, Run: s.runVerifyAll})
 	j.Register(jobs.Spec{Type: JobVacuum, Title: "Optimizar bibliotecas", Priority: 10, Heavy: true, Cancellable: true, Run: s.runVacuum})

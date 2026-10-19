@@ -8,7 +8,6 @@ package core
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -43,27 +42,25 @@ type Service struct {
 	InstanceID string
 	Now        func() time.Time
 
-	hbaMu      sync.Mutex
-	stableMu   sync.Mutex
-	stable     map[string]int
-	pgWasDown  bool
-	pgDownOnce sync.Once
+	hbaMu    sync.Mutex
+	stableMu sync.Mutex
+	stable   map[string]int
 }
 
 // Settings are the runtime settings editable in the UI.
 type Settings struct {
-	AdvertisedHost      string        `json:"advertised_host"`
-	DefaultPolicy       Policy        `json:"default_policy"`
-	InitWindowMinutes   int           `json:"init_window_minutes"`
-	TrashDays           int           `json:"trash_days"`
-	PrevDays            int           `json:"prev_days"`
-	MaintenanceDBAccess bool          `json:"maintenance_db_access"`
-	RequireTLS          bool          `json:"require_tls"`
-	StaleHours          int           `json:"stale_hours"`
-	ImportMaxMB         int           `json:"import_max_mb"`
-	ExperimentalKeys    bool          `json:"experimental_resolvedbkey"`
-	TOTPRequiredAdmins  bool          `json:"totp_required_admins"`
-	InstanceName        string        `json:"instance_name"`
+	AdvertisedHost      string         `json:"advertised_host"`
+	DefaultPolicy       Policy         `json:"default_policy"`
+	InitWindowMinutes   int            `json:"init_window_minutes"`
+	TrashDays           int            `json:"trash_days"`
+	PrevDays            int            `json:"prev_days"`
+	MaintenanceDBAccess bool           `json:"maintenance_db_access"`
+	RequireTLS          bool           `json:"require_tls"`
+	StaleHours          int            `json:"stale_hours"`
+	ImportMaxMB         int            `json:"import_max_mb"`
+	ExperimentalKeys    bool           `json:"experimental_resolvedbkey"`
+	TOTPRequiredAdmins  bool           `json:"totp_required_admins"`
+	InstanceName        string         `json:"instance_name"`
 	Extra               map[string]any `json:"extra,omitempty"`
 }
 
@@ -213,13 +210,6 @@ func (s *Service) AdvertisedHost(ctx context.Context) string {
 	}
 	if s.Cfg.AdvertisedHost != "" {
 		return s.Cfg.AdvertisedHost
-	}
-	return ""
-}
-
-func nullStr(s sql.NullString) string {
-	if s.Valid {
-		return s.String
 	}
 	return ""
 }

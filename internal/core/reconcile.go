@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/donutinit/sqsolve/internal/events"
 	"github.com/donutinit/sqsolve/internal/execx"
 	"github.com/donutinit/sqsolve/internal/jobs"
 	"github.com/donutinit/sqsolve/internal/pg"
@@ -109,6 +110,13 @@ func (s *Service) Reconcile(ctx context.Context, interrupted []*jobs.Job) []stri
 			s.setState(ctx, l.ID, StateActive)
 			s.PG.SetAllowConnections(ctx, l.DBName, true)
 			note("%s quedó en restauración; se reabrió", l.Slug)
+		case StateActive, StateMaintenance:
+			if db, err := s.PG.Database(ctx, l.DBName); err == nil && db == nil {
+				s.setState(ctx, l.ID, StateMissing)
+				s.Events.Emit(ctx, events.Event{Type: "library.missing", Severity: events.Critical, LibraryID: l.ID,
+					Message: fmt.Sprintf("La base de %q no existe en el servidor. Recréala desde su último respaldo", l.DisplayName)})
+				note("%s no tiene base en el servidor", l.Slug)
+			}
 		case StateAwaitingInit:
 			if l.InitWindowExpiresAt != nil && s.now().After(*l.InitWindowExpiresAt) {
 				s.PG.SetRoleCreateDB(ctx, l.OwnerRole, false)
@@ -207,4 +215,3 @@ func (s *Service) reconcileTrash(ctx context.Context, l *Library, move map[strin
 		note("%s: se completó el paso a la papelera", l.Slug)
 	}
 }
-

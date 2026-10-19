@@ -17,13 +17,13 @@ import (
 
 // DBInfo describes a database.
 type DBInfo struct {
-	Name            string
-	Owner           string
-	AllowConn       bool
-	ConnLimit       int
-	SizeBytes       int64
-	CollationStale  bool
-	ActiveSessions  int
+	Name           string
+	Owner          string
+	AllowConn      bool
+	ConnLimit      int
+	SizeBytes      int64
+	CollationStale bool
+	ActiveSessions int
 }
 
 // ServerInfo describes the server.

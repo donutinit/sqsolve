@@ -66,42 +66,42 @@ const (
 	BackupInterrupted = "interrupted"
 	BackupDeleted     = "deleted"
 
-	VerifyNone   = "none"
-	VerifyL1OK   = "l1_ok"
-	VerifyL2OK   = "l2_ok"
-	VerifyFailed = "failed"
+	VerifyNone    = "none"
+	VerifyL1OK    = "l1_ok"
+	VerifyL2OK    = "l2_ok"
+	VerifyFailed  = "failed"
 	VerifyPartial = "partial"
 )
 
 // Backup is a catalog entry.
 type Backup struct {
-	ID                string
-	LibraryID         string
-	JobID             string
-	Kind              string
-	Status            string
-	VerifyLevel       int
-	VerifyStatus      string
-	VerifiedAt        *time.Time
-	VerifyDetail      string
-	FilePath          string // relative to the backup volume
-	SizeBytes         int64
-	SHA256            string
-	PGServerVersion   string
-	PGDumpVersion     string
-	ArchiveVersion    string
-	Compression       string
-	Fingerprint       string
-	TableCount        int
-	CountsExact       bool
-	ResolveVersion    string
-	Pinned            bool
-	SourceDB          string
-	StartedAt         time.Time
-	FinishedAt        *time.Time
-	Error             string
-	ExpiredReason     string
-	DeletedAt         *time.Time
+	ID              string
+	LibraryID       string
+	JobID           string
+	Kind            string
+	Status          string
+	VerifyLevel     int
+	VerifyStatus    string
+	VerifiedAt      *time.Time
+	VerifyDetail    string
+	FilePath        string // relative to the backup volume
+	SizeBytes       int64
+	SHA256          string
+	PGServerVersion string
+	PGDumpVersion   string
+	ArchiveVersion  string
+	Compression     string
+	Fingerprint     string
+	TableCount      int
+	CountsExact     bool
+	ResolveVersion  string
+	Pinned          bool
+	SourceDB        string
+	StartedAt       time.Time
+	FinishedAt      *time.Time
+	Error           string
+	ExpiredReason   string
+	DeletedAt       *time.Time
 }
 
 // Verified reports whether a verification passed.
@@ -225,11 +225,11 @@ type Manifest struct {
 		Slug        string `json:"slug"`
 		DisplayName string `json:"display_name"`
 	} `json:"library"`
-	Kind     string `json:"kind"`
-	File     string `json:"file"`
-	Size     int64  `json:"size_bytes"`
-	SHA256   string `json:"sha256"`
-	Format   struct {
+	Kind   string `json:"kind"`
+	File   string `json:"file"`
+	Size   int64  `json:"size_bytes"`
+	SHA256 string `json:"sha256"`
+	Format struct {
 		Tool           string `json:"tool"`
 		ToolVersion    string `json:"tool_version"`
 		Format         string `json:"format"`

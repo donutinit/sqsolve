@@ -55,7 +55,7 @@ func TestNextInZone(t *testing.T) {
 }
 
 func TestJitterStable(t *testing.T) {
-	if JitterFor("A") != JitterFor("A") || JitterFor("A") >= 5*time.Minute || JitterFor("") != 0 {
+	if a := JitterFor("A"); a != JitterFor(string([]byte{65})) || JitterFor("A") >= 5*time.Minute || JitterFor("") != 0 {
 		t.Fatal("jitter")
 	}
 }

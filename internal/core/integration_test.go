@@ -460,3 +460,26 @@ func TestMemberCredential(t *testing.T) {
 	}
 	e.connect(l.OwnerRole, ownerPass, l.DBName).Close(ctx)
 }
+
+func TestRecreateMissingKeepsPassword(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, pass := e.createActive("perdida")
+	e.firstBackup(l)
+	// Lose the server: database and role are gone, the catalog remains.
+	e.svc.PG.DropDatabase(ctx, l.DBName)
+	e.svc.PG.DropRole(ctx, l.OwnerRole)
+	e.svc.Reconcile(ctx, nil)
+	l, _ = e.svc.Library(ctx, l.ID)
+	if l.State != core.StateMissing {
+		t.Fatalf("state %s", l.State)
+	}
+	j, err := e.svc.Recreate(ctx, admin, l.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(j, jobs.Succeeded)
+	if n := e.count(l.OwnerRole, pass, l.DBName, "SM_Project"); n != 50 {
+		t.Fatalf("recreated library has %d rows", n)
+	}
+}
