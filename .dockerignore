@@ -1,0 +1,11 @@
+.git
+.github
+.claude
+.codex
+.opencode
+.agents
+docs
+deploy
+*.md
+/sqsolve
+/dist

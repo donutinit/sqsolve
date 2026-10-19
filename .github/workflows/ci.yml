@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: PostgreSQL 18 para las pruebas de integración
+        run: |
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y --no-install-recommends postgresql-18
+      - name: Formato, vet y staticcheck
+        run: make fmt vet lint
+      - name: Pruebas (incluidas las de integración con PostgreSQL real)
+        env:
+          SQSOLVE_TEST_PG_BIN: /usr/lib/postgresql/18/bin
+          SQSOLVE_REQUIRE_PG: "1"
+        run: go test -race -count=1 ./...
+      - name: govulncheck
+        run: make vuln
+
+  smoke:
+    runs-on: ubuntu-24.04
+    needs: check
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Construir la imagen
+        run: docker build --build-arg VERSION=ci --build-arg COMMIT=${GITHUB_SHA::7} -t sqsolve:ci .
+      - name: Levantar el compose de referencia
+        run: |
+          mkdir -p "$RUNNER_TEMP/sq"
+          sed -e "s#ghcr.io/donutinit/sqsolve:[0-9.]*#sqsolve:ci#" \
+              -e "s#/ruta/sqsolve-respaldos#$RUNNER_TEMP/sq/respaldos#g" \
+              -e "s#/ruta/sqsolve#$RUNNER_TEMP/sq#g" deploy/compose.yaml > "$RUNNER_TEMP/compose.yaml"
+          docker compose -f "$RUNNER_TEMP/compose.yaml" up -d
+          for i in $(seq 1 60); do
+            if curl -fsk https://127.0.0.1:9432/readyz; then break; fi
+            sleep 2
+          done
+          curl -fsk https://127.0.0.1:9432/readyz
+          docker compose -f "$RUNNER_TEMP/compose.yaml" exec -T sqsolve sqsolve doctor
+          docker compose -f "$RUNNER_TEMP/compose.yaml" logs sqsolve | grep -q "código de instalación"
+      - name: Reiniciar conserva los datos
+        run: |
+          docker compose -f "$RUNNER_TEMP/compose.yaml" restart
+          for i in $(seq 1 60); do
+            if curl -fsk https://127.0.0.1:9432/readyz; then break; fi
+            sleep 2
+          done
+          curl -fsk https://127.0.0.1:9432/readyz
+      - name: Registros si algo falló
+        if: failure()
+        run: docker compose -f "$RUNNER_TEMP/compose.yaml" logs
