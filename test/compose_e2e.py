@@ -113,8 +113,8 @@ def psql(user, password, db, sql):
 
 def main():
     check("el stack arranca y queda listo", wait_ready(), dc("logs")[1][-2000:])
-    logs = dc("logs", "sqsolve")[1]
-    m = re.search(r"código de instalación:\s+([A-Z0-9]{5}-[A-Z0-9]{5})", logs)
+    logs = dc("logs", "--no-log-prefix", "sqsolve")[1]
+    m = re.search(r"código de instalación:.*?\b([A-Z0-9]{5}-[A-Z0-9]{5})\b", logs, re.S)
     if not check("el registro muestra el código de instalación", m, logs[-1500:]):
         return
     st, body = page("/instalar")
