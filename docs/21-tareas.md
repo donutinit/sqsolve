@@ -492,6 +492,6 @@ internal/clock               reloj inyectable para pruebas
 | 0.3 | SQS-200 a 240 | Implementado (2026-10-18) según la hipótesis del plan; sin validar con Resolve (PoC-01 a 05). E0 queda experimental |
 | 0.4 y 0.5 | SQS-300 a 340 | Implementado (2026-10-18); la restauración vista desde Resolve sin validar (PoC-07, 08) |
 | 0.6 | SQS-400 a 420, 500 a 520 | API, notificaciones e interfaz implementadas (2026-10-18). Pendientes: SQS-400 (OpenAPI), SQS-410 (contrato) y SQS-520 con navegador; hay una prueba de extremo a extremo por HTTP |
-| 0.9 y 1.0 | SQS-600 a 607 | SQS-600, 601 y 602 implementadas (2026-10-18); SQS-603 parcial (caída a mitad del intercambio); 604 a 607 pendientes |
+| 0.9 y 1.0 | SQS-600 a 607 | SQS-600, 601 y 602 implementadas (2026-10-18); SQS-603 parcial (`test/scenarios.py` en CI: procesos que mueren, PostgreSQL caído, restaurar con sesiones abiertas); 604 a 607 pendientes |
 
 Los criterios `[ ]` de cada tarea no se marcaron uno por uno en esta pasada; la tabla resume.

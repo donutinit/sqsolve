@@ -51,11 +51,20 @@ Makefile
 
 Implementado hoy (2026-10-18) en `.github/workflows`:
 
-- `ci.yml`: trabajo `check` con el último parche de Go 1.26 (mínimo de `go.mod`) y de Go 1.27
-  (el de la imagen): formato, `go vet`, staticcheck, pruebas con `-race` incluidas las de
-  integración contra PostgreSQL 18 del repositorio PGDG, govulncheck y trabajo `smoke` (construye
-  la imagen, levanta `deploy/compose.yaml` tal cual con rutas temporales, espera `/readyz`, corre
-  `sqsolve doctor` y comprueba que los datos sobreviven a un reinicio).
+- `ci.yml`:
+  - `check`, con el último parche de Go 1.26 (mínimo de `go.mod`) y de Go 1.27 (el de la
+    imagen): formato, `go vet`, staticcheck, pruebas con `-race` incluidas las de integración
+    contra PostgreSQL 18 del repositorio PGDG, y govulncheck.
+  - `scenarios`: `test/scenarios.py` con PostgreSQL y sqsolve reales. Simula estaciones de
+    Resolve por TCP y provoca fallas: una estación escribiendo durante el respaldo, restaurar
+    con Resolve abierto, sqsolve muerto a media tarea (ningún `pg_dump` sobrevive y no quedan
+    `.partial`), PostgreSQL caído y de vuelta, una carpeta de respaldos sin permiso, papelera y
+    purga.
+  - `smoke`, con los usuarios 1000 y 568 (el de las apps de TrueNAS): construye la imagen,
+    levanta `deploy/compose.yaml` tal cual con rutas temporales y corre `test/compose_e2e.py`
+    (instalación por el panel, una estación por el puerto publicado, respaldo, restauración de
+    prueba, restaurar como nueva, la consola dentro del contenedor, `down` y `up` sin perder
+    datos, y `sqsolve-init` repetido).
 - `image.yml`: en cada push a `main` y en etiquetas `v*`, imagen amd64 y arm64 en
   `ghcr.io/donutinit/sqsolve` con procedencia y SBOM de buildx. Etiquetas `edge` (main),
   `X.Y.Z` y `X.Y` (versiones) y `sha-<commit>`.

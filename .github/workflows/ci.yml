@@ -41,35 +41,51 @@ jobs:
       - name: govulncheck
         run: make vuln
 
-  smoke:
+  scenarios:
     runs-on: ubuntu-24.04
     needs: check
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.x"
+          check-latest: true
+      - name: PostgreSQL 18
+        run: |
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y --no-install-recommends postgresql-18
+      - name: Escenarios de falla (estaciones simuladas, procesos que mueren, PostgreSQL caído)
+        env:
+          SQSOLVE_TEST_PG_BIN: /usr/lib/postgresql/18/bin
+          SQSOLVE_SCENARIOS_DIR: ${{ runner.temp }}/escenarios
+        run: make scenarios
+
+  smoke:
+    runs-on: ubuntu-24.04
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1000 is the default; 568 is the "apps" user of TrueNAS.
+        uid: ["1000", "568"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Construir la imagen
         run: docker build --build-arg VERSION=ci --build-arg COMMIT=${GITHUB_SHA::7} -t sqsolve:ci .
-      - name: Levantar el compose de referencia
+      - name: Preparar el compose de referencia tal cual, con rutas temporales
         run: |
           mkdir -p "$RUNNER_TEMP/sq"
           sed -e "s#ghcr.io/donutinit/sqsolve:[0-9.]*#sqsolve:ci#" \
               -e "s#/ruta/sqsolve-respaldos#$RUNNER_TEMP/sq/respaldos#g" \
-              -e "s#/ruta/sqsolve#$RUNNER_TEMP/sq#g" deploy/compose.yaml > "$RUNNER_TEMP/compose.yaml"
+              -e "s#/ruta/sqsolve#$RUNNER_TEMP/sq#g" \
+              -e "s#SQSOLVE_UID: \"1000\"#SQSOLVE_UID: \"${{ matrix.uid }}\"#" \
+              -e "s#SQSOLVE_GID: \"1000\"#SQSOLVE_GID: \"${{ matrix.uid }}\"#" \
+              -e "s#user: \"1000:1000\"#user: \"${{ matrix.uid }}:${{ matrix.uid }}\"#" \
+              deploy/compose.yaml > "$RUNNER_TEMP/compose.yaml"
+          grep -n "sqsolve:ci\|SQSOLVE_UID\|user:" "$RUNNER_TEMP/compose.yaml"
           docker compose -f "$RUNNER_TEMP/compose.yaml" up -d
-          for i in $(seq 1 60); do
-            if curl -fsk https://127.0.0.1:9432/readyz; then break; fi
-            sleep 2
-          done
-          curl -fsk https://127.0.0.1:9432/readyz
-          docker compose -f "$RUNNER_TEMP/compose.yaml" exec -T sqsolve sqsolve doctor
-          docker compose -f "$RUNNER_TEMP/compose.yaml" logs sqsolve | grep -q "código de instalación"
-      - name: Reiniciar conserva los datos
-        run: |
-          docker compose -f "$RUNNER_TEMP/compose.yaml" restart
-          for i in $(seq 1 60); do
-            if curl -fsk https://127.0.0.1:9432/readyz; then break; fi
-            sleep 2
-          done
-          curl -fsk https://127.0.0.1:9432/readyz
+      - name: Recorrido completo contra la imagen
+        run: python3 test/compose_e2e.py "$RUNNER_TEMP/compose.yaml" "$RUNNER_TEMP/sq"
       - name: Registros si algo falló
         if: failure()
         run: docker compose -f "$RUNNER_TEMP/compose.yaml" logs
