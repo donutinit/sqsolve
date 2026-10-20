@@ -1,6 +1,6 @@
 # ADR 0019. Exportación experimental de proyectos y grados
 
-**Estado:** Propuesto (2026-10-19). Acota a ADR 0007 sin reemplazarlo.
+**Estado:** Aceptado (2026-10-19, Diego: la exportación experimental va en la 1.0, apagada por defecto y marcada "Experimental"). Acota a ADR 0007 sin reemplazarlo.
 
 **Contexto.** Diego quiere descargar desde el panel los grados (`.drx`, el árbol de nodos de un
 still de la galería, incluidas las PowerGrades) y los proyectos (`.drp`) de una biblioteca sin

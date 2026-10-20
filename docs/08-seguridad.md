@@ -171,3 +171,22 @@ La verificación recorre la cadena; una ruptura genera el evento crítico `audit
 - Guía "servidor comprometido": aislar, conservar volúmenes, reinstalar en limpio, restaurar
   desde respaldos verificados anteriores al incidente, rotar todas las credenciales y la clave
   maestra.
+
+## 10. Revisión de seguridad de la 1.0 (2026-10-19)
+
+Corrida local de OWASP ZAP baseline (imagen `ghcr.io/zaproxy/zaproxy:stable`, pasivo, 3 minutos
+de rastreo, sin sesión) contra el panel de mininas con sqsolve 0.1.5: 0 fallos, 59 reglas en
+verde, 8 avisos. Qué se hizo con cada aviso:
+
+| Aviso de ZAP | Decisión |
+|---|---|
+| `Strict-Transport-Security` ausente | Corregido: el panel manda HSTS de un año cuando sirve HTTPS |
+| `Cross-Origin-Resource-Policy` y `Cross-Origin-Embedder-Policy` ausentes | CORP `same-origin` agregada. COEP no: no hay recursos de otro origen que aislar y rompería futuras integraciones de imágenes locales |
+| `Cache-Control: no-store` y "contenido no almacenable" | Es deliberado: ninguna página del panel debe quedar en caché |
+| Comentario "sospechoso" en `app.js` | Es un comentario normal del código (sugerencia de identificador); nada que ocultar |
+| Atributo controlable por el usuario en `/entrar?u=` | El valor pasa por `html/template`, que lo escapa; no es XSS. Se mantiene para rellenar el usuario tras un error |
+| Petición de autenticación y respuesta de sesión identificadas | Informativos: ZAP reconoce el inicio de sesión y la cookie |
+
+Revisión manual contra este documento con ADR 0021 aplicado: las amenazas T-01 a T-13 siguen
+cubiertas; T-12 cambia de "reautenticación" a "confirmación tecleada y auditoría" y T-01 gana el
+bloqueo de cuenta. Hallazgos abiertos: ninguno. ZAP nocturno en CI queda para 1.1.

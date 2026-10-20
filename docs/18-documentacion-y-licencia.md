@@ -11,13 +11,13 @@
 | `docs/manual/respaldos.md` | Administrador | Estrategia 3-2-1, verificación, restauración, simulacros | 0.9 |
 | `docs/manual/acceso-remoto.md` | Administrador | WireGuard y Headscale, qué funciona por VPN (según PoC-08) | 1.0 |
 | `docs/manual/medios.md` | Administrador | Contenido de `15-almacenamiento-de-medios.md` en forma de guía | 1.0 |
-| `docs/manual/errores.md` | Todos | Cada código `SQS-` con causa y solución (generado) | 0.9 |
-| `docs/runbooks/*.md` | Administrador | Restaurar, revertir, recuperar instalación, actualizar Resolve, actualizar sqsolve, rotar credenciales, credencial filtrada, pérdida de clave maestra, disco lleno, PostgreSQL no arranca | 1.0 |
+| `docs/manual/errores.md` | Todos | Cada código `SQS-` con su mensaje, generado con `make errores` (hecho el 2026-10-19) | 0.9 |
+| `docs/runbooks/*.md` | Administrador | En 1.0: restaurar y revertir, recuperar instalación, actualizar sqsolve (hechos el 2026-10-19). En 1.1: actualizar Resolve, rotar credenciales, credencial filtrada, pérdida de clave maestra, disco lleno, PostgreSQL no arranca | 1.0 |
 | `docs/` técnico (este plan) | Desarrolladores, agentes | Arquitectura, ADR, contratos | 0.1 y vivo |
 | `api/openapi.yaml` | Integradores | Referencia de la API | 0.5 |
-| `CONTRIBUTING.md` | Contribuidores | Entorno, estilo, pruebas, cómo proponer cambios | 0.1 |
-| `SECURITY.md` | Investigadores | Cómo reportar vulnerabilidades | 0.1 |
-| `CHANGELOG.md` | Todos | Cambios por versión | 0.1 |
+| `CONTRIBUTING.md` | Contribuidores | Entorno, estilo, pruebas, cómo proponer cambios (hecho el 2026-10-19) | 0.1 |
+| `SECURITY.md` | Investigadores | Cómo reportar vulnerabilidades (hecho el 2026-10-19, reporte privado de GitHub) | 0.1 |
+| `CHANGELOG.md` | Todos | Cambios por versión; fuente de las notas de cada versión en GitHub (hecho el 2026-10-19) | 0.1 |
 
 Reglas:
 

@@ -95,12 +95,16 @@ puede hacer en local con `make`.
 
 - Registros: GHCR (Por confirmar) y una réplica (Quay o la forja libre). Etiquetas `X.Y.Z`,
   `X.Y`, `X`; `latest` solo apunta a la última estable, y la documentación nunca recomienda usarla.
-- Firmas con `cosign` (clave del proyecto, sin depender del servicio público de transparencia
-  para verificar) y atestación de procedencia.
+- Firmas con `cosign` sin clave (identidad OIDC del workflow `image.yml` en este repositorio),
+  más la atestación de procedencia y el SBOM que genera buildx. Verificación:
+  `cosign verify ghcr.io/donutinit/sqsolve:X.Y.Z --certificate-identity-regexp
+  'https://github.com/donutinit/sqsolve/.github/workflows/image.yml@refs/tags/v'
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com`. La clave propia del
+  proyecto y la réplica del registro pasan a 1.1 (recorte del 2026-10-19).
 - SBOM en SPDX y CycloneDX generados con `syft`, adjuntos a la versión y a la imagen.
-- Archivos de la versión: binarios `sqsolve` para linux/amd64 y linux/arm64 (para la CLI y para
-  instalaciones sin contenedor en el futuro), sumas SHA-256 firmadas, `compose.yaml` de esa
-  versión, SBOM, notas.
+- Archivos de la versión en GitHub (`release.yml`, en cada etiqueta `v*`): `compose.yaml` de esa
+  versión y las notas tomadas de la sección correspondiente de `CHANGELOG.md`. Los binarios
+  sueltos y las sumas firmadas pasan a 1.1.
 
 ## 7. Dependencias
 

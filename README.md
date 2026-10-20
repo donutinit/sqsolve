@@ -279,7 +279,9 @@ Desde la página de un respaldo, "Restaurar":
 - **Reemplazar la biblioteca actual**: primero hace un respaldo de cómo está ahora, restaura en
   una base aparte, la compara con el manifiesto, espera a que cierren Resolve (o cierra las
   sesiones si lo marcas) e intercambia las bases. La versión anterior se guarda 7 días para
-  **revertir** desde la pestaña Zona de peligro. Pide escribir el identificador.
+  **revertir** desde la pestaña Zona de peligro. Pide escribir el identificador. Importante: pide
+  a quien tenga un proyecto abierto que lo cierre antes y lo vuelva a abrir después; Resolve
+  reconecta solo tras el intercambio y, si guarda, escribe encima de lo restaurado (PoC-09).
 
 Si sqsolve o el servidor se caen a media restauración, al arrancar lee el diario de la tarea y
 deja la biblioteca en un estado coherente.
@@ -291,14 +293,18 @@ deja la biblioteca en un estado coherente.
   puedes revocarla sin cambiar la contraseña de todos.
 - **Cambiar contraseña**: las estaciones que la usan tendrán que escribir la nueva.
 - **Reglas de red**: limita desde qué redes se entra a esa biblioteca (por ejemplo
-  `192.168.10.0/24`). Sin reglas, se entra desde cualquier dirección que llegue al puerto.
+  `192.168.10.0/24`). Sin reglas, se entra desde cualquier dirección que llegue al puerto. En la
+  LAN PostgreSQL ve la IP real de cada estación; con la app de Tailscale de TrueNAS, todo lo que
+  entra por la VPN llega con la IP del contenedor de Tailscale (`172.16.10.1` en la instalación
+  de prueba), así que esa es la dirección que hay que permitir.
 - **Sesiones**: quién está conectado ahora, desde dónde y si la conexión va cifrada; puedes
   cerrar una sesión.
 - **Solo TLS** (Ajustes, Seguridad): rechaza las conexiones de Resolve sin cifrar. Resolve usa
   TLS por sí solo cuando el servidor lo ofrece, y sqsolve siempre lo ofrece; comprobado con
-  Resolve 21.1.1 en Linux. Es la opción recomendada, pero no se sabe cómo lo implementa cada
-  versión de Resolve: antes de activarla revisa que tus estaciones aparezcan como cifradas en
-  Sesiones y prueba después una conexión nueva. Si una estación deja de entrar, desactívala.
+  Resolve 21.1.1 en Linux, también con el modo activado. Es la opción recomendada, pero no se
+  sabe cómo lo implementa cada versión de Resolve en macOS y Windows: antes de activarla revisa
+  que tus estaciones aparezcan como cifradas en Sesiones y prueba después una conexión nueva. Si
+  una estación deja de entrar, desactívala.
 - Los usuarios administrativos de PostgreSQL (`postgres` y `sqsolve_admin`) no aceptan
   conexiones por red, solo por el socket interno.
 - Las contraseñas de las bibliotecas se guardan cifradas con la clave maestra y solo se muestran
@@ -432,7 +438,10 @@ imagen recién construida y hace un recorrido completo con los usuarios 1000 y 5
 `main` publica `ghcr.io/donutinit/sqsolve:edge`; cada etiqueta `vX.Y.Z` publica `X.Y.Z`, mueve
 `X.Y` y `latest`, para amd64 y arm64.
 
-Las reglas para quien programe (incluidos agentes) están en [`AGENTS.md`](AGENTS.md).
+Las reglas para quien programe (incluidos agentes) están en [`AGENTS.md`](AGENTS.md) y el
+flujo para contribuir en [`CONTRIBUTING.md`](CONTRIBUTING.md). Vulnerabilidades: [`SECURITY.md`](SECURITY.md).
+Cambios por versión: [`CHANGELOG.md`](CHANGELOG.md). Pasos para restaurar, recuperar una
+instalación o actualizar: [`docs/runbooks`](docs/runbooks).
 
 ## Identidad visual
 

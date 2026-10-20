@@ -163,6 +163,11 @@ ALTER DATABASE cliente_x ALLOW_CONNECTIONS true;
 `ALTER DATABASE ... RENAME` no se puede ejecutar dentro de una transacción junto con el otro
 renombre, por eso existe el diario.
 
+Comprobado el 2026-10-19 (PoC-09, `docs/poc/poc-09-desconexion.md`): con "cerrar sesiones",
+Resolve 21.1.1 vuelve a conectar por sí solo a la base restaurada y sigue guardando el proyecto
+que tenía en memoria. Por eso la guía pide cerrar el proyecto antes de reemplazar y reabrirlo
+después; una protección técnica queda para 1.1.
+
 ### 7.3 Recuperación tras un corte durante el intercambio
 
 Al arrancar, para cada `restore.replace` interrumpida se observa qué bases existen:

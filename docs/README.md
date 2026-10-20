@@ -30,6 +30,8 @@ Resolve, PostgreSQL o Docker se revisa en cada versión mayor de Resolve
 | 20 | [Roadmap](20-roadmap.md) | MVP, versiones, fases, hitos y dependencias |
 | 21 | [Tareas](21-tareas.md) | Desglose ejecutable por agentes con criterios de terminado |
 | 22 | [Exportación de proyectos y grados](22-exportacion-de-proyectos-y-grados.md) | Formato `.drp` y `.drx`, reglas, kit de verificación (experimental, ADR 0019) |
+| MAN | [Manual: códigos de error](manual/errores.md) | Todos los códigos `SQS-` con su mensaje, generado con `make errores` |
+| RB | Runbooks: [restaurar y revertir](runbooks/restaurar-y-revertir.md), [recuperar instalación](runbooks/recuperar-instalacion.md), [actualizar](runbooks/actualizar.md) | Pasos numerados con la salida esperada |
 | ID | [Identidad visual](identidad/README.md) | Marca "Nodo": archivos, paleta, tipografía, íconos y reglas de uso (ADR 0020) |
 | ADR | [Decisiones](adr/README.md) | Registro de decisiones de arquitectura |
 

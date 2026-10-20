@@ -5,7 +5,7 @@ STATICCHECK = honnef.co/go/tools/cmd/staticcheck@v0.8.1
 GOVULNCHECK = golang.org/x/vuln/cmd/govulncheck@v1.9.0
 LDFLAGS = -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 
-.PHONY: build check fmt vet lint vuln test test-integration scenarios image clean
+.PHONY: build check fmt vet lint vuln test test-integration scenarios image clean errores
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o sqsolve ./cmd/sqsolve
@@ -42,3 +42,11 @@ image:
 
 clean:
 	rm -f sqsolve coverage.out
+
+## errores: regenera docs/manual/errores.md con todos los códigos SQS- del código
+errores:
+	@{ printf '# Códigos de error\n\nGenerado con `make errores` a partir del código; no se edita a mano. Cada código\nsale con el texto con que aparece en el panel, la API, la consola o el registro.\n\n| Código | Mensaje |\n|---|---|\n'; \
+	grep -rhoE 'SQS-[A-Z][0-9]{3}[^"`]*' cmd internal --include='*.go' --exclude='*_test.go' \
+	| sed -E 's/%[-+ 0-9.]*[a-zA-Z]/.../g; s/[[:space:]]+$$//; s/[|]/\\|/g' \
+	| sort -u | sort -t' ' -k1,1 -s | awk -F' ' '!seen[$$1]++ { code=$$1; $$1=""; sub(/^ */, ""); printf "| `%s` | %s |\n", code, $$0 }'; } > docs/manual/errores.md
+	@echo "docs/manual/errores.md: $$(grep -c '^| `SQS' docs/manual/errores.md) códigos"

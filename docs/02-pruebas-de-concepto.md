@@ -23,13 +23,13 @@ fecha, versiones exactas, pasos, resultados y la decisión tomada.
 |---|---|---|---|
 | PoC-01 | Ciclo de vida de una biblioteca y privilegios mínimos | Crítica | SQS-200 a SQS-230 (bibliotecas) |
 | PoC-02 | Matriz de versiones Resolve × PostgreSQL | Crítica | ADR 0006, `14-compatibilidad.md` |
-| PoC-03 | Huella de esquema y detección de actualizaciones | Alta | SQS-240 |
+| PoC-03 | Huella de esquema y detección de actualizaciones | Alta | SQS-240. **Hecha en parte el 2026-10-19** (`docs/poc/poc-03-huella.md`): estable con el uso; falta una actualización real de Resolve |
 | PoC-04 | Formato de respaldo y restauración cruzada | Crítica | SQS-300 a SQS-340 (respaldos) |
 | PoC-05 | Llaves `.resolvedbkey` | Media | SQS-610 (módulo experimental) |
-| PoC-06 | TLS y SCRAM desde Resolve | Alta | Valores por defecto de `pg_hba.conf` |
+| PoC-06 | TLS y SCRAM desde Resolve | Alta | Valores por defecto de `pg_hba.conf`. **Hecha el 2026-10-19** (`docs/poc/poc-06-tls.md`): Resolve 21.1.1 Linux cifra solo y conecta con `hostssl` obligatorio |
 | PoC-07 | Colaboración y tráfico de red | Alta | Documentación para editores |
-| PoC-08 | Red: IP de origen en Docker, puerto, VPN | Alta | Reglas de red por biblioteca, guía de acceso remoto |
-| PoC-09 | Estados restringidos y desconexión forzada | Crítica | Restauración por intercambio, modo mantenimiento |
+| PoC-08 | Red: IP de origen en Docker, puerto, VPN | Alta | Reglas de red por biblioteca, guía de acceso remoto. **Hecha el 2026-10-19** (`docs/poc/poc-08-red.md`): IP real en LAN; por la app de Tailscale de TrueNAS llega la IP del contenedor |
+| PoC-09 | Estados restringidos y desconexión forzada | Crítica | Restauración por intercambio, modo mantenimiento. **Hecha el 2026-10-19** (`docs/poc/poc-09-desconexion.md`): Resolve reconecta solo tras el intercambio; hay que cerrar el proyecto antes |
 | PoC-10 | Bloqueos y duración de `pg_dump` con uso real | Media | Recomendaciones de programación |
 
 Orden sugerido: PoC-01, PoC-02 y PoC-06 en una misma sesión; luego PoC-04 y PoC-09; después el
@@ -157,13 +157,9 @@ Con `ssl = on`, revisar `pg_stat_ssl` para cada conexión de Resolve. Luego camb
 "prefer" sin verificar certificado, se documenta que el cifrado protege contra escucha pasiva
 pero no contra suplantación, y la recomendación de VPN para accesos fuera de la LAN se mantiene.
 
-**Resultado parcial (2026-10-19).** Resolve Studio 21.1.1 en Linux contra sqsolve 0.1.4
-(PostgreSQL 18.6, certificado autofirmado de `sqsolve-init`, `ssl_min_protocol_version =
-TLSv1.2`, `pg_hba` con líneas `host` y `scram-sha-256`): la sesión de Resolve sale en
-`pg_stat_ssl` con `ssl = t`, TLSv1.3 y `TLS_AES_256_GCM_SHA384`, sin configurar nada en la
-estación. Confirma el modo "prefer" sin verificación de certificado. Pendiente: `hostssl`
-obligatorio (ajuste `RequireTLS`) y `TLSv1.3` mínimo, que exigen una conexión nueva desde
-Resolve.
+**Resultado (2026-10-19).** Hecha; informe en `docs/poc/poc-06-tls.md`. Resolve Studio 21.1.1 en
+Linux negocia TLS 1.3 solo, acepta el certificado autofirmado sin verificarlo y conecta también
+con `hostssl` obligatorio (modo "Solo TLS"). Pendiente en macOS y Windows.
 
 ## PoC-07. Colaboración y tráfico
 

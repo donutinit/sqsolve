@@ -87,16 +87,25 @@ func (s *Server) parseTemplates() error {
 	return nil
 }
 
-// ServeHTTP applies the common middleware.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	h := w.Header()
+// setSecurityHeaders sets the headers every response carries (docs 08 §10).
+// HSTS only makes sense when the panel itself serves HTTPS.
+func setSecurityHeaders(h http.Header, secure bool) {
 	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 	h.Set("Cross-Origin-Opener-Policy", "same-origin")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+	if secure {
+		h.Set("Strict-Transport-Security", "max-age=31536000")
+	}
+}
+
+// ServeHTTP applies the common middleware.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	setSecurityHeaders(w.Header(), s.secure())
 	rw := &statusWriter{ResponseWriter: w, status: 200}
 	defer func() {
 		if p := recover(); p != nil {

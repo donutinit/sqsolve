@@ -4,6 +4,7 @@ package web
 
 import (
 	"bytes"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -94,5 +95,23 @@ func TestLayoutBrand(t *testing.T) {
 	}
 	if fav, _ := staticFS.ReadFile("static/favicon.svg"); !strings.Contains(string(fav), `rx="5"`) || strings.Contains(string(fav), "<path") {
 		t.Error("favicon must be the reduced mark: node and ports, without the signal path")
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	h := http.Header{}
+	setSecurityHeaders(h, true)
+	for k, want := range map[string]string{"Strict-Transport-Security": "max-age=31536000", "Cross-Origin-Resource-Policy": "same-origin", "X-Frame-Options": "DENY"} {
+		if got := h.Get(k); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+	if !strings.Contains(h.Get("Content-Security-Policy"), "default-src 'self'") {
+		t.Error("CSP missing")
+	}
+	plain := http.Header{}
+	setSecurityHeaders(plain, false)
+	if plain.Get("Strict-Transport-Security") != "" {
+		t.Error("HSTS must not be sent over plain HTTP")
 	}
 }
