@@ -41,7 +41,7 @@ confirmar". Commits de una línea, sin trailers.
    pasos de actualización y de vuelta atrás. El release de GitHub toma sus notas de ahí; sin esa
    sección sale vacío.
 2. Etiqueta `vX.Y.Z` y push: el CI publica la imagen firmada y el release con el compose.
-3. Verifica la firma como dice `docs/17` §6 y actualiza la instalación de prueba.
+3. Verifica la firma como dice `docs/17` §6 (cosign 3 o más nuevo) y actualiza la instalación de prueba.
 
 ## Cómo proponer un cambio
 

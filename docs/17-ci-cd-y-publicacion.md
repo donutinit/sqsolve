@@ -99,7 +99,9 @@ puede hacer en local con `make`.
   más la atestación de procedencia y el SBOM que genera buildx. Verificación:
   `cosign verify ghcr.io/donutinit/sqsolve:X.Y.Z --certificate-identity-regexp
   'https://github.com/donutinit/sqsolve/.github/workflows/image.yml@refs/tags/v'
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com`. La clave propia del
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com`, con cosign 3 o más
+  nuevo (la firma va en el formato de paquete OCI; cosign 2 no la encuentra). Comprobado con la
+  `0.1.6` el 2026-10-19. La clave propia del
   proyecto y la réplica del registro pasan a 1.1 (recorte del 2026-10-19).
 - SBOM en SPDX y CycloneDX generados con `syft`, adjuntos a la versión y a la imagen.
 - Archivos de la versión en GitHub (`release.yml`, en cada etiqueta `v*`): `compose.yaml` de esa
