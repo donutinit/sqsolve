@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// sqsolve: el único JavaScript del panel. Sin dependencias.
+// sqsolve: the only JavaScript of the panel. No dependencies.
 "use strict";
 
 (function () {
@@ -12,7 +12,7 @@
         var text = el.textContent.trim();
         var done = function () {
           var old = btn.textContent;
-          btn.textContent = "Copiado";
+          btn.textContent = "Copied";
           setTimeout(function () { btn.textContent = old; }, 1500);
         };
         if (navigator.clipboard && window.isSecureContext) {
@@ -95,10 +95,11 @@
   }
 
   function slugify(s) {
+    // Fold accented letters so names typed with accents give a valid identifier.
     var map = { "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ü": "u", "ñ": "n" };
     s = s.toLowerCase().replace(/[áéíóúüñ]/g, function (c) { return map[c]; });
     s = s.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-    if (s && !/^[a-z]/.test(s)) s = "biblioteca_" + s;
+    if (s && !/^[a-z]/.test(s)) s = "library_" + s;
     return s.slice(0, 40).replace(/_+$/, "");
   }
 
@@ -110,7 +111,7 @@
     var pct = job.querySelector("[data-job-pct]");
     var step = job.querySelector("[data-job-step]");
     var log = document.querySelector("[data-job-log]");
-    var es = new EventSource("/tareas/" + id + "/eventos");
+    var es = new EventSource("/jobs/" + id + "/events");
     es.addEventListener("state", function (ev) {
       var u = JSON.parse(ev.data);
       if (bar) bar.value = u.progress || 0;

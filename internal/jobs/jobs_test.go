@@ -50,13 +50,13 @@ func TestRunStepsLogsResult(t *testing.T) {
 	m.Register(Spec{Type: "t.ok", Run: func(ctx context.Context, r *Run) error {
 		var p struct{ N int }
 		r.Params(&p)
-		r.Step("uno", func() error { r.Infof("n=%d", p.N); return nil })
-		r.Step("dos", func() error { r.Journal(map[string]string{"x": "y"}); r.Progress(50); return nil })
+		r.Step("one", func() error { r.Infof("n=%d", p.N); return nil })
+		r.Step("two", func() error { r.Journal(map[string]string{"x": "y"}); r.Progress(50); return nil })
 		r.SetResult(map[string]int{"n": p.N})
 		return nil
 	}})
 	m.Register(Spec{Type: "t.fail", Run: func(ctx context.Context, r *Run) error {
-		return r.Step("roto", func() error { return errors.New("SQS-B012 sin espacio") })
+		return r.Step("broken", func() error { return errors.New("SQS-B012 no space") })
 	}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

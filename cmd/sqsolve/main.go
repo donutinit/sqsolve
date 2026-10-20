@@ -35,32 +35,32 @@ import (
 
 var (
 	version = "dev"
-	commit  = "desconocido"
+	commit  = "unknown"
 )
 
-const usage = `sqsolve: servidor libre de bibliotecas de proyectos de DaVinci Resolve
+const usage = `sqsolve: free server for DaVinci Resolve project libraries
 
-Uso:
-  sqsolve serve                         arranca el panel y el servicio
-  sqsolve init                          prepara volúmenes y secretos (contenedor sqsolve-init)
-  sqsolve healthcheck                   comprobación para Docker
-  sqsolve doctor [--json]               revisa volúmenes, secretos, PostgreSQL y catálogo
+Usage:
+  sqsolve serve                         starts the panel and the service
+  sqsolve init                          prepares volumes and secrets (sqsolve-init container)
+  sqsolve healthcheck                   check for Docker
+  sqsolve doctor [--json]               checks volumes, secrets, PostgreSQL and the catalog
   sqsolve version
   sqsolve admin list
-  sqsolve admin create <usuario> [--role admin|operator|viewer]
-  sqsolve admin reset-password <usuario>
-  sqsolve admin disable-totp <usuario>
-  sqsolve admin unlock <usuario>
+  sqsolve admin create <user> [--role admin|operator|viewer]
+  sqsolve admin reset-password <user>
+  sqsolve admin disable-totp <user>
+  sqsolve admin unlock <user>
   sqsolve library list
-  sqsolve backup create <identificador> [--wait]
-  sqsolve backup list <identificador>
-  sqsolve restore <id-respaldo> --new <identificador> [--name <nombre>] [--wait]
-  sqsolve restore <id-respaldo> --replace --confirm <identificador> [--wait]
+  sqsolve backup create <identifier> [--wait]
+  sqsolve backup list <identifier>
+  sqsolve restore <backup-id> --new <identifier> [--name <name>] [--wait]
+  sqsolve restore <backup-id> --replace --confirm <identifier> [--wait]
   sqsolve catalog rebuild [--wait]
   sqsolve audit verify
 
-Las acciones de la consola se encolan en la misma base que usa el servidor; el
-servidor en marcha las ejecuta. Quedan en la auditoría con actor "consola".
+Console actions are queued in the same database the server uses; the running
+server executes them. They appear in the audit log with the actor "console".
 `
 
 func main() {
@@ -97,7 +97,7 @@ func main() {
 	case "help", "--help", "-h":
 		fmt.Print(usage)
 	default:
-		fmt.Fprintf(os.Stderr, "comando desconocido: %s\n\n%s", cmd, usage)
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n%s", cmd, usage)
 		os.Exit(2)
 	}
 	if err != nil {
@@ -121,7 +121,7 @@ func redact(groups []string, a slog.Attr) slog.Attr {
 	k := strings.ToLower(a.Key)
 	for _, s := range sensitive {
 		if strings.Contains(k, s) {
-			return slog.String(a.Key, "[redactado]")
+			return slog.String(a.Key, "[redacted]")
 		}
 	}
 	return a
@@ -136,12 +136,12 @@ func serve() error {
 	}
 	log := newLogger(c)
 	if uid, gid := os.Getuid(), os.Getgid(); uid != c.UID || gid != c.GID {
-		return fmt.Errorf("SQS-C053 el servicio corre como %d:%d pero SQSOLVE_UID y SQSOLVE_GID dicen %d:%d. "+
-			"En el compose, la línea user: del servicio sqsolve debe ser igual a SQSOLVE_UID:SQSOLVE_GID; "+
-			"después vuelve a correr sqsolve-init para que ajuste los dueños", uid, gid, c.UID, c.GID)
+		return fmt.Errorf("SQS-C053 the service runs as %d:%d but SQSOLVE_UID and SQSOLVE_GID say %d:%d. "+
+			"In the compose file, the user: line of the sqsolve service must equal SQSOLVE_UID:SQSOLVE_GID; "+
+			"then run sqsolve-init again so it fixes the owners", uid, gid, c.UID, c.GID)
 	}
 	if err := app.ApplyPendingRecovery(c, os.Stderr); err != nil {
-		return fmt.Errorf("aplicando la recuperación: %w", err)
+		return fmt.Errorf("applying the recovery: %w", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
@@ -151,7 +151,7 @@ func serve() error {
 	}
 	defer a.Close()
 	if err := a.EnsureKeyCheck(ctx); err != nil {
-		log.Warn("comprobación de clave", "err", err)
+		log.Warn("key check", "err", err)
 	}
 	if !c.InsecureHTTP {
 		if err := a.LoadPanelCert(); err != nil {
@@ -169,7 +169,7 @@ func serve() error {
 	srv := a.HTTPServer(h)
 	errCh := make(chan error, 2)
 	go func() {
-		log.Info("panel escuchando", "addr", c.Listen, "tls", !c.InsecureHTTP)
+		log.Info("panel listening", "addr", c.Listen, "tls", !c.InsecureHTTP)
 		var err error
 		if c.InsecureHTTP {
 			err = srv.ListenAndServe()
@@ -200,7 +200,7 @@ func serve() error {
 	}
 	select {
 	case <-ctx.Done():
-		log.Info("deteniendo sqsolve")
+		log.Info("stopping sqsolve")
 	case err := <-errCh:
 		return err
 	}
@@ -239,7 +239,7 @@ func healthcheck() error {
 	}
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("healthz respondió %s", resp.Status)
+		return fmt.Errorf("healthz answered %s", resp.Status)
 	}
 	return nil
 }
@@ -272,7 +272,7 @@ func openCLI(needPG bool) (*app.App, context.Context, func(), error) {
 
 func doctor(args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
-	asJSON := fs.Bool("json", false, "salida JSON")
+	asJSON := fs.Bool("json", false, "JSON output")
 	fs.Parse(args)
 	a, ctx, done, err := openCLI(false)
 	if err != nil {
@@ -288,7 +288,7 @@ func doctor(args []string) error {
 	}
 	fail := false
 	for _, ch := range checks {
-		mark := map[string]string{"ok": "ok  ", "warn": "aviso", "fail": "FALLA"}[ch.Status]
+		mark := map[string]string{"ok": "ok  ", "warn": "warn", "fail": "FAIL"}[ch.Status]
 		fmt.Printf("[%s] %s: %s\n", mark, ch.Name, ch.Detail)
 		if ch.Hint != "" && ch.Status != "ok" {
 			fmt.Printf("        %s\n", ch.Hint)
@@ -296,7 +296,7 @@ func doctor(args []string) error {
 		fail = fail || ch.Status == "fail"
 	}
 	if fail {
-		return errors.New("hay comprobaciones fallidas")
+		return errors.New("some checks failed")
 	}
 	return nil
 }
@@ -331,7 +331,7 @@ func readPassword(prompt string) (string, error) {
 
 func adminCmd(args []string) error {
 	if len(args) < 1 {
-		return errors.New("falta el subcomando: list, create, reset-password, disable-totp, unlock")
+		return errors.New("missing subcommand: list, create, reset-password, disable-totp, unlock")
 	}
 	a, ctx, done, err := openCLI(false)
 	if err != nil {
@@ -345,19 +345,19 @@ func adminCmd(args []string) error {
 			return err
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "USUARIO\tROL\tTOTP\tDESACTIVADO")
+		fmt.Fprintln(tw, "USER\tROLE\tTOTP\tDISABLED")
 		for _, u := range users {
 			fmt.Fprintf(tw, "%s\t%s\t%v\t%v\n", u.Username, u.Role.Label(), u.TOTPEnabled, u.DisabledAt != nil)
 		}
 		return tw.Flush()
 	case "create":
 		fs := flag.NewFlagSet("create", flag.ExitOnError)
-		role := fs.String("role", "admin", "rol")
+		role := fs.String("role", "admin", "role")
 		if len(args) < 2 {
-			return errors.New("uso: sqsolve admin create <usuario> [--role admin]")
+			return errors.New("usage: sqsolve admin create <user> [--role admin]")
 		}
 		fs.Parse(args[2:])
-		pw, err := readPassword("Contraseña: ")
+		pw, err := readPassword("Password: ")
 		if err != nil {
 			return err
 		}
@@ -365,26 +365,26 @@ func adminCmd(args []string) error {
 			return err
 		}
 		a.ClearInstallCode()
-		fmt.Println("Usuario creado.")
+		fmt.Println("User created.")
 	case "reset-password":
 		if len(args) < 2 {
-			return errors.New("uso: sqsolve admin reset-password <usuario>")
+			return errors.New("usage: sqsolve admin reset-password <user>")
 		}
 		u, err := a.Auth.UserByName(ctx, args[1])
 		if err != nil {
 			return err
 		}
-		pw, err := readPassword("Contraseña nueva: ")
+		pw, err := readPassword("New password: ")
 		if err != nil {
 			return err
 		}
 		if err := a.Auth.SetPassword(ctx, audit.CLI, u.ID, pw, ""); err != nil {
 			return err
 		}
-		fmt.Println("Contraseña cambiada; se cerraron sus sesiones.")
+		fmt.Println("Password changed; their sessions were closed.")
 	case "disable-totp":
 		if len(args) < 2 {
-			return errors.New("uso: sqsolve admin disable-totp <usuario>")
+			return errors.New("usage: sqsolve admin disable-totp <user>")
 		}
 		u, err := a.Auth.UserByName(ctx, args[1])
 		if err != nil {
@@ -393,10 +393,10 @@ func adminCmd(args []string) error {
 		if err := a.Auth.DisableTOTP(ctx, audit.CLI, u.ID); err != nil {
 			return err
 		}
-		fmt.Println("Segundo factor desactivado.")
+		fmt.Println("Second factor disabled.")
 	case "unlock":
 		if len(args) < 2 {
-			return errors.New("uso: sqsolve admin unlock <usuario>")
+			return errors.New("usage: sqsolve admin unlock <user>")
 		}
 		u, err := a.Auth.UserByName(ctx, args[1])
 		if err != nil {
@@ -405,16 +405,16 @@ func adminCmd(args []string) error {
 		if err := a.Auth.Unlock(ctx, audit.CLI, u.ID); err != nil {
 			return err
 		}
-		fmt.Println("Cuenta desbloqueada; el contador de intentos vuelve a cero.")
+		fmt.Println("Account unlocked; the attempt counter is back to zero.")
 	default:
-		return fmt.Errorf("subcomando desconocido: %s", args[0])
+		return fmt.Errorf("unknown subcommand: %s", args[0])
 	}
 	return nil
 }
 
 func libraryCmd(args []string) error {
 	if len(args) < 1 || args[0] != "list" {
-		return errors.New("uso: sqsolve library list")
+		return errors.New("usage: sqsolve library list")
 	}
 	a, ctx, done, err := openCLI(false)
 	if err != nil {
@@ -426,9 +426,9 @@ func libraryCmd(args []string) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "IDENTIFICADOR\tNOMBRE\tESTADO\tÚLTIMO VERIFICADO")
+	fmt.Fprintln(tw, "IDENTIFIER\tNAME\tSTATE\tLAST VERIFIED")
 	for _, l := range libs {
-		last := "ninguno"
+		last := "none"
 		if b, _ := a.Svc.LatestVerified(ctx, l.ID); b != nil {
 			last = b.StartedAt.In(a.Cfg.Location).Format("2006-01-02 15:04")
 		}
@@ -438,14 +438,14 @@ func libraryCmd(args []string) error {
 }
 
 func waitJob(ctx context.Context, a *app.App, j *jobs.Job) error {
-	fmt.Printf("Tarea %s encolada (%s).\n", j.ID, j.Title)
+	fmt.Printf("Job %s queued (%s).\n", j.ID, j.Title)
 	for {
 		got, err := a.Jobs.Get(ctx, j.ID)
 		if err != nil {
 			return err
 		}
 		if got.State.Finished() {
-			fmt.Printf("Terminó: %s\n", got.State.Label())
+			fmt.Printf("Finished: %s\n", got.State.Label())
 			if got.State != jobs.Succeeded {
 				return errors.New(got.ErrorDetail)
 			}
@@ -475,7 +475,7 @@ func flagValue(args []string, f string) string {
 
 func backupCmd(args []string) error {
 	if len(args) < 2 {
-		return errors.New("uso: sqsolve backup create|list <identificador>")
+		return errors.New("usage: sqsolve backup create|list <identifier>")
 	}
 	a, ctx, done, err := openCLI(false)
 	if err != nil {
@@ -496,27 +496,27 @@ func backupCmd(args []string) error {
 		if hasFlag(args, "--wait") {
 			return waitJob(ctx, a, j)
 		}
-		fmt.Printf("Tarea %s encolada.\n", j.ID)
+		fmt.Printf("Job %s queued.\n", j.ID)
 	case "list":
 		bs, err := a.Svc.Backups(ctx, core.BackupFilter{LibraryID: l.ID, Limit: 100})
 		if err != nil {
 			return err
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tFECHA\tTIPO\tESTADO\tVERIFICACIÓN\tTAMAÑO")
+		fmt.Fprintln(tw, "ID\tDATE\tKIND\tSTATUS\tVERIFICATION\tSIZE")
 		for _, b := range bs {
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", b.ID, b.StartedAt.In(a.Cfg.Location).Format("2006-01-02 15:04"), b.Kind, b.Status, b.VerifyStatus, core.HumanBytes(b.SizeBytes))
 		}
 		return tw.Flush()
 	default:
-		return fmt.Errorf("subcomando desconocido: %s", args[0])
+		return fmt.Errorf("unknown subcommand: %s", args[0])
 	}
 	return nil
 }
 
 func restoreCmd(args []string) error {
 	if len(args) < 2 {
-		return errors.New("uso: sqsolve restore <id-respaldo> --new <identificador> | --replace --confirm <identificador>")
+		return errors.New("usage: sqsolve restore <backup-id> --new <identifier> | --replace --confirm <identifier>")
 	}
 	a, ctx, done, err := openCLI(true)
 	if err != nil {
@@ -534,7 +534,7 @@ func restoreCmd(args []string) error {
 	} else if hasFlag(args, "--replace") {
 		j, err = a.Svc.RestoreReplace(ctx, audit.CLI, id, flagValue(args, "--confirm"), hasFlag(args, "--terminate"))
 	} else {
-		return errors.New("indica --new <identificador> o --replace --confirm <identificador>")
+		return errors.New("pass --new <identifier> or --replace --confirm <identifier>")
 	}
 	if err != nil {
 		return err
@@ -542,13 +542,13 @@ func restoreCmd(args []string) error {
 	if hasFlag(args, "--wait") {
 		return waitJob(ctx, a, j)
 	}
-	fmt.Printf("Tarea %s encolada.\n", j.ID)
+	fmt.Printf("Job %s queued.\n", j.ID)
 	return nil
 }
 
 func catalogCmd(args []string) error {
 	if len(args) < 1 || args[0] != "rebuild" {
-		return errors.New("uso: sqsolve catalog rebuild [--wait]")
+		return errors.New("usage: sqsolve catalog rebuild [--wait]")
 	}
 	a, ctx, done, err := openCLI(false)
 	if err != nil {
@@ -562,13 +562,13 @@ func catalogCmd(args []string) error {
 	if hasFlag(args, "--wait") {
 		return waitJob(ctx, a, j)
 	}
-	fmt.Printf("Tarea %s encolada.\n", j.ID)
+	fmt.Printf("Job %s queued.\n", j.ID)
 	return nil
 }
 
 func auditCmd(args []string) error {
 	if len(args) < 1 || args[0] != "verify" {
-		return errors.New("uso: sqsolve audit verify")
+		return errors.New("usage: sqsolve audit verify")
 	}
 	a, ctx, done, err := openCLI(false)
 	if err != nil {
@@ -580,8 +580,8 @@ func auditCmd(args []string) error {
 		return err
 	}
 	if broken != 0 {
-		return fmt.Errorf("la cadena está rota en la entrada %d de %d", broken, n)
+		return fmt.Errorf("the chain is broken at entry %d of %d", broken, n)
 	}
-	fmt.Printf("Auditoría íntegra: %d entradas.\n", n)
+	fmt.Printf("Audit log intact: %d entries.\n", n)
 	return nil
 }

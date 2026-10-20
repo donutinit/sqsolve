@@ -77,7 +77,7 @@ func (s *Session) load(ctx context.Context, g *graph, table string, ids []string
 			for cls, rs := range byClass {
 				spec := s.m.Classes[cls]
 				if spec == nil {
-					return fmt.Errorf("%w: la clase %q de la tabla %s", ErrUnsupported, cls, t)
+					return fmt.Errorf("%w: class %q of table %s", ErrUnsupported, cls, t)
 				}
 				if err := s.loadReferences(ctx, g, cls, spec, rs, next); err != nil {
 					return err
@@ -169,7 +169,7 @@ func (s *Session) fetch(ctx context.Context, table string, ids []string) ([]*row
 	for _, chunk := range chunks(ids) {
 		rows, err := s.tx.Query(ctx, q, chunk)
 		if err != nil {
-			return nil, fmt.Errorf("SQS-E005 lectura de %s: %w", table, err)
+			return nil, fmt.Errorf("SQS-E005 reading %s: %w", table, err)
 		}
 		for rows.Next() {
 			vals, err := rows.Values()
@@ -187,7 +187,7 @@ func (s *Session) fetch(ctx context.Context, table string, ids []string) ([]*row
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("SQS-E005 lectura de %s: %w", table, err)
+			return nil, fmt.Errorf("SQS-E005 reading %s: %w", table, err)
 		}
 	}
 	return out, nil
@@ -215,7 +215,7 @@ func (s *Session) loadAssoc(ctx context.Context, g *graph, table, prop string, o
 	for _, chunk := range chunks(owners) {
 		rows, err := s.tx.Query(ctx, q, prop, chunk)
 		if err != nil {
-			return fmt.Errorf("SQS-E005 lectura de %s: %w", table, err)
+			return fmt.Errorf("SQS-E005 reading %s: %w", table, err)
 		}
 		for rows.Next() {
 			var owner, assoc string
@@ -244,7 +244,7 @@ func (s *Session) loadBackref(ctx context.Context, g *graph, br Backref, owners 
 	for _, chunk := range chunks(owners) {
 		rows, err := s.tx.Query(ctx, q, chunk)
 		if err != nil {
-			return fmt.Errorf("SQS-E005 lectura de %s: %w", br.Table, err)
+			return fmt.Errorf("SQS-E005 reading %s: %w", br.Table, err)
 		}
 		for rows.Next() {
 			var owner, id string
@@ -276,10 +276,10 @@ func (s *Session) checkGuard(ctx context.Context, gd Guard, owners []string) err
 		var one int
 		err := s.tx.QueryRow(ctx, q, args...).Scan(&one)
 		if err == nil {
-			return fmt.Errorf("%w: el proyecto usa %s (%s)", ErrUnsupported, gd.Field, gd.Class)
+			return fmt.Errorf("%w: the project uses %s (%s)", ErrUnsupported, gd.Field, gd.Class)
 		}
 		if !strings.Contains(err.Error(), "no rows") {
-			return fmt.Errorf("SQS-E005 lectura de %s: %w", gd.Table, err)
+			return fmt.Errorf("SQS-E005 reading %s: %w", gd.Table, err)
 		}
 	}
 	return nil

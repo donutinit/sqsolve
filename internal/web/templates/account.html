@@ -1,46 +1,46 @@
 {{define "content"}}
 {{$u := .P.User}}
-<div class="pagehead"><h1>Mi cuenta</h1></div>
+<div class="pagehead"><h1>My account</h1></div>
 <div class="grid2">
   <section class="card">
-    <h2>Contraseña</h2>
-    <form method="post" action="/cuenta/contrasena" class="form">
+    <h2>Password</h2>
+    <form method="post" action="/account/password" class="form">
       {{template "csrf" .CSRF}}
-      <label>Nueva contraseña<input type="password" name="password" required minlength="12" autocomplete="new-password"></label>
-      <label>Repítela<input type="password" name="password2" required minlength="12" autocomplete="new-password"></label>
-      <div class="actions"><button type="submit">Cambiar contraseña</button></div>
+      <label>New password<input type="password" name="password" required minlength="12" autocomplete="new-password"></label>
+      <label>Repeat it<input type="password" name="password2" required minlength="12" autocomplete="new-password"></label>
+      <div class="actions"><button type="submit">Change password</button></div>
     </form>
   </section>
   <section class="card">
-    <h2>Segundo factor</h2>
+    <h2>Second factor</h2>
     {{if $u.TOTPEnabled}}
-      <p>{{template "badge" (dict "tone" "ok" "label" "Activado")}}</p>
-      <form method="post" action="/cuenta/totp/quitar" data-confirm="Tu cuenta quedará protegida solo con la contraseña. ¿Continuar?">{{template "csrf" .CSRF}}<button type="submit" class="ghost danger">Quitar</button></form>
+      <p>{{template "badge" (dict "tone" "ok" "label" "Enabled")}}</p>
+      <form method="post" action="/account/totp/disable" data-confirm="Your account will be protected by the password only. Continue?">{{template "csrf" .CSRF}}<button type="submit" class="ghost danger">Remove</button></form>
     {{else}}
-      <p>Protege tu cuenta con un código de una aplicación de autenticación (por ejemplo, una que soporte TOTP).</p>
-      <form method="post" action="/cuenta/totp/iniciar">{{template "csrf" .CSRF}}<button type="submit">Activar</button></form>
+      <p>Protect your account with a code from an authenticator app (for example, one that supports TOTP).</p>
+      <form method="post" action="/account/totp/start">{{template "csrf" .CSRF}}<button type="submit">Enable</button></form>
     {{end}}
     <hr>
-    <form method="post" action="/cuenta/sesiones">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Cerrar mis otras sesiones</button></form>
+    <form method="post" action="/account/sessions">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Close my other sessions</button></form>
   </section>
 </div>
 <section class="card">
-  <h2>Tokens de API</h2>
-  <p class="hint">Para automatizar con la API (<code>/api/v1</code>). El token solo puede hacer lo que permite tu rol y los alcances que elijas.</p>
+  <h2>API tokens</h2>
+  <p class="hint">To automate with the API (<code>/api/v1</code>). The token can only do what your role allows and the scopes you choose.</p>
   {{if .Data.Tokens}}
-  <div class="scroll-x"><table class="table compact"><thead><tr><th>Nombre</th><th>Alcances</th><th>Creado</th><th>Último uso</th><th>Vence</th><th></th></tr></thead><tbody>
-  {{range .Data.Tokens}}<tr class="{{if .RevokedAt}}revoked{{end}}"><td>{{.Name}}</td><td class="mono small">{{join .Scopes ", "}}</td><td>{{dt .CreatedAt}}</td><td>{{if .LastUsedAt}}{{ago .LastUsedAt}}{{else}}nunca{{end}}</td><td>{{dt .ExpiresAt}}</td>
-    <td>{{if .RevokedAt}}{{template "badge" (dict "tone" "off" "label" "Revocado")}}{{else}}<form method="post" action="/cuenta/tokens/{{.ID}}/revocar" data-confirm="Lo que use este token dejará de funcionar. ¿Revocarlo?">{{template "csrf" $.CSRF}}<button type="submit" class="ghost small danger">Revocar</button></form>{{end}}</td></tr>{{end}}
+  <div class="scroll-x"><table class="table compact"><thead><tr><th>Name</th><th>Scopes</th><th>Created</th><th>Last used</th><th>Expires</th><th></th></tr></thead><tbody>
+  {{range .Data.Tokens}}<tr class="{{if .RevokedAt}}revoked{{end}}"><td>{{.Name}}</td><td class="mono small">{{join .Scopes ", "}}</td><td>{{dt .CreatedAt}}</td><td>{{if .LastUsedAt}}{{ago .LastUsedAt}}{{else}}never{{end}}</td><td>{{dt .ExpiresAt}}</td>
+    <td>{{if .RevokedAt}}{{template "badge" (dict "tone" "off" "label" "Revoked")}}{{else}}<form method="post" action="/account/tokens/{{.ID}}/revoke" data-confirm="Whatever uses this token will stop working. Revoke it?">{{template "csrf" $.CSRF}}<button type="submit" class="ghost small danger">Revoke</button></form>{{end}}</td></tr>{{end}}
   </tbody></table></div>
   {{end}}
-  <form method="post" action="/cuenta/tokens" class="form inline">
+  <form method="post" action="/account/tokens" class="form inline">
     {{template "csrf" .CSRF}}
-    <label>Nombre<input name="name" required maxlength="80" placeholder="script de respaldos"></label>
-    <fieldset class="inline"><legend>Alcances</legend>
+    <label>Name<input name="name" required maxlength="80" placeholder="backup script"></label>
+    <fieldset class="inline"><legend>Scopes</legend>
       {{range .Data.Scopes}}<label class="check"><input type="checkbox" name="scope" value="{{.}}" {{if eq . "read"}}checked{{end}}> <span>{{scopelabel .}} <code>{{.}}</code></span></label>{{end}}
     </fieldset>
-    <label>Vigencia<select name="days"><option value="30">30 días</option><option value="90">90 días</option><option value="365" selected>1 año</option></select></label>
-    <button type="submit">Crear token</button>
+    <label>Validity<select name="days"><option value="30">30 days</option><option value="90">90 days</option><option value="365" selected>1 year</option></select></label>
+    <button type="submit">Create token</button>
   </form>
 </section>
 {{end}}

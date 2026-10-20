@@ -59,7 +59,7 @@ func CheckPassword(hash, pw string) bool {
 var dummyHash = HashPassword("sqsolve-dummy-password-for-timing")
 
 // ErrWeakPassword describes why a password is rejected.
-var ErrWeakPassword = errors.New("SQS-A010 contraseña débil")
+var ErrWeakPassword = errors.New("SQS-A010 weak password")
 
 // common holds a small offline list of passwords that must never be used.
 var common = map[string]bool{}
@@ -77,24 +77,24 @@ func init() {
 // ValidatePassword enforces the minimum policy.
 func ValidatePassword(pw, username string) error {
 	if utf8.RuneCountInString(pw) < 8 {
-		return fmt.Errorf("%w: usa al menos 8 caracteres", ErrWeakPassword)
+		return fmt.Errorf("%w: use at least 8 characters", ErrWeakPassword)
 	}
 	if utf8.RuneCountInString(pw) > 256 {
-		return fmt.Errorf("%w: máximo 256 caracteres", ErrWeakPassword)
+		return fmt.Errorf("%w: at most 256 characters", ErrWeakPassword)
 	}
 	low := strings.ToLower(pw)
 	if common[low] {
-		return fmt.Errorf("%w: está en la lista de contraseñas comunes", ErrWeakPassword)
+		return fmt.Errorf("%w: it is in the list of common passwords", ErrWeakPassword)
 	}
 	if username != "" && strings.Contains(low, strings.ToLower(username)) {
-		return fmt.Errorf("%w: no puede contener el nombre de usuario", ErrWeakPassword)
+		return fmt.Errorf("%w: cannot contain the username", ErrWeakPassword)
 	}
 	distinct := map[rune]bool{}
 	for _, r := range pw {
 		distinct[r] = true
 	}
 	if len(distinct) < 4 {
-		return fmt.Errorf("%w: tiene muy pocos caracteres distintos", ErrWeakPassword)
+		return fmt.Errorf("%w: has too few distinct characters", ErrWeakPassword)
 	}
 	return nil
 }

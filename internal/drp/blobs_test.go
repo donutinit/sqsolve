@@ -106,14 +106,14 @@ func TestQDSMap(t *testing.T) {
 		qdsEntry{"Dbl", 6, make([]byte, 8)},
 		qdsEntry{"Bytes", 12, append([]byte{0, 0, 0, 3}, 'a', 'b', 'c')},
 		qdsEntry{"NullBytes", 12, []byte{0xff, 0xff, 0xff, 0xff}},
-		qdsEntry{"Nombre", 10, qdsStr("año ñ")},
-		qdsEntry{"Vacío", 10, []byte{0xff, 0xff, 0xff, 0xff}},
+		qdsEntry{"Name", 10, qdsStr("year ñ")},
+		qdsEntry{"Empty", 10, []byte{0xff, 0xff, 0xff, 0xff}},
 	)
 	m, err := qdsMap(blob)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m) != 2 || m["Nombre"] != "año ñ" || m["Vacío"] != "" {
+	if len(m) != 2 || m["Name"] != "year ñ" || m["Empty"] != "" {
 		t.Errorf("map = %v", m)
 	}
 	if _, err := qdsMap([]byte{0, 0, 0, 2, 0, 0, 0, 0}); err == nil {
@@ -131,7 +131,7 @@ func TestProtoField(t *testing.T) {
 	msg := append(pbVarint(1, 300), pbFixed64(4, 1)...)
 	msg = append(msg, pbFixed32(5, 2)...)
 	msg = append(msg, pbBytes(2, []byte("dos"))...)
-	msg = append(msg, pbBytes(2, []byte("otra vez"))...)
+	msg = append(msg, pbBytes(2, []byte("again"))...)
 	msg = append(msg, pbBytes(7, []byte("siete"))...)
 	if got, ok := protoField(msg, 2); !ok || string(got) != "dos" {
 		t.Errorf("field 2 = %q %v", got, ok)
@@ -159,9 +159,9 @@ func TestChildOrder(t *testing.T) {
 		}
 	}
 	for name, blob := range map[string][]byte{
-		"nil":            nil,
-		"v1":             qdsV1Map(qdsEntry{"0", 10, qdsStr(a)}),
-		"v2 sin campo 2": fieldsBlobV2(encodePayload(pbVarint(1, 1), false)),
+		"nil":                nil,
+		"v1":                 qdsV1Map(qdsEntry{"0", 10, qdsStr(a)}),
+		"v2 without field 2": fieldsBlobV2(encodePayload(pbVarint(1, 1), false)),
 	} {
 		if got, err := childOrder(blob); err != nil || got != nil {
 			t.Errorf("%s: %v %v", name, got, err)
@@ -180,7 +180,7 @@ func TestChildOrder(t *testing.T) {
 
 func TestRewriteOFXContext(t *testing.T) {
 	old, version := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-	plain := pbBytes(1, []byte("sin efectos"))
+	plain := pbBytes(1, []byte("no effects"))
 	if got, err := rewriteOFXContext(append([]byte{0x80}, plain...), version); err != nil || string(got[1:]) != string(plain) {
 		t.Errorf("no context: %v %v", got, err)
 	}
@@ -188,7 +188,7 @@ func TestRewriteOFXContext(t *testing.T) {
 	if got, _ := rewriteOFXContext(same, version); &got[0] != &same[0] {
 		t.Error("body without context was copied")
 	}
-	withCtx := pbBytes(1, []byte("OfxImageEffectContextFilter_"+old+"_ y OfxImageEffectContextFilter_"+old+"_"))
+	withCtx := pbBytes(1, []byte("OfxImageEffectContextFilter_"+old+"_ and OfxImageEffectContextFilter_"+old+"_"))
 	for _, compressed := range []bool{false, true} {
 		got, err := rewriteOFXContext(encodePayload(withCtx, compressed), version)
 		if err != nil {
@@ -202,7 +202,7 @@ func TestRewriteOFXContext(t *testing.T) {
 			t.Errorf("compressed=%v: %q", compressed, raw)
 		}
 	}
-	for name, body := range map[string][]byte{"vacío": nil, "marca rara": {0x00, 0x01}} {
+	for name, body := range map[string][]byte{"empty": nil, "odd marker": {0x00, 0x01}} {
 		if got, err := rewriteOFXContext(body, version); err != nil || !bytes.Equal(got, body) {
 			t.Errorf("%s: %v %v", name, got, err)
 		}

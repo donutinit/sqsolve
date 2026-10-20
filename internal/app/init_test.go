@@ -74,7 +74,7 @@ func TestDataDirModeNeedsReachableFolders(t *testing.T) {
 	}
 	os.Chmod(root, 0o755)
 	os.Chmod(filepath.Dir(pgdata), 0o770)
-	if err := dataDirMode(root, pgdata); err == nil || !strings.Contains(err.Error(), "no puede entrar") {
+	if err := dataDirMode(root, pgdata); err == nil || !strings.Contains(err.Error(), "cannot enter") {
 		t.Fatalf("want an unreachable folder error, got %v", err)
 	}
 	os.Chmod(filepath.Dir(pgdata), 0o755)
@@ -84,12 +84,14 @@ func TestDataDirModeNeedsReachableFolders(t *testing.T) {
 }
 
 func TestInitRefusesVolumeThatIgnoresChmod(t *testing.T) {
-	dataDirCheck = func(string, string) error { return errors.New("su carpeta quedó en 0770 y PostgreSQL exige 0700") }
+	dataDirCheck = func(string, string) error {
+		return errors.New("its folder was left at 0770 and PostgreSQL requires 0700")
+	}
 	defer func() { dataDirCheck = dataDirMode }()
 	cfg := testConfig(t)
 	pg := cfg.PGDir
 	err := Init(cfg, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "SQS-C054") || !strings.Contains(err.Error(), "preset Generic") {
+	if err == nil || !strings.Contains(err.Error(), "SQS-C054") || !strings.Contains(err.Error(), "Generic preset") {
 		t.Fatalf("want SQS-C054 naming the Generic preset, got %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(pg, "sqsolve", "postgresql.conf")); !os.IsNotExist(err) {

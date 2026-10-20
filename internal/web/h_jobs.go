@@ -15,8 +15,8 @@ import (
 func (s *Server) jobsList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
-	f := jobs.Filter{Limit: 100, LibraryID: q.Get("biblioteca"), Type: q.Get("tipo")}
-	if st := q.Get("estado"); st != "" {
+	f := jobs.Filter{Limit: 100, LibraryID: q.Get("library"), Type: q.Get("type")}
+	if st := q.Get("state"); st != "" {
 		f.States = []jobs.State{jobs.State(st)}
 	}
 	active, _ := s.A.Jobs.List(ctx, jobs.Filter{States: []jobs.State{jobs.Running, jobs.Queued}, Limit: 100})
@@ -26,14 +26,14 @@ func (s *Server) jobsList(w http.ResponseWriter, r *http.Request) {
 	for _, l := range libs {
 		names[l.ID] = l.DisplayName
 	}
-	s.render(w, r, "jobs", "Tareas", "tareas", map[string]any{"Active": active, "History": history, "Names": names, "State": q.Get("estado")})
+	s.render(w, r, "jobs", "Jobs", "jobs", map[string]any{"Active": active, "History": history, "Names": names, "State": q.Get("state")})
 }
 
 func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	j, err := s.A.Jobs.Get(ctx, r.PathValue("id"))
 	if err != nil {
-		s.renderError(w, r, principalOf(r), http.StatusNotFound, "SQS-J002 Tarea no encontrada.")
+		s.renderError(w, r, principalOf(r), http.StatusNotFound, "SQS-J002 Job not found.")
 		return
 	}
 	steps, _ := s.A.Jobs.Steps(ctx, j.ID)
@@ -46,7 +46,7 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 	if json.Unmarshal(j.Result, &res) == nil {
 		data["Result"] = res
 	}
-	s.render(w, r, "job", j.Title, "tareas", data)
+	s.render(w, r, "job", j.Title, "jobs", data)
 }
 
 // jobEvents streams progress with Server-Sent Events.
@@ -60,7 +60,7 @@ func (s *Server) jobEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming no soportado", 500)
+		http.Error(w, "streaming not supported", 500)
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -104,19 +104,19 @@ func (s *Server) jobEvents(w http.ResponseWriter, r *http.Request) {
 func (s *Server) jobCancel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.A.Jobs.Cancel(r.Context(), id); err != nil {
-		s.fail(w, r, "/tareas/"+id, err)
+		s.fail(w, r, "/jobs/"+id, err)
 		return
 	}
 	s.A.Audit.Record(r.Context(), principalOf(r).Actor(), "job.cancel", "job", id, "ok", nil)
-	s.ok(w, r, "/tareas/"+id, "Se pidió cancelar la tarea.")
+	s.ok(w, r, "/jobs/"+id, "Cancellation requested.")
 }
 
 func (s *Server) jobRetry(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	nj, err := s.A.Jobs.Retry(r.Context(), id, principalOf(r).Actor())
 	if err != nil {
-		s.fail(w, r, "/tareas/"+id, err)
+		s.fail(w, r, "/jobs/"+id, err)
 		return
 	}
-	s.ok(w, r, "/tareas/"+nj.ID, "Tarea encolada de nuevo.")
+	s.ok(w, r, "/jobs/"+nj.ID, "Job queued again.")
 }

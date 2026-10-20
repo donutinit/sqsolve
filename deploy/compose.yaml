@@ -1,22 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# sqsolve: servidor libre de bibliotecas de proyectos de DaVinci Resolve.
+# sqsolve: free server for DaVinci Resolve project libraries.
 #
-# Este mismo archivo sirve en cualquier Linux con Docker Compose y en NAS que aceptan
+# This same file works on any Linux with Docker Compose and on NAS devices that accept
 # Compose (TrueNAS: Apps > Discover > Custom App > Install via YAML; Portainer; Unraid).
 #
-# Antes de instalar cambia solo esto:
-#   1. Las tres rutas de "Volúmenes" (abajo). Respaldos idealmente en otro disco.
-#   2. TZ, tu zona horaria.
-#   3. Si el puerto 5432 ya está ocupado en el host (Synology), publícalo en la IP de la LAN:
+# Before installing, change only this:
+#   1. The three "Volumes" paths (below). Backups ideally on another disk.
+#   2. TZ, your time zone.
+#   3. If port 5432 is already in use on the host (Synology), publish it on the LAN IP:
 #      "192.168.1.10:5432:5432".
 #
-# El código de instalación aparece en el registro del contenedor sqsolve.
+# The installation code appears in the sqsolve container log.
 
 name: sqsolve
 
-# "1.0" recibe cada arreglo de la serie 1.0 (en TrueNAS aparece "Update available").
-# Para dejar una versión exacta, usa por ejemplo "1.0.0".
-x-sqsolve: &sqsolve-image "ghcr.io/donutinit/sqsolve:1.0"
+# "1.1" receives every fix of the 1.1 series (TrueNAS shows "Update available").
+# To pin an exact version, use for example "1.1.0".
+x-sqsolve: &sqsolve-image "ghcr.io/donutinit/sqsolve:1.1"
 x-postgres: &postgres-image "postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336"
 
 x-env: &env
@@ -25,7 +25,7 @@ x-env: &env
   SQSOLVE_GID: "1000"
 
 services:
-  # Prepara volúmenes, secretos y la configuración de PostgreSQL. Corre una vez por arranque.
+  # Prepares volumes, secrets and the PostgreSQL configuration. Runs once per start.
   sqsolve-init:
     image: *sqsolve-image
     command: ["init"]
@@ -33,15 +33,15 @@ services:
     network_mode: none
     environment: *env
     volumes:
-      - /ruta/sqsolve/db:/var/lib/postgresql          # Volúmenes: base de datos (SSD)
-      - /ruta/sqsolve/app:/var/lib/sqsolve            # Volúmenes: aplicación (SSD)
-      - /ruta/sqsolve-respaldos:/backups              # Volúmenes: respaldos (otro disco)
+      - /path/to/sqsolve/db:/var/lib/postgresql          # Volumes: database (SSD)
+      - /path/to/sqsolve/app:/var/lib/sqsolve            # Volumes: application (SSD)
+      - /path/to/sqsolve-backups:/backups              # Volumes: backups (other disk)
     restart: "no"
 
   postgres:
     image: *postgres-image
-    # Como en las apps de TrueNAS: sqsolve-init le prepara la carpeta de datos y PostgreSQL corre
-    # con su propio usuario, nunca como root.
+    # As in TrueNAS apps: sqsolve-init prepares the data folder and PostgreSQL runs
+    # with its own user, never as root.
     user: "999:999"
     command: ["postgres", "-c", "config_file=/var/lib/postgresql/sqsolve/postgresql.conf"]
     environment:
@@ -49,7 +49,7 @@ services:
       POSTGRES_PASSWORD_FILE: /var/lib/postgresql/sqsolve/superuser_password
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8"
     volumes:
-      - /ruta/sqsolve/db:/var/lib/postgresql
+      - /path/to/sqsolve/db:/var/lib/postgresql
       - sqsolve-run:/var/run/postgresql
     ports:
       - "5432:5432"
@@ -74,9 +74,9 @@ services:
       <<: *env
       SQSOLVE_LISTEN: ":9432"
     volumes:
-      - /ruta/sqsolve/db:/var/lib/postgresql
-      - /ruta/sqsolve/app:/var/lib/sqsolve
-      - /ruta/sqsolve-respaldos:/backups
+      - /path/to/sqsolve/db:/var/lib/postgresql
+      - /path/to/sqsolve/app:/var/lib/sqsolve
+      - /path/to/sqsolve-backups:/backups
       - sqsolve-run:/var/run/postgresql
     ports:
       - "9432:9432"
@@ -94,5 +94,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  # Solo el socket de PostgreSQL; no guarda datos.
+  # Only the PostgreSQL socket; it stores no data.
   sqsolve-run:

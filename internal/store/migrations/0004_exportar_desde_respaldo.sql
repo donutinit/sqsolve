@@ -1,5 +1,5 @@
--- Exportación de .drp y .drx desde un respaldo (docs 22 §7): el archivo se restaura en una base
--- temporal "sqsolve_export_<id>" que vive un rato y se borra al cerrar o al vencer.
+-- Export of .drp and .drx from a backup (docs 22 §7): the file is restored into a temporary
+-- database "sqsolve_export_<id>" that lives for a while and is deleted on close or expiry.
 CREATE TABLE export_workspaces (
   id         TEXT PRIMARY KEY,
   backup_id  TEXT NOT NULL REFERENCES backups(id),

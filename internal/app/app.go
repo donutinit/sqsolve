@@ -39,7 +39,7 @@ import (
 // Build information, set by main.
 var (
 	Version = "dev"
-	Commit  = "desconocido"
+	Commit  = "unknown"
 )
 
 // App holds the services.
@@ -72,11 +72,11 @@ type App struct {
 func ReadMasterKey(c *config.Config) ([]byte, error) {
 	s, err := secrets.ReadFile(masterKeyPath(c))
 	if err != nil {
-		return nil, fmt.Errorf("SQS-C010 no se pudo leer la clave maestra (¿corriste sqsolve init?): %w", err)
+		return nil, fmt.Errorf("SQS-C010 could not read the master key (did you run sqsolve init?): %w", err)
 	}
 	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s.Reveal()))
 	if err != nil {
-		return nil, fmt.Errorf("SQS-C011 la clave maestra no es base64 válido: %w", err)
+		return nil, fmt.Errorf("SQS-C011 the master key is not valid base64: %w", err)
 	}
 	return key, nil
 }
@@ -86,7 +86,7 @@ func Open(ctx context.Context, c *config.Config, log *slog.Logger) (*App, error)
 	a := &App{Cfg: c, Log: log, Started: time.Now()}
 	idb, err := os.ReadFile(instanceIDPath(c))
 	if err != nil {
-		return nil, fmt.Errorf("SQS-C052 falta %s: corre sqsolve init (el servicio sqsolve-init del compose): %w", instanceIDPath(c), err)
+		return nil, fmt.Errorf("SQS-C052 %s is missing: run sqsolve init (the sqsolve-init service of the compose file): %w", instanceIDPath(c), err)
 	}
 	a.InstanceID = strings.TrimSpace(string(idb))
 	key, err := ReadMasterKey(c)
@@ -98,11 +98,11 @@ func Open(ctx context.Context, c *config.Config, log *slog.Logger) (*App, error)
 	}
 	adminPass, err := secrets.ReadFile(adminPassPath(c))
 	if err != nil {
-		return nil, fmt.Errorf("SQS-C013 contraseña de sqsolve_admin: %w", err)
+		return nil, fmt.Errorf("SQS-C013 sqsolve_admin password: %w", err)
 	}
 	superPass, err := secrets.ReadFile(c.SuperuserPasswordFile())
 	if err != nil {
-		return nil, fmt.Errorf("SQS-C014 contraseña del superusuario: %w", err)
+		return nil, fmt.Errorf("SQS-C014 superuser password: %w", err)
 	}
 	if a.DB, err = store.Open(ctx, c.DBPath(), stateBackupDir(c)); err != nil {
 		return nil, err
@@ -185,7 +185,7 @@ func (a *App) Certificate() (*tls.Certificate, error) {
 	if c := a.cert.Load(); c != nil {
 		return c, nil
 	}
-	return nil, errors.New("sin certificado")
+	return nil, errors.New("no certificate")
 }
 
 // LoadPanelCert loads (or creates) the panel certificate.
@@ -211,7 +211,7 @@ func (a *App) LoadPanelCert() error {
 	}
 	pair, err := tls.LoadX509KeyPair(crt, key)
 	if err != nil {
-		return fmt.Errorf("SQS-C020 certificado del panel: %w", err)
+		return fmt.Errorf("SQS-C020 panel certificate: %w", err)
 	}
 	a.cert.Store(&pair)
 	return nil
@@ -222,7 +222,7 @@ func (a *App) LoadPanelCert() error {
 func (a *App) InstallPanelCert(certPEM, keyPEM []byte) error {
 	pair, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return fmt.Errorf("SQS-C021 el certificado y la llave no corresponden: %w", err)
+		return fmt.Errorf("SQS-C021 the certificate and the key do not match: %w", err)
 	}
 	if err := fsx.WriteFileAtomic(panelKeyPath(a.Cfg), keyPEM, 0o600); err != nil {
 		return err
@@ -248,7 +248,7 @@ func (a *App) Background(ctx context.Context) {
 			if err == nil {
 				break
 			}
-			a.Log.Warn("esperando a PostgreSQL", "err", err)
+			a.Log.Warn("waiting for PostgreSQL", "err", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -260,13 +260,13 @@ func (a *App) Background(ctx context.Context) {
 		}
 		interrupted, err := a.Jobs.MarkInterrupted(ctx)
 		if err != nil {
-			a.Log.Error("marcando tareas interrumpidas", "err", err)
+			a.Log.Error("marking interrupted jobs", "err", err)
 		}
 		for _, n := range a.Svc.Reconcile(ctx, interrupted) {
-			a.Log.Info("reconciliación", "nota", n)
+			a.Log.Info("reconciliation", "note", n)
 		}
 		if err := a.Svc.EnsureSystemSchedules(ctx); err != nil {
-			a.Log.Error("programaciones del sistema", "err", err)
+			a.Log.Error("system schedules", "err", err)
 		}
 		a.pgReady.Store(true)
 		a.Jobs.Start(ctx)
@@ -296,7 +296,7 @@ func (a *App) Background(ctx context.Context) {
 				}
 			}
 		}()
-		a.Log.Info("sqsolve listo", "version", Version)
+		a.Log.Info("sqsolve ready", "version", Version)
 	}()
 }
 
@@ -321,8 +321,8 @@ func (a *App) PrepareInstallCode(ctx context.Context) {
 	a.installCode = code
 	a.installMu.Unlock()
 	banner := strings.Repeat("=", 64)
-	fmt.Fprintf(os.Stderr, "\n%s\n  sqsolve: abre el panel y usa este código de instalación:\n\n      %s\n\n  (solo sirve hasta crear el primer administrador)\n%s\n\n", banner, code, banner)
-	a.Log.Info("código de instalación disponible en la salida del contenedor")
+	fmt.Fprintf(os.Stderr, "\n%s\n  sqsolve: open the panel and use this installation code:\n\n      %s\n\n  (it only works until the first administrator is created)\n%s\n\n", banner, code, banner)
+	a.Log.Info("installation code available in the container output")
 }
 
 // Shutdown stops background work gracefully.
@@ -338,11 +338,11 @@ func (a *App) RecordStart(ctx context.Context) {
 	var last string
 	a.DB.GetSetting(ctx, "last_version", &last)
 	if last != "" && last != Version {
-		a.Events.Emit(ctx, events.Event{Type: events.SystemUpgraded, Message: fmt.Sprintf("sqsolve se actualizó de %s a %s", last, Version)})
+		a.Events.Emit(ctx, events.Event{Type: events.SystemUpgraded, Message: fmt.Sprintf("sqsolve was upgraded from %s to %s", last, Version)})
 		a.Audit.Record(ctx, audit.System, "system.upgrade", "system", "", audit.OK, map[string]any{"from": last, "to": Version})
 	}
-	a.DB.SetSetting(ctx, "last_version", Version, "sistema")
-	a.Events.Emit(ctx, events.Event{Type: events.SystemStarted, Message: "sqsolve " + Version + " arrancó"})
+	a.DB.SetSetting(ctx, "last_version", Version, "system")
+	a.Events.Emit(ctx, events.Event{Type: events.SystemStarted, Message: "sqsolve " + Version + " started"})
 }
 
 // HTTPServer builds the server around handler.

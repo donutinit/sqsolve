@@ -60,26 +60,26 @@ func TestLibraryRoleLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cl.CreateLibraryRole(ctx, "cliente_x", pg.RoleOptions{Verifier: v, CreateDB: true, Login: true, ConnLimit: -1}); err != nil {
+	if err := cl.CreateLibraryRole(ctx, "client_x", pg.RoleOptions{Verifier: v, CreateDB: true, Login: true, ConnLimit: -1}); err != nil {
 		t.Fatal(err)
 	}
-	writeHBA(t, c, cl, pgconf.HBALibrary{DB: "cliente_x", Roles: []string{"cliente_x"}})
+	writeHBA(t, c, cl, pgconf.HBALibrary{DB: "client_x", Roles: []string{"client_x"}})
 
 	// The role logs in over TCP with the plain password: the verifier is right.
-	conn, err := c.ConnectTCP(ctx, "cliente_x", pass, "postgres")
+	conn, err := c.ConnectTCP(ctx, "client_x", pass, "postgres")
 	if err != nil {
 		t.Fatalf("library role login: %v\n%s", err, c.Log())
 	}
 	// Like Resolve's "Create": the role creates its database and tables.
-	if _, err := conn.Exec(ctx, `CREATE DATABASE cliente_x`); err != nil {
+	if _, err := conn.Exec(ctx, `CREATE DATABASE client_x`); err != nil {
 		t.Fatal(err)
 	}
 	conn.Close(ctx)
-	conn, err = c.ConnectTCP(ctx, "cliente_x", pass, "cliente_x")
+	conn, err = c.ConnectTCP(ctx, "client_x", pass, "client_x")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conn.Exec(ctx, `CREATE TABLE proyectos (id serial primary key, nombre text); INSERT INTO proyectos(nombre) VALUES ('a'), ('b')`); err != nil {
+	if _, err := conn.Exec(ctx, `CREATE TABLE projects (id serial primary key, name text); INSERT INTO projects(name) VALUES ('a'), ('b')`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -92,7 +92,7 @@ func TestLibraryRoleLifecycle(t *testing.T) {
 	}
 
 	// sqsolve_admin sees and fingerprints the library through inheritance.
-	ac, err := cl.ConnectDB(ctx, "cliente_x")
+	ac, err := cl.ConnectDB(ctx, "client_x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,54 +102,54 @@ func TestLibraryRoleLifecycle(t *testing.T) {
 	}
 	tables, _, _ := pg.PublicTables(ctx, ac)
 	counts, err := pg.CountRows(ctx, ac, tables, true)
-	if err != nil || counts["proyectos"] != 2 {
+	if err != nil || counts["projects"] != 2 {
 		t.Fatalf("counts %v %v", counts, err)
 	}
 	ac.Close(ctx)
 
-	sessions, err := cl.Sessions(ctx, "cliente_x")
-	if err != nil || len(sessions) != 1 || sessions[0].User != "cliente_x" || sessions[0].ClientAddr != "127.0.0.1" {
+	sessions, err := cl.Sessions(ctx, "client_x")
+	if err != nil || len(sessions) != 1 || sessions[0].User != "client_x" || sessions[0].ClientAddr != "127.0.0.1" {
 		t.Fatalf("sessions %+v %v", sessions, err)
 	}
-	if err := cl.SetRoleCreateDB(ctx, "cliente_x", false); err != nil {
+	if err := cl.SetRoleCreateDB(ctx, "client_x", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := cl.SecureDatabase(ctx, "cliente_x", []string{"cliente_x"}); err != nil {
+	if err := cl.SecureDatabase(ctx, "client_x", []string{"client_x"}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Maintenance: block and terminate.
-	if err := cl.SetAllowConnections(ctx, "cliente_x", false); err != nil {
+	if err := cl.SetAllowConnections(ctx, "client_x", false); err != nil {
 		t.Fatal(err)
 	}
-	n, err := cl.TerminateAll(ctx, "cliente_x")
+	n, err := cl.TerminateAll(ctx, "client_x")
 	if err != nil || n != 1 {
 		t.Fatalf("terminate %d %v", n, err)
 	}
 	conn.Close(ctx)
-	if _, err := c.ConnectTCP(ctx, "cliente_x", pass, "cliente_x"); err == nil {
+	if _, err := c.ConnectTCP(ctx, "client_x", pass, "client_x"); err == nil {
 		t.Fatal("connection allowed in maintenance")
 	}
 	// Rename as sqsolve_admin (owner through membership + CREATEDB).
-	if err := cl.RenameDatabase(ctx, "cliente_x", "cliente_x__prev_202601010000"); err != nil {
+	if err := cl.RenameDatabase(ctx, "client_x", "client_x__prev_202601010000"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cl.RenameDatabase(ctx, "cliente_x__prev_202601010000", "cliente_x"); err != nil {
+	if err := cl.RenameDatabase(ctx, "client_x__prev_202601010000", "client_x"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cl.SetAllowConnections(ctx, "cliente_x", true); err != nil {
+	if err := cl.SetAllowConnections(ctx, "client_x", true); err != nil {
 		t.Fatal(err)
 	}
 	// Rotation.
 	pass2 := secrets.GeneratePassword(24)
 	v2, _ := pg.ScramVerifier(pass2)
-	if err := cl.SetRolePassword(ctx, "cliente_x", v2); err != nil {
+	if err := cl.SetRolePassword(ctx, "client_x", v2); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.ConnectTCP(ctx, "cliente_x", pass, "cliente_x"); err == nil {
+	if _, err := c.ConnectTCP(ctx, "client_x", pass, "client_x"); err == nil {
 		t.Fatal("old password still works")
 	}
-	conn, err = c.ConnectTCP(ctx, "cliente_x", pass2, "cliente_x")
+	conn, err = c.ConnectTCP(ctx, "client_x", pass2, "client_x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,17 +158,17 @@ func TestLibraryRoleLifecycle(t *testing.T) {
 	// Another library cannot reach this one.
 	other := secrets.GeneratePassword(24)
 	vo, _ := pg.ScramVerifier(other)
-	cl.CreateLibraryRole(ctx, "otra", pg.RoleOptions{Verifier: vo, Login: true, ConnLimit: -1})
-	writeHBA(t, c, cl, pgconf.HBALibrary{DB: "cliente_x", Roles: []string{"cliente_x"}}, pgconf.HBALibrary{DB: "otra", Roles: []string{"otra"}})
-	if _, err := c.ConnectTCP(ctx, "otra", other, "cliente_x"); err == nil {
-		t.Fatal("other library role reached cliente_x")
+	cl.CreateLibraryRole(ctx, "other_role", pg.RoleOptions{Verifier: vo, Login: true, ConnLimit: -1})
+	writeHBA(t, c, cl, pgconf.HBALibrary{DB: "client_x", Roles: []string{"client_x"}}, pgconf.HBALibrary{DB: "other_role", Roles: []string{"other_role"}})
+	if _, err := c.ConnectTCP(ctx, "other_role", other, "client_x"); err == nil {
+		t.Fatal("other library role reached client_x")
 	}
 
 	// Drop everything.
-	if err := cl.DropDatabase(ctx, "cliente_x"); err != nil {
+	if err := cl.DropDatabase(ctx, "client_x"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cl.DropRole(ctx, "cliente_x"); err != nil {
+	if err := cl.DropRole(ctx, "client_x"); err != nil {
 		t.Fatal(err)
 	}
 	info, err := cl.Server(ctx)

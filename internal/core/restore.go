@@ -34,7 +34,7 @@ func (s *Service) pgRestore(ctx context.Context, path, db, role string) error {
 	args = append(args, path)
 	_, err := s.Exec.Run(ctx, execx.Cmd{Name: "pg_restore", Args: args, Credential: s.PG.AdminCredential()})
 	if err != nil {
-		return fmt.Errorf("SQS-R010 pg_restore falló: %w", err)
+		return fmt.Errorf("SQS-R010 pg_restore failed: %w", err)
 	}
 	return nil
 }
@@ -51,10 +51,10 @@ func (s *Service) compareWithManifest(ctx context.Context, db string, m *Manifes
 		return "", err
 	}
 	if m.Schema.Fingerprint != "" && fp.Hash != m.Schema.Fingerprint {
-		return "", fmt.Errorf("SQS-R011 la estructura restaurada no coincide con el manifiesto (%d tablas, esperadas %d)", fp.Tables, m.Schema.Tables)
+		return "", fmt.Errorf("SQS-R011 the restored structure does not match the manifest (%d tables, expected %d)", fp.Tables, m.Schema.Tables)
 	}
 	if len(m.RowCounts) == 0 {
-		return "Estructura correcta; el respaldo no trae conteos de filas", nil
+		return "Structure OK; the backup has no row counts", nil
 	}
 	tables := make([]string, 0, len(m.RowCounts))
 	for t := range m.RowCounts {
@@ -70,16 +70,16 @@ func (s *Service) compareWithManifest(ctx context.Context, db string, m *Manifes
 	for _, t := range tables {
 		total += got[t]
 		if m.CountsExact && got[t] != m.RowCounts[t] {
-			diffs = append(diffs, fmt.Sprintf("%s: %d en lugar de %d", t, got[t], m.RowCounts[t]))
+			diffs = append(diffs, fmt.Sprintf("%s: %d instead of %d", t, got[t], m.RowCounts[t]))
 		}
 	}
 	if len(diffs) > 0 {
 		if len(diffs) > 5 {
 			diffs = append(diffs[:5], "...")
 		}
-		return "", fmt.Errorf("SQS-R012 los conteos no coinciden: %s", strings.Join(diffs, "; "))
+		return "", fmt.Errorf("SQS-R012 row counts do not match: %s", strings.Join(diffs, "; "))
 	}
-	return fmt.Sprintf("%d tablas y %d filas coinciden con el manifiesto", len(tables), total), nil
+	return fmt.Sprintf("%d tables and %d rows match the manifest", len(tables), total), nil
 }
 
 // VerifyParams of backup.verify.
@@ -102,7 +102,7 @@ func (s *Service) runVerify(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 		if b == nil {
-			r.Infof("La biblioteca no tiene respaldos que verificar")
+			r.Infof("The library has no backups to verify")
 			return nil
 		}
 		id = b.ID
@@ -116,7 +116,7 @@ func (s *Service) verifyL2(ctx context.Context, r *jobs.Run, id string) error {
 		return err
 	}
 	if b.Status != BackupOK {
-		return fmt.Errorf("SQS-B021 el respaldo no está disponible (%s)", b.Status)
+		return fmt.Errorf("SQS-B021 the backup is not available (%s)", b.Status)
 	}
 	l, _ := s.Library(ctx, b.LibraryID)
 	name := b.LibraryID
@@ -126,10 +126,10 @@ func (s *Service) verifyL2(ctx context.Context, r *jobs.Run, id string) error {
 	fail := func(cause error) error {
 		s.DB.ExecContext(context.WithoutCancel(ctx), `UPDATE backups SET verify_status = 'failed', verified_at = ?, verify_detail = ? WHERE id = ?`, store.NowT(), cause.Error(), id)
 		s.Events.Emit(ctx, events.Event{Type: events.BackupVerifyFailed, Severity: events.Error, LibraryID: b.LibraryID, JobID: r.Job.ID,
-			Message: fmt.Sprintf("Falló la verificación del respaldo de %q del %s: %s", name, b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"), shortErr(cause))})
+			Message: fmt.Sprintf("Verification failed for the backup of %q from %s: %s", name, b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"), shortErr(cause))})
 		return cause
 	}
-	if err := r.Step("verificar_l1", func() error { return s.verifyL1(ctx, id) }); err != nil {
+	if err := r.Step("verify_l1", func() error { return s.verifyL1(ctx, id) }); err != nil {
 		return fail(err)
 	}
 	r.Progress(15)
@@ -139,7 +139,7 @@ func (s *Service) verifyL2(ctx context.Context, r *jobs.Run, id string) error {
 	}
 	db := pg.VerifyDB(ulid.Short(r.Job.ID))
 	defer s.PG.DropDatabase(context.WithoutCancel(ctx), db)
-	err = r.Step("espacio", func() error {
+	err = r.Step("space", func() error {
 		sp, err := fsx.Statfs(s.Cfg.PGDir)
 		if err != nil {
 			return nil // cannot measure: try anyway
@@ -149,7 +149,7 @@ func (s *Service) verifyL2(ctx context.Context, r *jobs.Run, id string) error {
 			need = b.SizeBytes * 4
 		}
 		if uint64(need) > sp.Free {
-			return fmt.Errorf("SQS-B022 no hay espacio en el volumen de la base para la restauración de prueba (%s necesarios)", HumanBytes(need))
+			return fmt.Errorf("SQS-B022 not enough space on the database volume for the test restore (%s needed)", HumanBytes(need))
 		}
 		return nil
 	})
@@ -157,7 +157,7 @@ func (s *Service) verifyL2(ctx context.Context, r *jobs.Run, id string) error {
 		return fail(err)
 	}
 	var detail string
-	err = r.Step("restaurar_prueba", func() error {
+	err = r.Step("test_restore", func() error {
 		if err := s.PG.CreateDatabase(ctx, db, pg.AdminRole); err != nil {
 			return err
 		}
@@ -168,7 +168,7 @@ func (s *Service) verifyL2(ctx context.Context, r *jobs.Run, id string) error {
 		return fail(err)
 	}
 	r.Progress(70)
-	err = r.Step("comparar", func() error {
+	err = r.Step("compare", func() error {
 		detail, err = s.compareWithManifest(ctx, db, m)
 		return err
 	})
@@ -182,7 +182,7 @@ func (s *Service) verifyL2(ctx context.Context, r *jobs.Run, id string) error {
 	s.DB.ExecContext(ctx, `UPDATE backups SET verify_status = ?, verify_level = 2, verified_at = ?, verify_detail = ? WHERE id = ?`, status, store.NowT(), detail, id)
 	r.Infof("%s", detail)
 	s.Events.Emit(ctx, events.Event{Type: events.BackupVerified, LibraryID: b.LibraryID, JobID: r.Job.ID,
-		Message: fmt.Sprintf("Restauración de prueba correcta del respaldo de %q: %s", name, detail)})
+		Message: fmt.Sprintf("Test restore OK for the backup of %q: %s", name, detail)})
 	return nil
 }
 
@@ -201,7 +201,7 @@ func (s *Service) RestoreAsNew(ctx context.Context, by audit.Actor, backupID, sl
 		return nil, nil, err
 	}
 	if !b.Usable() {
-		return nil, nil, errors.New("SQS-R001 el respaldo no se puede restaurar (falló o se borró)")
+		return nil, nil, errors.New("SQS-R001 the backup cannot be restored (it failed or was deleted)")
 	}
 	name, err := ValidateDisplayName(displayName)
 	if err != nil {
@@ -252,15 +252,15 @@ func (s *Service) runRestoreNew(ctx context.Context, r *jobs.Run) error {
 			s.PG.DropRole(c, l.OwnerRole)
 		}
 		s.DB.ExecContext(c, `UPDATE library_credentials SET revoked_at = ? WHERE library_id = ?`, store.NowT(), l.ID)
-		s.DB.ExecContext(c, `UPDATE libraries SET state = 'purged', purged_at = ?, notes = ? WHERE id = ?`, store.NowT(), "[restauración fallida] "+cause.Error(), l.ID)
+		s.DB.ExecContext(c, `UPDATE libraries SET state = 'purged', purged_at = ?, notes = ? WHERE id = ?`, store.NowT(), "[restore failed] "+cause.Error(), l.ID)
 		s.Sched.Delete(c, ScheduleBackup, l.ID)
 		s.SyncHBA(c)
 		s.Events.Emit(c, events.Event{Type: events.RestoreFailed, Severity: events.Error, LibraryID: l.ID, JobID: r.Job.ID,
-			Message: fmt.Sprintf("Falló la restauración en la biblioteca nueva %q: %s", l.DisplayName, shortErr(cause))})
+			Message: fmt.Sprintf("Restore into the new library %q failed: %s", l.DisplayName, shortErr(cause))})
 		return cause
 	}
 	var m *Manifest
-	if err := r.Step("verificar_respaldo", func() error {
+	if err := r.Step("verify_backup", func() error {
 		if err := s.verifyL1(ctx, b.ID); err != nil {
 			return err
 		}
@@ -270,7 +270,7 @@ func (s *Service) runRestoreNew(ctx context.Context, r *jobs.Run) error {
 		return rollback(err)
 	}
 	r.Progress(10)
-	if err := r.Step("crear_rol", func() error {
+	if err := r.Step("create_role", func() error {
 		if err := s.SlugAvailableIgnoringCatalog(ctx, l.Slug); err != nil {
 			return err
 		}
@@ -288,7 +288,7 @@ func (s *Service) runRestoreNew(ctx context.Context, r *jobs.Run) error {
 	}); err != nil {
 		return rollback(err)
 	}
-	if err := r.Step("restaurar", func() error {
+	if err := r.Step("restore", func() error {
 		if err := s.PG.CreateDatabase(ctx, l.DBName, l.OwnerRole); err != nil {
 			return err
 		}
@@ -300,7 +300,7 @@ func (s *Service) runRestoreNew(ctx context.Context, r *jobs.Run) error {
 		return rollback(err)
 	}
 	r.Progress(75)
-	if err := r.Step("comparar", func() error {
+	if err := r.Step("compare", func() error {
 		detail, err := s.compareWithManifest(ctx, l.DBName, m)
 		if err == nil {
 			r.Infof("%s", detail)
@@ -309,7 +309,7 @@ func (s *Service) runRestoreNew(ctx context.Context, r *jobs.Run) error {
 	}); err != nil {
 		return rollback(err)
 	}
-	if err := r.Step("activar", func() error {
+	if err := r.Step("activate", func() error {
 		if err := s.PG.SecureDatabase(ctx, l.DBName, []string{l.OwnerRole}); err != nil {
 			return err
 		}
@@ -325,7 +325,7 @@ func (s *Service) runRestoreNew(ctx context.Context, r *jobs.Run) error {
 		return rollback(err)
 	}
 	s.Events.Emit(ctx, events.Event{Type: events.RestoreSucceeded, LibraryID: l.ID, JobID: r.Job.ID,
-		Message: fmt.Sprintf("Se restauró el respaldo del %s en la biblioteca nueva %q", b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"), l.DisplayName)})
+		Message: fmt.Sprintf("Restored the backup from %s into the new library %q", b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"), l.DisplayName)})
 	r.SetResult(map[string]string{"library_id": l.ID})
 	s.Jobs.Enqueue(ctx, JobBackupCreate, l.ID, BackupParams{Kind: KindManual}, audit.System, jobs.Unique())
 	return nil
@@ -337,12 +337,12 @@ func (s *Service) SlugAvailableIgnoringCatalog(ctx context.Context, slug string)
 	if db, err := s.PG.Database(ctx, slug); err != nil {
 		return err
 	} else if db != nil {
-		return fmt.Errorf("SQS-L005 ya existe una base de datos %q en el servidor", slug)
+		return fmt.Errorf("SQS-L005 a database %q already exists on the server", slug)
 	}
 	if ok, err := s.PG.RoleExists(ctx, slug); err != nil {
 		return err
 	} else if ok {
-		return fmt.Errorf("SQS-L006 ya existe un rol %q en el servidor", slug)
+		return fmt.Errorf("SQS-L006 a role %q already exists on the server", slug)
 	}
 	return nil
 }
@@ -354,17 +354,17 @@ func (s *Service) RestoreReplace(ctx context.Context, by audit.Actor, backupID, 
 		return nil, err
 	}
 	if !b.Usable() {
-		return nil, errors.New("SQS-R001 el respaldo no se puede restaurar (falló o se borró)")
+		return nil, errors.New("SQS-R001 the backup cannot be restored (it failed or was deleted)")
 	}
 	l, err := s.Library(ctx, b.LibraryID)
 	if err != nil {
 		return nil, err
 	}
 	if confirm != l.Slug {
-		return nil, errors.New("SQS-R002 escribe el identificador de la biblioteca para confirmar")
+		return nil, errors.New("SQS-R002 type the library identifier to confirm")
 	}
 	if l.State != StateActive && l.State != StateMaintenance {
-		return nil, fmt.Errorf("SQS-R003 no se puede reemplazar una biblioteca en estado %s", l.State.Label())
+		return nil, fmt.Errorf("SQS-R003 cannot replace a library in state %s", l.State.Label())
 	}
 	s.Audit.Record(ctx, by, "restore.replace", "library", l.ID, audit.OK, map[string]any{"backup_id": backupID, "terminate_sessions": terminate})
 	return s.Jobs.Enqueue(ctx, JobRestoreReplace, l.ID, RestoreParams{BackupID: backupID, TerminateSessions: terminate}, by, jobs.Priority(100))
@@ -401,11 +401,11 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 		}
 		s.setState(c, l.ID, stateBefore)
 		s.Events.Emit(c, events.Event{Type: events.RestoreFailed, Severity: events.Error, LibraryID: l.ID, JobID: r.Job.ID,
-			Message: fmt.Sprintf("No se reemplazó %q: %s. La biblioteca activa no se modificó", l.DisplayName, shortErr(cause))})
+			Message: fmt.Sprintf("%q was not replaced: %s. The active library was not modified", l.DisplayName, shortErr(cause))})
 		return cause
 	}
 	var m *Manifest
-	if err := r.Step("comprobar", func() error {
+	if err := r.Step("check", func() error {
 		if err := s.verifyL1(ctx, b.ID); err != nil {
 			return err
 		}
@@ -414,16 +414,16 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 		if l.Fingerprint != "" && m.Schema.Fingerprint != "" && l.Fingerprint != m.Schema.Fingerprint {
-			r.Warnf("El respaldo tiene otra estructura que la biblioteca actual (otra versión de Resolve)")
+			r.Warnf("The backup has a different structure than the current library (another Resolve version)")
 		}
 		return nil
 	}); err != nil {
 		return cleanup(err)
 	}
 	s.Events.Emit(ctx, events.Event{Type: events.RestoreStarted, LibraryID: l.ID, JobID: r.Job.ID,
-		Message: fmt.Sprintf("Reemplazando %q con el respaldo del %s", l.DisplayName, b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"))})
+		Message: fmt.Sprintf("Replacing %q with the backup from %s", l.DisplayName, b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"))})
 	var pre *Backup
-	if err := r.Step("respaldo_previo", func() error {
+	if err := r.Step("pre_restore_backup", func() error {
 		var err error
 		pre, err = s.createBackup(ctx, nil, l, KindPreRestore, "")
 		return err
@@ -431,7 +431,7 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 		return cleanup(err)
 	}
 	r.Progress(30)
-	if err := r.Step("restaurar", func() error {
+	if err := r.Step("restore", func() error {
 		r.Journal(swapJournal{Live: l.DBName, Restored: restoreDB, Phase: "restoring", State: string(stateBefore)})
 		if err := s.PG.CreateDatabase(ctx, restoreDB, l.OwnerRole); err != nil {
 			return err
@@ -441,7 +441,7 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 		return cleanup(err)
 	}
 	r.Progress(60)
-	if err := r.Step("comparar", func() error {
+	if err := r.Step("compare", func() error {
 		detail, err := s.compareWithManifest(ctx, restoreDB, m)
 		if err == nil {
 			r.Infof("%s", detail)
@@ -450,7 +450,7 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 	}); err != nil {
 		return cleanup(err)
 	}
-	if err := r.Step("esperar_sesiones", func() error {
+	if err := r.Step("wait_for_sessions", func() error {
 		if p.TerminateSessions {
 			return nil
 		}
@@ -464,9 +464,9 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 				return nil
 			}
 			if s.now().After(deadline) {
-				return fmt.Errorf("SQS-R020 siguen %d sesiones abiertas en la biblioteca; pide que cierren Resolve o marca cerrar sesiones", len(ss))
+				return fmt.Errorf("SQS-R020 %d sessions are still open on the library; ask users to close Resolve or choose to terminate sessions", len(ss))
 			}
-			r.Infof("Esperando a que se cierren %d sesiones", len(ss))
+			r.Infof("Waiting for %d sessions to close", len(ss))
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -481,7 +481,7 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 		prev = pg.PrevDB(l.Slug, s.now().Add(time.Minute))
 	}
 	j := swapJournal{Live: l.DBName, Prev: prev, Restored: restoreDB, State: string(stateBefore)}
-	if err := r.Step("bloquear", func() error {
+	if err := r.Step("lock", func() error {
 		s.setState(ctx, l.ID, StateRestoring)
 		if err := s.PG.SetAllowConnections(ctx, l.DBName, false); err != nil {
 			return err
@@ -489,14 +489,14 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 		blocked = true
 		n, err := s.PG.TerminateAll(ctx, l.DBName)
 		if n > 0 {
-			r.Warnf("Se cerraron %d sesiones", n)
+			r.Warnf("Terminated %d sessions", n)
 		}
 		return err
 	}); err != nil {
 		return cleanup(err)
 	}
 	// From here on the journal drives recovery; errors no longer clean up blindly.
-	err = r.Step("intercambiar", func() error {
+	err = r.Step("swap", func() error {
 		j.Phase = "rename_live"
 		r.Journal(j)
 		if err := s.PG.RenameDatabase(ctx, l.DBName, prev); err != nil {
@@ -507,7 +507,7 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 		if err := s.PG.RenameDatabase(ctx, restoreDB, l.DBName); err != nil {
 			// Put the live database back.
 			if err2 := s.PG.RenameDatabase(context.WithoutCancel(ctx), prev, l.DBName); err2 != nil {
-				return fmt.Errorf("%v; además no se pudo devolver la base original: %v", err, err2)
+				return fmt.Errorf("%v; additionally the original database could not be put back: %v", err, err2)
 			}
 			return err
 		}
@@ -517,14 +517,14 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return cleanup(err)
 	}
-	if err := r.Step("reabrir", func() error {
+	if err := r.Step("reopen", func() error {
 		return s.reopenAfterSwap(ctx, l, prev, pre.ID, stateBefore, m.Schema.Fingerprint, m.Schema.Tables)
 	}); err != nil {
 		return err
 	}
 	s.dropSupersededPrev(ctx, r, l, prev)
 	s.Events.Emit(ctx, events.Event{Type: events.RestoreSucceeded, LibraryID: l.ID, JobID: r.Job.ID,
-		Message: fmt.Sprintf("Se reemplazó %q con el respaldo del %s. El estado anterior se conserva %d días para revertir", l.DisplayName,
+		Message: fmt.Sprintf("Replaced %q with the backup from %s. The previous state is kept for %d days so you can revert", l.DisplayName,
 			b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"), s.Settings(ctx).PrevDays)})
 	return nil
 }
@@ -539,14 +539,14 @@ func (s *Service) dropSupersededPrev(ctx context.Context, r *jobs.Run, before *L
 		return
 	}
 	if b, err := s.Backup(ctx, before.PrevBackupID); err != nil || !b.Usable() {
-		r.Warnf("Se conserva %s: no se encontró el respaldo que lo cubre; se borrará al vencer", old)
+		r.Warnf("Keeping %s: the backup that covers it was not found; it will be deleted when it expires", old)
 		return
 	}
 	if err := s.PG.DropDatabase(ctx, old); err != nil {
-		r.Warnf("No se pudo borrar el estado anterior %s: %v", old, err)
+		r.Warnf("Could not delete the previous state %s: %v", old, err)
 		return
 	}
-	r.Infof("Se borró %s, el estado que conservaba la restauración anterior", old)
+	r.Infof("Deleted %s, the state kept by the previous restore", old)
 }
 
 func (s *Service) reopenAfterSwap(ctx context.Context, l *Library, prev, preBackupID string, stateBefore State, fp string, tables int) error {
@@ -580,10 +580,10 @@ func (s *Service) Revert(ctx context.Context, by audit.Actor, libraryID, confirm
 		return nil, err
 	}
 	if confirm != l.Slug {
-		return nil, errors.New("SQS-R002 escribe el identificador de la biblioteca para confirmar")
+		return nil, errors.New("SQS-R002 type the library identifier to confirm")
 	}
 	if l.PrevDB == "" {
-		return nil, errors.New("SQS-R030 no hay un estado anterior que recuperar")
+		return nil, errors.New("SQS-R030 there is no previous state to recover")
 	}
 	s.Audit.Record(ctx, by, "restore.revert", "library", l.ID, audit.OK, map[string]any{"prev": l.PrevDB})
 	return s.Jobs.Enqueue(ctx, JobRestoreRevert, l.ID, RestoreParams{TerminateSessions: true}, by, jobs.Priority(100))
@@ -595,14 +595,14 @@ func (s *Service) runRevert(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	if l.PrevDB == "" {
-		return errors.New("SQS-R030 no hay un estado anterior que recuperar")
+		return errors.New("SQS-R030 there is no previous state to recover")
 	}
 	if db, err := s.PG.Database(ctx, l.PrevDB); err != nil || db == nil {
-		return fmt.Errorf("SQS-R031 ya no existe la base del estado anterior (%s)", l.PrevDB)
+		return fmt.Errorf("SQS-R031 the previous-state database no longer exists (%s)", l.PrevDB)
 	}
 	stateBefore := l.State
 	var pre *Backup
-	if err := r.Step("respaldo_previo", func() error {
+	if err := r.Step("pre_restore_backup", func() error {
 		var err error
 		pre, err = s.createBackup(ctx, nil, l, KindPreRestore, "")
 		return err
@@ -615,7 +615,7 @@ func (s *Service) runRevert(ctx context.Context, r *jobs.Run) error {
 		newPrev = pg.PrevDB(l.Slug, s.now().Add(time.Minute))
 	}
 	j := swapJournal{Live: l.DBName, Prev: newPrev, Restored: oldPrev, State: string(stateBefore)}
-	if err := r.Step("bloquear", func() error {
+	if err := r.Step("lock", func() error {
 		s.setState(ctx, l.ID, StateRestoring)
 		if err := s.PG.SetAllowConnections(ctx, l.DBName, false); err != nil {
 			return err
@@ -627,7 +627,7 @@ func (s *Service) runRevert(ctx context.Context, r *jobs.Run) error {
 		s.setState(context.WithoutCancel(ctx), l.ID, stateBefore)
 		return err
 	}
-	if err := r.Step("intercambiar", func() error {
+	if err := r.Step("swap", func() error {
 		j.Phase = "rename_live"
 		r.Journal(j)
 		if err := s.PG.RenameDatabase(ctx, l.DBName, newPrev); err != nil {
@@ -652,11 +652,11 @@ func (s *Service) runRevert(ctx context.Context, r *jobs.Run) error {
 		fp, _ = pg.SchemaFingerprint(ctx, conn)
 		conn.Close(context.Background())
 	}
-	if err := r.Step("reabrir", func() error { return s.reopenAfterSwap(ctx, l, newPrev, pre.ID, stateBefore, fp.Hash, fp.Tables) }); err != nil {
+	if err := r.Step("reopen", func() error { return s.reopenAfterSwap(ctx, l, newPrev, pre.ID, stateBefore, fp.Hash, fp.Tables) }); err != nil {
 		return err
 	}
 	s.Events.Emit(ctx, events.Event{Type: events.RestoreReverted, LibraryID: l.ID, JobID: r.Job.ID,
-		Message: fmt.Sprintf("Se revirtió %q al estado anterior a la última restauración", l.DisplayName)})
+		Message: fmt.Sprintf("Reverted %q to the state before the last restore", l.DisplayName)})
 	return nil
 }
 
@@ -692,7 +692,7 @@ func (s *Service) ImportCandidates() ([]os.FileInfo, error) {
 // Import enqueues the import of a file in _import into a library's catalog.
 func (s *Service) Import(ctx context.Context, by audit.Actor, libraryID, name string, deleteSource bool) (*jobs.Job, error) {
 	if name == "" || strings.ContainsAny(name, "/\\\x00") || name == "." || name == ".." {
-		return nil, errors.New("SQS-B050 nombre de archivo inválido")
+		return nil, errors.New("SQS-B050 invalid file name")
 	}
 	if _, err := s.Library(ctx, libraryID); err != nil {
 		return nil, err
@@ -713,10 +713,10 @@ func (s *Service) runImport(ctx context.Context, r *jobs.Run) error {
 	}
 	src := filepath.Join(s.ImportDir(), p.Path)
 	if ok, err := fsx.Within(s.ImportDir(), src); err != nil || !ok {
-		return errors.New("SQS-B051 el archivo está fuera de la carpeta de importación")
+		return errors.New("SQS-B051 the file is outside the import folder")
 	}
 	var info ArchiveInfo
-	if err := r.Step("leer", func() error {
+	if err := r.Step("read", func() error {
 		info, err = s.listArchive(ctx, src)
 		return err
 	}); err != nil {
@@ -727,7 +727,7 @@ func (s *Service) runImport(ctx context.Context, r *jobs.Run) error {
 	rel := filepath.Join("libraries", l.Slug, now.UTC().Format("2006"), now.UTC().Format("01"), fmt.Sprintf("%s_%s_%s.backup", l.Slug, now.UTC().Format("20060102T150405Z"), id))
 	abs := filepath.Join(s.Cfg.BackupDir, rel)
 	moved := false
-	err = r.Step("copiar", func() error {
+	err = r.Step("copy", func() error {
 		if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
 			return err
 		}
@@ -793,14 +793,14 @@ func (s *Service) runImport(ctx context.Context, r *jobs.Run) error {
 		archive_version, compression, counts_exact, resolve_version, source_db, started_at, finished_at, verify_status, verify_level, verified_at, verify_detail)
 		VALUES (?, ?, ?, 'imported', 'ok', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'l1_ok', 1, ?, ?)`,
 		id, l.ID, r.Job.ID, rel, size, sum, info.DumpedFrom, info.DumpedBy, info.ArchiveVersion, info.Compression, l.ResolveVersion, p.Path,
-		store.T(now), store.T(now), store.NowT(), "Importado: índice legible; sin conteos de filas")
+		store.T(now), store.T(now), store.NowT(), "Imported: readable index; no row counts")
 	if err != nil {
 		return undo(err)
 	}
 	if p.DeleteSource && !moved {
 		os.Remove(src)
 	}
-	r.Infof("Importado %s (%s, %s)", p.Path, HumanBytes(size), info.DumpedBy)
+	r.Infof("Imported %s (%s, %s)", p.Path, HumanBytes(size), info.DumpedBy)
 	r.SetResult(map[string]string{"backup_id": id})
 	return nil
 }
@@ -814,7 +814,7 @@ func (s *Service) Recreate(ctx context.Context, by audit.Actor, libraryID, backu
 		return nil, err
 	}
 	if l.State != StateMissing {
-		return nil, errors.New("SQS-R040 solo se recrean bibliotecas sin base en el servidor")
+		return nil, errors.New("SQS-R040 only libraries with no database on the server can be recreated")
 	}
 	if backupID == "" {
 		b, err := s.LatestVerified(ctx, l.ID)
@@ -822,7 +822,7 @@ func (s *Service) Recreate(ctx context.Context, by audit.Actor, libraryID, backu
 			return nil, err
 		}
 		if b == nil {
-			return nil, errors.New("SQS-R041 la biblioteca no tiene respaldos verificados")
+			return nil, errors.New("SQS-R041 the library has no verified backups")
 		}
 		backupID = b.ID
 	}
@@ -842,7 +842,7 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	var m *Manifest
-	if err := r.Step("verificar_respaldo", func() error {
+	if err := r.Step("verify_backup", func() error {
 		if err := s.verifyL1(ctx, b.ID); err != nil {
 			return err
 		}
@@ -885,16 +885,16 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 				s.PG.SetRoleDefaultRole(ctx, c.PGRole, l.DBName, l.OwnerRole)
 			}
 			if kept {
-				r.Infof("Rol %s recreado con su contraseña original", c.PGRole)
+				r.Infof("Role %s recreated with its original password", c.PGRole)
 			} else {
-				r.Warnf("Rol %s recreado con contraseña nueva (la clave maestra no coincide)", c.PGRole)
+				r.Warnf("Role %s recreated with a new password (the master key does not match)", c.PGRole)
 			}
 		}
 		return nil
 	}); err != nil {
 		return err
 	}
-	if err := r.Step("restaurar", func() error {
+	if err := r.Step("restore", func() error {
 		if err := s.PG.CreateDatabase(ctx, l.DBName, l.OwnerRole); err != nil {
 			return err
 		}
@@ -903,7 +903,7 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 		s.PG.DropDatabase(context.WithoutCancel(ctx), l.DBName)
 		return err
 	}
-	if err := r.Step("comparar", func() error {
+	if err := r.Step("compare", func() error {
 		detail, err := s.compareWithManifest(ctx, l.DBName, m)
 		if err == nil {
 			r.Infof("%s", detail)
@@ -913,7 +913,7 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 		s.PG.DropDatabase(context.WithoutCancel(ctx), l.DBName)
 		return err
 	}
-	if err := r.Step("activar", func() error {
+	if err := r.Step("activate", func() error {
 		roles, err := s.activeRoles(ctx, l.ID)
 		if err != nil {
 			return err
@@ -931,7 +931,7 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	s.Events.Emit(ctx, events.Event{Type: events.RestoreSucceeded, LibraryID: l.ID, JobID: r.Job.ID,
-		Message: fmt.Sprintf("Se recreó %q desde el respaldo del %s", l.DisplayName, b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"))})
+		Message: fmt.Sprintf("Recreated %q from the backup from %s", l.DisplayName, b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"))})
 	return nil
 }
 

@@ -7,7 +7,7 @@ ARG GO_IMAGE=golang:1.27-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec2
 ARG PG_IMAGE=postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
 
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build
-ARG TARGETOS TARGETARCH VERSION=dev COMMIT=desconocido SOURCE_DATE_EPOCH
+ARG TARGETOS TARGETARCH VERSION=dev COMMIT=unknown SOURCE_DATE_EPOCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -18,9 +18,9 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -buildvcs
       -o /out/sqsolve ./cmd/sqsolve
 
 FROM ${PG_IMAGE}
-ARG VERSION=dev COMMIT=desconocido
+ARG VERSION=dev COMMIT=unknown
 LABEL org.opencontainers.image.title="sqsolve" \
-      org.opencontainers.image.description="Servidor libre de bibliotecas de proyectos de DaVinci Resolve" \
+      org.opencontainers.image.description="Free server for DaVinci Resolve project libraries" \
       org.opencontainers.image.source="https://github.com/donutinit/sqsolve" \
       org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.version="${VERSION}" \

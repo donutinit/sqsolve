@@ -56,19 +56,19 @@ func TestParseModelRejects(t *testing.T) {
 		t.Fatalf("minimal model: %v", err)
 	}
 	cases := map[string]string{
-		"{":                 `{`,
-		"no tiene tabla":    `{"classes": {"A": {"fields": []}}}`,
-		"columna de id":     `{"classes": {"A": {"table": "A", "fields": []}}, "tables": {"A": {"V": "integer"}}}`,
-		"clase desconocida": strings.Replace(minimalModel, `["B"]`, `["Z"]`, 1),
-		"tipo desconocido":  strings.Replace(minimalModel, `"X": "obj"`, `"X": "weird"`, 1),
-		"no declara la clase hija": `{"classes": {"A": {"table": "A", "fields": ["X"], "kinds": {"X": "obj"}}},
+		"{":             `{`,
+		"has no table":  `{"classes": {"A": {"fields": []}}}`,
+		"id column":     `{"classes": {"A": {"table": "A", "fields": []}}, "tables": {"A": {"V": "integer"}}}`,
+		"unknown class": strings.Replace(minimalModel, `["B"]`, `["Z"]`, 1),
+		"unknown type":  strings.Replace(minimalModel, `"X": "obj"`, `"X": "weird"`, 1),
+		"does not declare the child class": `{"classes": {"A": {"table": "A", "fields": ["X"], "kinds": {"X": "obj"}}},
 			"tables": {"A": {"A_id": "uuid", "X": "uuid"}}}`,
-		"tabla desconocida":  strings.Replace(minimalModel, `"tables":`, `"assoc": {"A.X": "Nope"}, "tables":`, 1),
-		"referencia inversa": strings.Replace(minimalModel, `"tables":`, `"backref": {"A.X": {"table": "B", "column": "nope"}}, "tables":`, 1),
+		"unknown table":     strings.Replace(minimalModel, `"tables":`, `"assoc": {"A.X": "Nope"}, "tables":`, 1),
+		"reverse reference": strings.Replace(minimalModel, `"tables":`, `"backref": {"A.X": {"table": "B", "column": "nope"}}, "tables":`, 1),
 	}
 	for want, src := range cases {
 		_, err := ParseModel([]byte(src))
-		if err == nil || !strings.Contains(err.Error(), "modelo de exportación") || !strings.Contains(err.Error(), strings.TrimPrefix(want, "{")) {
+		if err == nil || !strings.Contains(err.Error(), "export model") || !strings.Contains(err.Error(), strings.TrimPrefix(want, "{")) {
 			t.Errorf("%s: %v", want, err)
 		}
 	}

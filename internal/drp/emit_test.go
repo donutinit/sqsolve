@@ -85,7 +85,7 @@ func TestEmitScalarsAndNestedObject(t *testing.T) {
 func TestEmitListsAndVectors(t *testing.T) {
 	m, g := testGraph(t)
 	g.add(&row{table: "SM_Project", id: "p1", class: "SM_Project", vals: map[string]any{
-		"ProjectName": "Prueba", "StreamIdVector": "{0,1}", "StreamCursorVector": "{1,1}", "GangPlayHeadVector": "{}",
+		"ProjectName": "Test", "StreamIdVector": "{0,1}", "StreamCursorVector": "{1,1}", "GangPlayHeadVector": "{}",
 		"UpToDate": true, "CurrentGroup": nil, "Folder": nil, "LockableBlobMap": "lb1",
 	}})
 	g.add(&row{table: "BtThumnail", id: "t1", class: "BtThumnail", vals: map[string]any{"ImgWidth": int32(240), "Buffer": []byte{0xff, 0xd8}}})
@@ -96,7 +96,7 @@ func TestEmitListsAndVectors(t *testing.T) {
 	g.add(&row{table: "BtLockableBlob", id: "b1", class: "Sm2MediaPoolLockableBlob", vals: map[string]any{"BlobOwner": "mp1", "DbSavedTime": int64(1)}})
 	g.backref[assocKey("BtLockableBlob", "BtLockableBlobMap_id", "lb1")] = []string{"b1"}
 
-	e := &emitter{m: m, g: g, projectName: "Prueba"}
+	e := &emitter{m: m, g: g, projectName: "Test"}
 	doc := render(t, e, "", "SM_Project", "p1")
 	expect(t, doc,
 		" <Thumbnails>\n  <Element>\n   <BtThumnail DbId=\"t1\">\n    <FieldsBlob/>\n    <ImgWidth>240</ImgWidth>\n    <ImgHeight/>\n    <Buffer>ffd8</Buffer>\n   </BtThumnail>\n  </Element>\n  <Element>\n   <BtThumnail DbId=\"t2\">",
@@ -128,14 +128,14 @@ func TestEmitOverrides(t *testing.T) {
 	g.add(&row{table: "SM_Config", id: "c1", class: "SM_Config", vals: map[string]any{"Name": "viejo"}})
 	g.add(&row{table: "Sm2MpMedia", id: "m1", class: "Sm2MpVideoClip", vals: map[string]any{"SlateTC": []byte("-68719476737"), "FieldsBlob": []byte("-1")}})
 
-	e := &emitter{m: m, g: g, projectName: "Prueba"}
+	e := &emitter{m: m, g: g, projectName: "Test"}
 	expect(t, render(t, e, "", "Sm2TiItem", "a1"),
 		" <RenderTextEnabled>false</RenderTextEnabled>\n <RenderTextGanged>false</RenderTextGanged>\n <RenderTextPrefixed>false</RenderTextPrefixed>\n",
 		" <MediaStartTime>13336.656666666666</MediaStartTime>\n")
 	video := render(t, e, "", "Sm2TiItem", "v1")
 	expect(t, video, " <RenderTextEnabled>true</RenderTextEnabled>\n", " <Thumbnail/>\n")
 	reject(t, video, "<BtThumnail")
-	expect(t, render(t, e, "", "SM_Config", "c1"), " <Name>Prueba.Cfg</Name>\n")
+	expect(t, render(t, e, "", "SM_Config", "c1"), " <Name>Test.Cfg</Name>\n")
 	e.projectName = ""
 	expect(t, render(t, e, "", "SM_Config", "c1"), " <Name>viejo</Name>\n")
 	media := render(t, e, "", "Sm2MpMedia", "m1")
@@ -189,7 +189,7 @@ func TestEmitMissingAndUnknown(t *testing.T) {
 	if _, err := e.document("", "Sm2MpMedia", "absent"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("absent root: %v", err)
 	}
-	g.add(&row{table: "Sm2MpMedia", id: "n1", vals: map[string]any{"Name": "sin DbType"}})
+	g.add(&row{table: "Sm2MpMedia", id: "n1", vals: map[string]any{"Name": "no DbType"}})
 	if _, err := e.document("", "Sm2MpMedia", "n1"); !errors.Is(err, ErrUnsupported) {
 		t.Errorf("row without class: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestEmitDepthLimit(t *testing.T) {
 	g.add(&row{table: "A", id: "a1", class: "A", vals: map[string]any{"Next": "a1"}})
 	e := &emitter{m: m, g: g}
 	_, err = e.document("", "A", "a1")
-	if err == nil || !strings.Contains(err.Error(), "SQS-E006") || !strings.Contains(err.Error(), "niveles") {
+	if err == nil || !strings.Contains(err.Error(), "SQS-E006") || !strings.Contains(err.Error(), "levels") {
 		t.Errorf("cycle: %v", err)
 	}
 	if e.depth != 0 {

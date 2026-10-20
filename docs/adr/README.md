@@ -1,30 +1,30 @@
-# Registro de decisiones de arquitectura
+# Architecture decision records
 
-Formato: contexto, decisión, alternativas, consecuencias. Estados: **Propuesto**, **Aceptado**,
-**Aceptado, pendiente de PoC** (la decisión se mantiene salvo que la PoC indicada la refute),
-**Reemplazado por NNNN**.
+Format: context, decision, alternatives, consequences. Statuses: **Proposed**, **Accepted**,
+**Accepted, pending PoC** (the decision stands unless the named PoC refutes it),
+**Superseded by NNNN**.
 
-| ADR | Decisión | Estado |
+| ADR | Decision | Status |
 |---|---|---|
-| [0001](0001-licencia.md) | AGPL-3.0-only para el código, CC BY-SA 4.0 para la documentación | Aceptado |
-| [0002](0002-topologia.md) | Dos contenedores (PostgreSQL oficial y sqsolve) más uno de inicialización, con Docker Compose | Aceptado |
-| [0003](0003-go.md) | Backend en Go, binario único | Aceptado |
-| [0004](0004-interfaz-servidor.md) | Interfaz renderizada en el servidor con formularios estándar, sin Node ni JavaScript de terceros | Aceptado (actualizado) |
-| [0005](0005-sqlite.md) | Estado del plano de control en SQLite | Aceptado |
-| [0006](0006-postgresql-18.md) | PostgreSQL 18 oficial con colación `builtin` | Aceptado, pendiente de PoC-01 y PoC-02 |
-| [0007](0007-caja-negra.md) | Las bibliotecas de Resolve son una caja negra | Aceptado; acotado por 0019 |
-| [0008](0008-roles.md) | Rol de control sin superusuario y un rol propietario por biblioteca | Aceptado, pendiente de PoC-01 |
-| [0009](0009-respaldos-logicos.md) | Respaldos lógicos por biblioteca con `pg_dump` custom y manifiesto | Aceptado, pendiente de PoC-04 |
-| [0010](0010-restauracion-intercambio.md) | Restaurar siempre en base nueva e intercambiar por renombre | Aceptado, pendiente de PoC-09 |
-| [0011](0011-hooks.md) | Sin hooks ejecutables en 1.0; webhooks; hooks en contenedor aislado en 1.1 | Aceptado |
-| [0012](0012-puerto-50059.md) | El servidor no publica el puerto 50059 | Aceptado, pendiente de PoC-07 |
-| [0013](0013-resolvedbkey.md) | `.resolvedbkey` como módulo experimental | Aceptado, pendiente de PoC-05 |
-| [0014](0014-secretos.md) | Secretos en archivos y cifrado de credenciales recuperables | Aceptado (ubicación según 0018) |
-| [0015](0015-acceso-remoto.md) | Acceso remoto solo por VPN; 5432 nunca a Internet | Aceptado |
-| [0016](0016-imagen-base.md) | Imagen de sqsolve basada en la imagen oficial de PostgreSQL | Aceptado |
-| [0017](0017-version-mayor-postgresql.md) | Versiones mayores de PostgreSQL por migración lógica a un clúster nuevo | Aceptado |
-| [0018](0018-tres-volumenes.md) | Tres volúmenes visibles: base de datos, aplicación y respaldos | Aceptado |
-| [0019](0019-exportacion-experimental.md) | Exportación experimental de proyectos (`.drp`) y grados (`.drx`) leyendo un conjunto fijo de tablas | Aceptado (experimental en 1.0) |
-| [0020](0020-identidad-visual.md) | Identidad visual "Nodo": símbolo, logotipo en trazos, paleta de marca solo en los puertos, íconos | Aceptado |
-| [0021](0021-seguridad-proporcional.md) | Seguridad proporcional a LAN y VPN: sin reautenticación, contraseñas de 8, sesiones largas, HTTPS obligatorio, bloqueo de cuenta con desbloqueo por CLI | Aceptado |
-| [0022](0022-respaldo-segun-actividad.md) | Respaldo según actividad: revisión cada N minutos y respaldo solo si la biblioteca cambió; un respaldo vigente no es atraso | Aceptado |
+| [0001](0001-license.md) | AGPL-3.0-only for the code, CC BY-SA 4.0 for the documentation | Accepted |
+| [0002](0002-topology.md) | Two containers (official PostgreSQL and sqsolve) plus an init one, with Docker Compose | Accepted |
+| [0003](0003-go.md) | Backend in Go, single binary | Accepted |
+| [0004](0004-server-rendered-ui.md) | Server-rendered UI with standard forms, no Node and no third-party JavaScript | Accepted (updated) |
+| [0005](0005-sqlite.md) | Control plane state in SQLite | Accepted |
+| [0006](0006-postgresql-18.md) | Official PostgreSQL 18 with `builtin` collation | Accepted, pending PoC-01 and PoC-02 |
+| [0007](0007-black-box.md) | Resolve libraries are a black box | Accepted; narrowed by 0019 |
+| [0008](0008-roles.md) | Control role without superuser and one owner role per library | Accepted, pending PoC-01 |
+| [0009](0009-logical-backups.md) | Logical backups per library with custom-format `pg_dump` and manifest | Accepted, pending PoC-04 |
+| [0010](0010-restore-by-swap.md) | Always restore into a new database and swap by rename | Accepted, pending PoC-09 |
+| [0011](0011-hooks.md) | No executable hooks in 1.0; webhooks; hooks in an isolated container in 1.1 | Accepted |
+| [0012](0012-port-50059.md) | The server does not publish port 50059 | Accepted, pending PoC-07 |
+| [0013](0013-resolvedbkey.md) | `.resolvedbkey` as an experimental module | Accepted, pending PoC-05 |
+| [0014](0014-secrets.md) | Secrets in files and encryption of recoverable credentials | Accepted (location per 0018) |
+| [0015](0015-remote-access.md) | Remote access only over VPN; 5432 never to the Internet | Accepted |
+| [0016](0016-base-image.md) | sqsolve image based on the official PostgreSQL image | Accepted |
+| [0017](0017-postgresql-major-version.md) | PostgreSQL major versions by logical migration to a new cluster | Accepted |
+| [0018](0018-three-volumes.md) | Three visible volumes: database, application and backups | Accepted |
+| [0019](0019-experimental-export.md) | Experimental export of projects (`.drp`) and grades (`.drx`) reading a fixed set of tables | Accepted (experimental in 1.0) |
+| [0020](0020-visual-identity.md) | "Node" visual identity: symbol, outlined wordmark, brand palette only in the ports, icons | Accepted |
+| [0021](0021-proportionate-security.md) | Security proportionate to LAN and VPN: no reauthentication, 8-character passwords, long sessions, mandatory HTTPS, account lock with CLI unlock | Accepted |
+| [0022](0022-activity-based-backups.md) | Activity-based backups: check every N minutes and back up only if the library changed; a current backup is not overdue | Accepted |

@@ -69,7 +69,7 @@ func TestTickEnqueuesAndMisfire(t *testing.T) {
 	jm := jobs.NewManager(db, ev, bus, log, 1, 1)
 	jm.Register(jobs.Spec{Type: "backup.create", Run: func(context.Context, *jobs.Run) error { return nil }})
 	s := New(db, jm, ev, log)
-	s.RegisterKind("backup", Kind{JobType: "backup.create", Jitter: true, Title: "respaldo"})
+	s.RegisterKind("backup", Kind{JobType: "backup.create", Jitter: true, Title: "backup"})
 	base := time.Date(2026, 10, 18, 1, 0, 0, 0, time.UTC)
 	s.Now = func() time.Time { return base }
 	if err := s.Upsert(ctx, "backup", "LIB1", "0 2 * * *", "UTC", true, time.Hour); err != nil {
@@ -116,7 +116,7 @@ func TestGateSkipsRunWithoutJob(t *testing.T) {
 	jm.Register(jobs.Spec{Type: "backup.create", Run: func(context.Context, *jobs.Run) error { return nil }})
 	s := New(db, jm, ev, log)
 	open := false
-	s.RegisterKind("backup", Kind{JobType: "backup.create", Title: "respaldo", Gate: func(context.Context, string) (bool, string) { return open, "sin cambios" }})
+	s.RegisterKind("backup", Kind{JobType: "backup.create", Title: "backup", Gate: func(context.Context, string) (bool, string) { return open, "no changes" }})
 	base := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
 	s.Now = func() time.Time { return base }
 	if err := s.Upsert(ctx, "backup", "LIB1", "*/15 * * * *", "UTC", true, 24*time.Hour); err != nil {

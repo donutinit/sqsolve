@@ -1,23 +1,23 @@
-# ADR 0006. Versión y configuración de PostgreSQL
+# ADR 0006. PostgreSQL version and configuration
 
-**Estado:** Aceptado, pendiente de PoC-01 (colación) y PoC-02 (versiones de Resolve).
+**Status:** Accepted, pending PoC-01 (collation) and PoC-02 (Resolve versions).
 
-**Contexto.** Resolve 18 a 20 se usaron con PostgreSQL 13, ya sin soporte. Resolve 21.1 incluye
-PostgreSQL 18 en Project Server y declara compatibilidad con bibliotecas en 13 o superior
-[01 §4]. PostgreSQL 18 tiene soporte hasta 2030-11-14.
+**Context.** Resolve 18 to 20 were used with PostgreSQL 13, now out of support. Resolve 21.1
+ships PostgreSQL 18 in Project Server and declares compatibility with libraries on 13 or later
+[01 §4]. PostgreSQL 18 is supported until 2030-11-14.
 
-**Decisión.** Imagen oficial `postgres:18.x-trixie` fijada por digest. Clúster con
-`--encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8`, sumas de verificación
-(por defecto en 18), SCRAM exclusivo.
+**Decision.** Official image `postgres:18.x-trixie` pinned by digest. Cluster with
+`--encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8`, checksums (default in
+18), SCRAM only.
 
-**Alternativas.**
-- PostgreSQL 13: compatible con todo lo anterior, pero sin parches de seguridad.
-- PostgreSQL 17: válido; se reserva como perfil alternativo si PoC-02 lo exige para 20.3.x.
-- Colación de la glibc (`en_US.UTF-8`): orden alfabético más "natural", pero una actualización de
-  la imagen base puede invalidar índices de texto.
+**Alternatives.**
+- PostgreSQL 13: compatible with everything before, but without security patches.
+- PostgreSQL 17: valid; reserved as an alternative profile if PoC-02 requires it for 20.3.x.
+- glibc collation (`en_US.UTF-8`): a more "natural" alphabetical order, but an update of the
+  base image can invalidate text indexes.
 
-**Consecuencias.** Si PoC-01 muestra que Resolve fija colación al crear la base o que el orden
-con `C.UTF-8` molesta a los editores, se evalúa ICU (`--locale-provider=icu`) mediante un ADR
-nuevo, antes de 1.0, porque la colación no se puede cambiar después sin rehacer el clúster. ICU
-da un orden más natural, pero su versión también viene con la imagen; habría que vigilar
-`datcollversion` y reindexar cuando cambie.
+**Consequences.** If PoC-01 shows that Resolve sets the collation when creating the database, or
+that the `C.UTF-8` order bothers editors, ICU (`--locale-provider=icu`) is evaluated through a
+new ADR, before 1.0, because the collation cannot be changed afterwards without rebuilding the
+cluster. ICU gives a more natural order, but its version also comes with the image; it would
+require watching `datcollversion` and reindexing when it changes.

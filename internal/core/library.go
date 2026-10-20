@@ -37,27 +37,27 @@ const (
 	StateMissing      State = "missing"
 )
 
-// Label in Spanish.
+// Label returns the display label of a state.
 func (s State) Label() string {
 	switch s {
 	case StateProvisioning:
-		return "Preparando"
+		return "Preparing"
 	case StateAwaitingInit:
-		return "Esperando a Resolve"
+		return "Waiting for Resolve"
 	case StateInitExpired:
-		return "Inicialización vencida"
+		return "Initialization expired"
 	case StateActive:
-		return "Activa"
+		return "Active"
 	case StateMaintenance:
-		return "En mantenimiento"
+		return "In maintenance"
 	case StateRestoring:
-		return "Restaurando"
+		return "Restoring"
 	case StateTrashed:
-		return "En la papelera"
+		return "In the trash"
 	case StatePurged:
-		return "Purgada"
+		return "Purged"
 	case StateMissing:
-		return "Sin base en el servidor"
+		return "No database on the server"
 	}
 	return string(s)
 }
@@ -146,7 +146,7 @@ func scanLibrary(row interface{ Scan(...any) error }) (*Library, error) {
 }
 
 // ErrLibraryNotFound is returned for unknown libraries.
-var ErrLibraryNotFound = errors.New("SQS-L002 biblioteca no encontrada")
+var ErrLibraryNotFound = errors.New("SQS-L002 library not found")
 
 // Library returns one library by id.
 func (s *Service) Library(ctx context.Context, id string) (*Library, error) {
@@ -211,11 +211,11 @@ func (s *Service) setState(ctx context.Context, id string, st State) error {
 func ValidateDisplayName(n string) (string, error) {
 	n = strings.TrimSpace(n)
 	if n == "" || utf8.RuneCountInString(n) > 80 {
-		return "", errors.New("SQS-L003 el nombre visible debe tener de 1 a 80 caracteres")
+		return "", errors.New("SQS-L003 the display name must be 1 to 80 characters long")
 	}
 	for _, r := range n {
 		if r < 0x20 || r == 0x7f {
-			return "", errors.New("SQS-L003 el nombre visible no puede tener caracteres de control")
+			return "", errors.New("SQS-L003 the display name cannot contain control characters")
 		}
 	}
 	return n, nil
@@ -274,17 +274,17 @@ func (s *Service) SlugAvailable(ctx context.Context, slug string) error {
 		return err
 	}
 	if _, err := s.LibraryBySlug(ctx, slug); err == nil {
-		return fmt.Errorf("SQS-L004 ya existe una biblioteca con el identificador %q", slug)
+		return fmt.Errorf("SQS-L004 a library with identifier %q already exists", slug)
 	}
 	if db, err := s.PG.Database(ctx, slug); err != nil {
 		return err
 	} else if db != nil {
-		return fmt.Errorf("SQS-L005 ya existe una base de datos %q en el servidor (puedes adoptarla desde Mantenimiento)", slug)
+		return fmt.Errorf("SQS-L005 a database %q already exists on the server (you can adopt it from Maintenance)", slug)
 	}
 	if ok, err := s.PG.RoleExists(ctx, slug); err != nil {
 		return err
 	} else if ok {
-		return fmt.Errorf("SQS-L006 ya existe un rol %q en el servidor", slug)
+		return fmt.Errorf("SQS-L006 a role %q already exists on the server", slug)
 	}
 	return nil
 }
@@ -299,7 +299,7 @@ func (s *Service) CreateLibrary(ctx context.Context, by audit.Actor, in CreateIn
 		in.Strategy = StrategyResolve
 	}
 	if in.Strategy != StrategyResolve && in.Strategy != StrategyPrecreate {
-		return nil, nil, errors.New("SQS-L007 estrategia de creación desconocida")
+		return nil, nil, errors.New("SQS-L007 unknown creation strategy")
 	}
 	if err := s.SlugAvailable(ctx, in.Slug); err != nil {
 		return nil, nil, err
@@ -310,7 +310,7 @@ func (s *Service) CreateLibrary(ctx context.Context, by audit.Actor, in CreateIn
 		VALUES (?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?)`, id, in.Slug, name, in.Slug, in.Slug, in.Strategy, strings.TrimSpace(in.Notes), now, now)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
-			return nil, nil, fmt.Errorf("SQS-L004 ya existe una biblioteca con el identificador %q", in.Slug)
+			return nil, nil, fmt.Errorf("SQS-L004 a library with identifier %q already exists", in.Slug)
 		}
 		return nil, nil, err
 	}
@@ -329,7 +329,7 @@ func (s *Service) runLibraryCreate(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	if l.State != StateProvisioning {
-		return fmt.Errorf("SQS-L010 la biblioteca no está en preparación (%s)", l.State.Label())
+		return fmt.Errorf("SQS-L010 the library is not being prepared (%s)", l.State.Label())
 	}
 	createdRole := false
 	rollback := func(cause error) error {
@@ -343,16 +343,16 @@ func (s *Service) runLibraryCreate(ctx context.Context, r *jobs.Run) error {
 		s.SyncHBA(c)
 		return cause
 	}
-	err = r.Step("validar", func() error {
+	err = r.Step("validate", func() error {
 		if db, err := s.PG.Database(ctx, l.DBName); err != nil {
 			return err
 		} else if db != nil {
-			return fmt.Errorf("SQS-L005 ya existe una base de datos %q en el servidor", l.DBName)
+			return fmt.Errorf("SQS-L005 a database %q already exists on the server", l.DBName)
 		}
 		if ok, err := s.PG.RoleExists(ctx, l.OwnerRole); err != nil {
 			return err
 		} else if ok {
-			return fmt.Errorf("SQS-L006 ya existe un rol %q en el servidor", l.OwnerRole)
+			return fmt.Errorf("SQS-L006 a role %q already exists on the server", l.OwnerRole)
 		}
 		return nil
 	})
@@ -360,7 +360,7 @@ func (s *Service) runLibraryCreate(ctx context.Context, r *jobs.Run) error {
 		return rollback(err)
 	}
 	r.Progress(20)
-	err = r.Step("crear_rol", func() error {
+	err = r.Step("create_role", func() error {
 		pass := secrets.GeneratePassword(24)
 		v, err := pg.ScramVerifier(pass)
 		if err != nil {
@@ -371,7 +371,7 @@ func (s *Service) runLibraryCreate(ctx context.Context, r *jobs.Run) error {
 		}
 		createdRole = true
 		_, err = s.addCredential(ctx, l.ID, "owner", l.OwnerRole, "", pass)
-		r.Infof("Rol %s creado", l.OwnerRole)
+		r.Infof("Role %s created", l.OwnerRole)
 		return err
 	})
 	if err != nil {
@@ -379,7 +379,7 @@ func (s *Service) runLibraryCreate(ctx context.Context, r *jobs.Run) error {
 	}
 	r.Progress(50)
 	if l.Strategy == StrategyPrecreate {
-		err = r.Step("crear_base", func() error {
+		err = r.Step("create_database", func() error {
 			if err := s.PG.CreateDatabase(ctx, l.DBName, l.OwnerRole); err != nil {
 				return err
 			}
@@ -393,12 +393,12 @@ func (s *Service) runLibraryCreate(ctx context.Context, r *jobs.Run) error {
 			return rollback(err)
 		}
 	} else {
-		err = r.Step("abrir_ventana", func() error {
+		err = r.Step("open_window", func() error {
 			mins := s.Settings(ctx).InitWindowMinutes
 			exp := s.now().Add(time.Duration(mins) * time.Minute)
 			_, err := s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'awaiting_init', init_window_expires_at = ?, init_table_count = -1, updated_at = ? WHERE id = ?`,
 				store.T(exp), store.NowT(), l.ID)
-			r.Infof("Ventana de inicialización abierta hasta %s", exp.In(s.Cfg.Location).Format("15:04"))
+			r.Infof("Initialization window open until %s", exp.In(s.Cfg.Location).Format("15:04"))
 			return err
 		})
 		if err != nil {
@@ -406,11 +406,11 @@ func (s *Service) runLibraryCreate(ctx context.Context, r *jobs.Run) error {
 		}
 	}
 	r.Progress(80)
-	if err := r.Step("acceso_red", func() error { return s.SyncHBA(ctx) }); err != nil {
+	if err := r.Step("network_access", func() error { return s.SyncHBA(ctx) }); err != nil {
 		return rollback(err)
 	}
 	s.Events.Emit(ctx, events.Event{Type: events.LibraryCreated, LibraryID: l.ID, JobID: r.Job.ID,
-		Message: fmt.Sprintf("Se creó la biblioteca %q", l.DisplayName)})
+		Message: fmt.Sprintf("Created library %q", l.DisplayName)})
 	r.SetResult(map[string]string{"library_id": l.ID})
 	return nil
 }
@@ -422,7 +422,7 @@ func (s *Service) ReopenInitWindow(ctx context.Context, by audit.Actor, id strin
 		return err
 	}
 	if l.State != StateInitExpired && l.State != StateAwaitingInit {
-		return errors.New("SQS-L011 la biblioteca no está esperando inicialización")
+		return errors.New("SQS-L011 the library is not waiting for initialization")
 	}
 	if err := s.PG.SetRoleCreateDB(ctx, l.OwnerRole, true); err != nil {
 		return err
@@ -441,7 +441,7 @@ func (s *Service) WatchInit(ctx context.Context) {
 	}
 	for _, l := range libs {
 		if err := s.checkInit(ctx, l); err != nil {
-			s.Log.Warn("vigilando inicialización", "library", l.Slug, "err", err)
+			s.Log.Warn("watching initialization", "library", l.Slug, "err", err)
 		}
 	}
 }
@@ -453,7 +453,7 @@ func (s *Service) checkInit(ctx context.Context, l *Library) error {
 		}
 		s.setState(ctx, l.ID, StateInitExpired)
 		s.Events.Emit(ctx, events.Event{Type: events.LibraryInitExpired, Severity: events.Warning, LibraryID: l.ID,
-			Message: fmt.Sprintf("Venció la ventana para inicializar %q desde Resolve; puedes reabrirla", l.DisplayName)})
+			Message: fmt.Sprintf("The window to initialize %q from Resolve expired; you can reopen it", l.DisplayName)})
 		return nil
 	}
 	db, err := s.PG.Database(ctx, l.DBName)
@@ -465,7 +465,7 @@ func (s *Service) checkInit(ctx context.Context, l *Library) error {
 		return nil
 	}
 	if db.Owner != l.OwnerRole {
-		return fmt.Errorf("la base %s pertenece a %s, no a %s", l.DBName, db.Owner, l.OwnerRole)
+		return fmt.Errorf("database %s is owned by %s, not %s", l.DBName, db.Owner, l.OwnerRole)
 	}
 	conn, err := s.PG.ConnectDB(ctx, l.DBName)
 	if err != nil {
@@ -527,7 +527,7 @@ func (s *Service) warnMisnamed(ctx context.Context, l *Library) {
 			continue
 		}
 		s.Events.Emit(ctx, events.Event{Type: events.LibraryExtraDatabase, Severity: events.Warning, LibraryID: l.ID,
-			Message: fmt.Sprintf("Resolve creó la base %q, pero la biblioteca debe llamarse exactamente %q. Vuelve a crearla en Resolve con ese nombre", d, l.DBName)})
+			Message: fmt.Sprintf("Resolve created the database %q, but the library must be named exactly %q. Create it again in Resolve with that name", d, l.DBName)})
 	}
 }
 
@@ -551,7 +551,7 @@ func (s *Service) activate(ctx context.Context, l *Library, fp pg.Fingerprint) e
 		for _, d := range extra {
 			if d != l.DBName {
 				s.Events.Emit(ctx, events.Event{Type: events.LibraryExtraDatabase, Severity: events.Warning, LibraryID: l.ID,
-					Message: fmt.Sprintf("El rol %s creó otra base durante la ventana: %s. Revísala en el servidor", l.OwnerRole, d)})
+					Message: fmt.Sprintf("Role %s created another database during the window: %s. Check it on the server", l.OwnerRole, d)})
 			}
 		}
 	}
@@ -562,7 +562,7 @@ func (s *Service) activate(ctx context.Context, l *Library, fp pg.Fingerprint) e
 	delete(s.stable, l.ID)
 	s.stableMu.Unlock()
 	s.Events.Emit(ctx, events.Event{Type: events.LibraryActivated, LibraryID: l.ID,
-		Message: fmt.Sprintf("Resolve inicializó %q; la biblioteca está activa", l.DisplayName), Data: map[string]any{"tables": fp.Tables}})
+		Message: fmt.Sprintf("Resolve initialized %q; the library is active", l.DisplayName), Data: map[string]any{"tables": fp.Tables}})
 	_, err = s.Jobs.Enqueue(ctx, JobBackupCreate, l.ID, BackupParams{Kind: KindManual}, audit.System, jobs.Unique())
 	return err
 }
@@ -586,14 +586,14 @@ func (s *Service) UpdateLibrary(ctx context.Context, by audit.Actor, id string, 
 		return err
 	}
 	if in.ConnLimit < -1 || in.ConnLimit > 1000 {
-		return errors.New("SQS-L012 límite de conexiones inválido (-1 sin límite, hasta 1000)")
+		return errors.New("SQS-L012 invalid connection limit (-1 for unlimited, up to 1000)")
 	}
 	rv := strings.TrimSpace(in.ResolveVersion)
 	if len(rv) > 20 {
-		return errors.New("SQS-L013 versión de Resolve demasiado larga")
+		return errors.New("SQS-L013 Resolve version too long")
 	}
 	if len(in.Notes) > 10000 {
-		return errors.New("SQS-L014 notas demasiado largas")
+		return errors.New("SQS-L014 notes too long")
 	}
 	if in.ConnLimit != l.ConnLimit && l.Live() {
 		if err := s.PG.SetDatabaseConnLimit(ctx, l.DBName, in.ConnLimit); err != nil {
@@ -615,7 +615,7 @@ func (s *Service) SetMaintenance(ctx context.Context, by audit.Actor, id string,
 		return 0, err
 	}
 	if on && l.State != StateActive || !on && l.State != StateMaintenance {
-		return 0, fmt.Errorf("SQS-L015 no se puede cambiar el mantenimiento en estado %s", l.State.Label())
+		return 0, fmt.Errorf("SQS-L015 cannot change maintenance in state %s", l.State.Label())
 	}
 	if err := s.PG.SetAllowConnections(ctx, l.DBName, !on); err != nil {
 		return 0, err
@@ -624,9 +624,9 @@ func (s *Service) SetMaintenance(ctx context.Context, by audit.Actor, id string,
 	if on && terminate {
 		n, _ = s.PG.TerminateAll(ctx, l.DBName)
 	}
-	st, typ, msg := StateActive, events.LibraryMaintenanceOff, "Se reabrieron las conexiones de %q"
+	st, typ, msg := StateActive, events.LibraryMaintenanceOff, "Connections reopened for %q"
 	if on {
-		st, typ, msg = StateMaintenance, events.LibraryMaintenanceOn, "%q quedó en mantenimiento: no acepta conexiones nuevas"
+		st, typ, msg = StateMaintenance, events.LibraryMaintenanceOn, "%q is in maintenance: it does not accept new connections"
 	}
 	s.setState(ctx, id, st)
 	s.Audit.Record(ctx, by, "library.maintenance", "library", id, audit.OK, map[string]any{"on": on, "terminated": n})
@@ -661,7 +661,7 @@ func (s *Service) TerminateSession(ctx context.Context, by audit.Actor, id strin
 		return err
 	}
 	if !ok {
-		return errors.New("SQS-L016 la sesión ya no existe o no pertenece a esta biblioteca")
+		return errors.New("SQS-L016 the session no longer exists or does not belong to this library")
 	}
 	return s.Audit.Record(ctx, by, "library.session_terminate", "library", id, audit.OK, map[string]any{"pid": pid})
 }
@@ -689,7 +689,7 @@ func (s *Service) FingerprintAll(ctx context.Context) {
 func (s *Service) recordFingerprint(ctx context.Context, l *Library, fp pg.Fingerprint, jobID string) {
 	if fp.Hash != "" && l.Fingerprint != "" && fp.Hash != l.Fingerprint {
 		s.Events.Emit(ctx, events.Event{Type: events.LibrarySchemaChanged, Severity: events.Warning, LibraryID: l.ID, JobID: jobID,
-			Message: fmt.Sprintf("Cambió la estructura de %q (%d tablas). Probablemente una estación con otra versión de Resolve la actualizó", l.DisplayName, fp.Tables),
+			Message: fmt.Sprintf("The structure of %q changed (%d tables). A workstation with another Resolve version probably upgraded it", l.DisplayName, fp.Tables),
 			Data:    map[string]any{"before": l.Fingerprint, "after": fp.Hash, "tables_before": l.TableCount, "tables_after": fp.Tables}})
 	}
 	s.DB.ExecContext(ctx, `UPDATE libraries SET schema_fingerprint = ?, schema_table_count = ?, fingerprint_checked_at = ? WHERE id = ?`,
@@ -747,24 +747,24 @@ func (p Policy) Validate() error {
 		switch p.CheckMinutes {
 		case 5, 10, 15, 30, 60:
 		default:
-			return errors.New("SQS-B033 según actividad se revisa cada 5, 10, 15, 30 o 60 minutos")
+			return errors.New("SQS-B033 activity-based mode checks every 5, 10, 15, 30 or 60 minutes")
 		}
 	default:
-		return errors.New("SQS-B034 modo de programación desconocido")
+		return errors.New("SQS-B034 unknown schedule mode")
 	}
 	if _, err := validateCron(p.EffectiveCron(), p.Timezone); err != nil {
 		return err
 	}
 	for _, v := range []int{p.KeepLast, p.KeepDaily, p.KeepWeekly, p.KeepMonthly} {
 		if v < 0 || v > 1000 {
-			return errors.New("SQS-B030 los valores de retención van de 0 a 1000")
+			return errors.New("SQS-B030 retention values must be between 0 and 1000")
 		}
 	}
 	if p.KeepLast+p.KeepDaily+p.KeepWeekly+p.KeepMonthly == 0 {
-		return errors.New("SQS-B031 la retención debe conservar al menos un respaldo")
+		return errors.New("SQS-B031 retention must keep at least one backup")
 	}
 	if p.MinVerified < 1 || p.MinVerified > 100 {
-		return errors.New("SQS-B032 conserva al menos un respaldo verificado (1 a 100)")
+		return errors.New("SQS-B032 keep at least one verified backup (1 to 100)")
 	}
 	return nil
 }

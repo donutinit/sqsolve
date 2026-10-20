@@ -33,7 +33,7 @@ func (a *App) EnsureKeyCheck(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return a.DB.SetSetting(ctx, keyCheckSetting, sealed, "sistema")
+	return a.DB.SetSetting(ctx, keyCheckSetting, sealed, "system")
 }
 
 // RecoveryKit is the text of the recovery kit.
@@ -42,34 +42,34 @@ func (a *App) RecoveryKit(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	fp := "Por confirmar"
+	fp := "To be confirmed"
 	if info, err := a.PanelCertInfo(); err == nil {
 		fp = info.Fingerprint
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "sqsolve: kit de recuperación\n\n")
-	fmt.Fprintf(&b, "Instalación:   %s\n", a.InstanceID)
-	fmt.Fprintf(&b, "Nombre:        %s\n", a.Svc.Settings(ctx).InstanceName)
-	fmt.Fprintf(&b, "Generado:      %s\n", time.Now().In(a.Cfg.Location).Format("2006-01-02 15:04 MST"))
-	fmt.Fprintf(&b, "Versión:       %s\n\n", Version)
-	fmt.Fprintf(&b, "CLAVE MAESTRA (guárdala fuera de este servidor; quien la tenga junto con los\n")
-	fmt.Fprintf(&b, "volúmenes puede leer las contraseñas de las bibliotecas):\n\n    %s\n\n", base64.StdEncoding.EncodeToString(key))
-	fmt.Fprintf(&b, "Huella SHA-256 del certificado del panel:\n    %s\n\n", fp)
-	b.WriteString(`Cómo recuperar la instalación en otro servidor:
+	fmt.Fprintf(&b, "sqsolve: recovery kit\n\n")
+	fmt.Fprintf(&b, "Installation:  %s\n", a.InstanceID)
+	fmt.Fprintf(&b, "Name:          %s\n", a.Svc.Settings(ctx).InstanceName)
+	fmt.Fprintf(&b, "Generated:     %s\n", time.Now().In(a.Cfg.Location).Format("2006-01-02 15:04 MST"))
+	fmt.Fprintf(&b, "Version:       %s\n\n", Version)
+	fmt.Fprintf(&b, "MASTER KEY (keep it away from this server; whoever has it together with the\n")
+	fmt.Fprintf(&b, "volumes can read the library passwords):\n\n    %s\n\n", base64.StdEncoding.EncodeToString(key))
+	fmt.Fprintf(&b, "SHA-256 fingerprint of the panel certificate:\n    %s\n\n", fp)
+	b.WriteString(`How to recover the installation on another server:
 
-1. Instala sqsolve con el mismo compose.yaml y monta en /backups la copia
-   del volumen de respaldos (debe incluir la carpeta _system).
-2. Abre el panel. En la pantalla de instalación elige "Recuperar una
-   instalación existente", escribe el código de instalación y pega la clave
-   maestra de este kit.
-3. sqsolve restaura usuarios, políticas y credenciales, y se reinicia.
-4. En el panel, cada biblioteca aparece "Sin base en el servidor": usa
-   "Recrear desde respaldo". Las contraseñas de las estaciones no cambian.
-5. Si el servidor cambió de IP, actualiza la dirección anunciada en Ajustes
-   y la ubicación en cada estación.
+1. Install sqsolve with the same compose.yaml and mount the copy of the
+   backups volume at /backups (it must include the _system folder).
+2. Open the panel. On the setup screen choose "Recover an existing
+   installation", type the installation code and paste the master key from
+   this kit.
+3. sqsolve restores users, policies and credentials, then restarts.
+4. In the panel, every library shows "No database on the server": use
+   "Recreate from backup". Workstation passwords do not change.
+5. If the server changed its IP, update the advertised address in Settings
+   and the location on every workstation.
 
-Sin este kit, las bibliotecas se pueden restaurar igual desde los respaldos
-(Mantenimiento > Reconstruir catálogo), pero con contraseñas nuevas.
+Without this kit, the libraries can still be restored from the backups
+(Maintenance > Rebuild catalog), but with new passwords.
 `)
 	return b.String(), nil
 }
@@ -87,11 +87,11 @@ func SystemCopies(c *config.Config) []string {
 func StageRecovery(c *config.Config, keyB64 string) (string, error) {
 	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(keyB64))
 	if err != nil || len(key) != 32 {
-		return "", errors.New("SQS-C070 la clave maestra debe ser el texto base64 del kit (44 caracteres)")
+		return "", errors.New("SQS-C070 the master key must be the base64 text from the kit (44 characters)")
 	}
 	copies := SystemCopies(c)
 	if len(copies) == 0 {
-		return "", errors.New("SQS-C071 no hay copias del plano de control en el volumen de respaldos (_system)")
+		return "", errors.New("SQS-C071 there are no control plane copies in the backups volume (_system)")
 	}
 	box, err := secrets.NewBox(key)
 	if err != nil {
@@ -108,7 +108,7 @@ func StageRecovery(c *config.Config, keyB64 string) (string, error) {
 		break
 	}
 	if chosen == "" {
-		return "", fmt.Errorf("SQS-C072 la clave no corresponde a ninguna copia del plano de control: %v", lastErr)
+		return "", fmt.Errorf("SQS-C072 the key does not match any control plane copy: %v", lastErr)
 	}
 	in, err := os.Open(chosen)
 	if err != nil {
@@ -160,7 +160,7 @@ func ApplyPendingRecovery(c *config.Config, out io.Writer) error {
 	}
 	now := time.Now().UTC().Format("20060102T150405Z")
 	if _, err := os.Stat(c.DBPath()); err == nil {
-		os.Rename(c.DBPath(), filepath.Join(stateBackupDir(c), "sqsolve-reemplazada-"+now+".db"))
+		os.Rename(c.DBPath(), filepath.Join(stateBackupDir(c), "sqsolve-replaced-"+now+".db"))
 	}
 	for _, suffix := range []string{"-wal", "-shm"} {
 		os.Remove(c.DBPath() + suffix)
@@ -169,13 +169,13 @@ func ApplyPendingRecovery(c *config.Config, out io.Writer) error {
 		return err
 	}
 	if _, err := os.Stat(masterKeyPath(c)); err == nil {
-		os.Rename(masterKeyPath(c), masterKeyPath(c)+".reemplazada-"+now)
+		os.Rename(masterKeyPath(c), masterKeyPath(c)+".replaced-"+now)
 	}
 	if err := os.Rename(key, masterKeyPath(c)); err != nil {
 		return err
 	}
 	fsx.SyncDir(c.SecretsDir())
 	fsx.SyncDir(c.AppDir)
-	fmt.Fprintln(out, "sqsolve: se aplicó la recuperación del plano de control")
+	fmt.Fprintln(out, "sqsolve: control plane recovery applied")
 	return nil
 }

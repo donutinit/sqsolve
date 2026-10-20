@@ -1,19 +1,19 @@
 {{define "content"}}
-<div class="pagehead"><h1>Tareas</h1></div>
+<div class="pagehead"><h1>Jobs</h1></div>
 <section class="card">
-  <h2>En curso y en cola</h2>
-  {{if .Data.Active}}{{template "jobtable" .Data.Active}}{{else}}<p class="muted">Nada en curso.</p>{{end}}
+  <h2>Running and queued</h2>
+  {{if .Data.Active}}{{template "jobtable" .Data.Active}}{{else}}<p class="muted">Nothing running.</p>{{end}}
 </section>
 <section class="card">
-  <div class="cardhead"><h2>Historial</h2>
-    <nav class="tabs small" aria-label="Filtro por estado">
-      <a href="/tareas" {{if eq .Data.State ""}}aria-current="page"{{end}}>Todas</a>
-      <a href="/tareas?estado=succeeded" {{if eq .Data.State "succeeded"}}aria-current="page"{{end}}>Completadas</a>
-      <a href="/tareas?estado=failed" {{if eq .Data.State "failed"}}aria-current="page"{{end}}>Fallidas</a>
-      <a href="/tareas?estado=interrupted" {{if eq .Data.State "interrupted"}}aria-current="page"{{end}}>Interrumpidas</a>
-      <a href="/tareas?estado=cancelled" {{if eq .Data.State "cancelled"}}aria-current="page"{{end}}>Canceladas</a>
+  <div class="cardhead"><h2>History</h2>
+    <nav class="tabs small" aria-label="Filter by state">
+      <a href="/jobs" {{if eq .Data.State ""}}aria-current="page"{{end}}>All</a>
+      <a href="/jobs?state=succeeded" {{if eq .Data.State "succeeded"}}aria-current="page"{{end}}>Succeeded</a>
+      <a href="/jobs?state=failed" {{if eq .Data.State "failed"}}aria-current="page"{{end}}>Failed</a>
+      <a href="/jobs?state=interrupted" {{if eq .Data.State "interrupted"}}aria-current="page"{{end}}>Interrupted</a>
+      <a href="/jobs?state=cancelled" {{if eq .Data.State "cancelled"}}aria-current="page"{{end}}>Cancelled</a>
     </nav>
   </div>
-  {{if .Data.History}}{{template "jobtable" .Data.History}}{{else}}<p class="muted">Sin tareas.</p>{{end}}
+  {{if .Data.History}}{{template "jobtable" .Data.History}}{{else}}<p class="muted">No jobs.</p>{{end}}
 </section>
 {{end}}

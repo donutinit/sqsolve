@@ -151,7 +151,7 @@ func (d *synthDB) mustOpen() *Session {
 }
 
 func fakeBody(label string) []byte {
-	return encodePayload(pbBytes(1, []byte("nodos de "+label)), false)
+	return encodePayload(pbBytes(1, []byte("nodes of "+label)), false)
 }
 
 func (d *synthDB) still(id, label, verFull, verTrack, thumb string, created time.Time) {
@@ -165,7 +165,7 @@ func (d *synthDB) still(id, label, verFull, verTrack, thumb string, created time
 func (d *synthDB) seedProject() {
 	d.insert("Sm2MediaPool", map[string]any{"Sm2MediaPool_id": idPool, "DbType": "Sm2MediaPool", "StereoSource": int32(2)})
 	d.insert("SM_Config", map[string]any{"SM_Config_id": idConfig, "DbType": "SM_Config", "Name": "x", "ConfigId": int32(0)})
-	d.insert("SM_Project", map[string]any{"SM_Project_id": idProject, "DbType": "SM_Project", "ProjectName": "Prueba", "ProjectVersion": int32(17),
+	d.insert("SM_Project", map[string]any{"SM_Project_id": idProject, "DbType": "SM_Project", "ProjectName": "Test", "ProjectVersion": int32(17),
 		"MediaPool": idPool, "CommonConfig": idConfig, "UpToDate": true, "StreamCursorVector": []int32{1}, "StreamIdVector": []int32{0}, "LastModTimeInSecs": int64(1792418582)})
 	d.insert("Sm2MpFolder", map[string]any{"Sm2MpFolder_id": idRoot, "DbType": "Sm2MpFolder", "Name": "Master", "Sm2MediaPool_id": idPool, "MediaPool": idPool,
 		"FieldsBlob": folderOrderBlob(true, idFolderB, idFolderA)})
@@ -229,7 +229,7 @@ func TestExportSyntheticLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(projects) != 1 || projects[0].ID != idProject || projects[0].Name != "Prueba" || projects[0].Path != "" ||
+	if len(projects) != 1 || projects[0].ID != idProject || projects[0].Name != "Test" || projects[0].Path != "" ||
 		!bytes.Equal(projects[0].Thumb, fakeJPEG) || projects[0].Modified.Unix() != 1792418582 {
 		t.Fatalf("projects: %+v", projects)
 	}
@@ -244,7 +244,7 @@ func TestExportSyntheticLibrary(t *testing.T) {
 	if a := albums[0]; a.ProjectID != "" || a.Name != "PowerGrade" || a.ViewID != idView2 || len(a.Stills) != 1 || a.Stills[0].ID != idStill2 || a.Stills[0].Label != "2.1" {
 		t.Errorf("power grade album: %+v", a)
 	}
-	if a := albums[1]; a.ProjectID != idProject || a.ProjectName != "Prueba" || a.Name != "current" || len(a.Stills) != 1 ||
+	if a := albums[1]; a.ProjectID != idProject || a.ProjectName != "Test" || a.Name != "current" || len(a.Stills) != 1 ||
 		a.Stills[0].Created != "2026-10-19T13:37:24.830" || a.Stills[0].Width != 1920 || !bytes.Equal(a.Stills[0].Thumb, fakeJPEG) {
 		t.Errorf("project album: %+v", a)
 	}
@@ -254,7 +254,7 @@ func TestExportSyntheticLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Name != "Prueba" || info.Files != 5 || info.Bytes != int64(buf.Len()) || len(info.Notes) != 0 {
+	if info.Name != "Test" || info.Files != 5 || info.Bytes != int64(buf.Len()) || len(info.Notes) != 0 {
 		t.Errorf("info: %+v", info)
 	}
 	docs, names, files := zipEntries(t, buf.Bytes())
@@ -271,7 +271,7 @@ func TestExportSyntheticLibrary(t *testing.T) {
 	if !strings.HasPrefix(prj, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<SM_Project DbId=\""+idProject+"\">\n") {
 		t.Errorf("project.xml head:\n%.200s", prj)
 	}
-	for _, p := range []string{"<UpToDate>false</UpToDate>", "<Name>Prueba.Cfg</Name>", "<ProjectVersion>17</ProjectVersion>",
+	for _, p := range []string{"<UpToDate>false</UpToDate>", "<Name>Test.Cfg</Name>", "<ProjectVersion>17</ProjectVersion>",
 		"<StreamCursorVector>\n  <Element>0</Element>\n </StreamCursorVector>", "<Thumbnails>\n  <Element>\n   <BtThumnail DbId=\"" + idPrjThumb + "\">",
 		"<CommonConfig>\n  <SM_Config DbId=\"" + idConfig + "\">"} {
 		if !strings.Contains(prj, p) {
@@ -317,7 +317,7 @@ func TestExportSyntheticLibrary(t *testing.T) {
 	if _, err := s.ExportProject(ctx, "00000000-0000-4000-8000-0000000000ff", &buf); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing project: %v", err)
 	}
-	if _, err := s.ExportStill(ctx, "no-es-uuid", &buf); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ExportStill(ctx, "not-a-uuid", &buf); !errors.Is(err, ErrNotFound) {
 		t.Errorf("bad still id: %v", err)
 	}
 	if _, err := s.ExportAlbum(ctx, idView, &buf); err != nil {

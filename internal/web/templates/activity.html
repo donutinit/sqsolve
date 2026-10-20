@@ -1,38 +1,38 @@
 {{define "content"}}
-<div class="pagehead"><h1>Actividad</h1></div>
-<nav class="tabs" aria-label="Secciones">
-  <a href="/actividad" {{if ne .Data.Tab "auditoria"}}aria-current="page"{{end}}>Eventos</a>
-  {{if .P.Can "audit.view"}}<a href="/actividad?tab=auditoria" {{if eq .Data.Tab "auditoria"}}aria-current="page"{{end}}>Auditoría</a>{{end}}
+<div class="pagehead"><h1>Activity</h1></div>
+<nav class="tabs" aria-label="Sections">
+  <a href="/activity" {{if ne .Data.Tab "audit"}}aria-current="page"{{end}}>Events</a>
+  {{if .P.Can "audit.view"}}<a href="/activity?tab=audit" {{if eq .Data.Tab "audit"}}aria-current="page"{{end}}>Audit log</a>{{end}}
 </nav>
-{{if eq .Data.Tab "auditoria"}}
+{{if eq .Data.Tab "audit"}}
 <section class="card">
-  <div class="cardhead"><h2>Auditoría</h2><a href="/actividad/auditoria.jsonl">Exportar JSON Lines</a></div>
-  {{if .Data.VerifyErr}}<div class="flash error" role="alert">{{.Data.VerifyErr}}</div>{{else if .Data.Broken}}<div class="flash error" role="alert">La cadena de auditoría está rota en la entrada {{.Data.Broken}}: alguien modificó la base de sqsolve.</div>{{else}}<p>{{template "badge" (dict "tone" "ok" "label" (printf "Cadena íntegra: %d entradas" .Data.Count))}}</p>{{end}}
+  <div class="cardhead"><h2>Audit log</h2><a href="/activity/audit.jsonl">Export JSON Lines</a></div>
+  {{if .Data.VerifyErr}}<div class="flash error" role="alert">{{.Data.VerifyErr}}</div>{{else if .Data.Broken}}<div class="flash error" role="alert">The audit chain is broken at entry {{.Data.Broken}}: someone modified the sqsolve database.</div>{{else}}<p>{{template "badge" (dict "tone" "ok" "label" (printf "Chain intact: %d entries" .Data.Count))}}</p>{{end}}
   <table class="table compact cards-on-mobile">
-    <thead><tr><th>Fecha</th><th>Quién</th><th>Acción</th><th>Objetivo</th><th>Resultado</th></tr></thead>
+    <thead><tr><th>Date</th><th>Who</th><th>Action</th><th>Target</th><th>Result</th></tr></thead>
     <tbody>
     {{range .Data.Audit}}
-      <tr><td data-label="Fecha">{{dt .TS}}</td><td data-label="Quién">{{.Actor.Label}} <span class="muted small mono">{{.Actor.IP}}</span></td>
-      <td data-label="Acción" class="mono small">{{.Action}}</td><td data-label="Objetivo" class="mono small">{{.TargetType}} {{short .TargetID}}</td>
-      <td data-label="Resultado">{{template "badge" (dict "tone" (outcometone .Outcome) "label" (outcomelabel .Outcome))}}</td></tr>
-    {{else}}<tr><td colspan="5" class="muted">Sin entradas.</td></tr>{{end}}
+      <tr><td data-label="Date">{{dt .TS}}</td><td data-label="Who">{{.Actor.Label}} <span class="muted small mono">{{.Actor.IP}}</span></td>
+      <td data-label="Action" class="mono small">{{.Action}}</td><td data-label="Target" class="mono small">{{.TargetType}} {{short .TargetID}}</td>
+      <td data-label="Result">{{template "badge" (dict "tone" (outcometone .Outcome) "label" (outcomelabel .Outcome))}}</td></tr>
+    {{else}}<tr><td colspan="5" class="muted">No entries.</td></tr>{{end}}
     </tbody>
   </table>
 </section>
 {{else}}
 <form method="get" class="filters">
-  <label>Severidad mínima<select name="sev"><option value="">Todas</option><option value="warning" {{if eq .Data.Sev "warning"}}selected{{end}}>Aviso</option><option value="error" {{if eq .Data.Sev "error"}}selected{{end}}>Error</option><option value="critical" {{if eq .Data.Sev "critical"}}selected{{end}}>Crítico</option></select></label>
-  <button type="submit" class="ghost">Filtrar</button>
+  <label>Minimum severity<select name="sev"><option value="">All</option><option value="warning" {{if eq .Data.Sev "warning"}}selected{{end}}>Warning</option><option value="error" {{if eq .Data.Sev "error"}}selected{{end}}>Error</option><option value="critical" {{if eq .Data.Sev "critical"}}selected{{end}}>Critical</option></select></label>
+  <button type="submit" class="ghost">Filter</button>
 </form>
 <section class="card flush">
   <table class="table compact cards-on-mobile">
-    <thead><tr><th>Fecha</th><th>Severidad</th><th>Mensaje</th><th>Tipo</th></tr></thead>
+    <thead><tr><th>Date</th><th>Severity</th><th>Message</th><th>Type</th></tr></thead>
     <tbody>
     {{range .Data.Events}}
-      <tr><td data-label="Fecha">{{dt .TS}}</td><td data-label="Severidad">{{template "badge" (dict "tone" (sevtone .Severity) "label" (sev .Severity))}}</td>
-      <td data-label="Mensaje">{{.Message}}{{if .JobID}} <a class="small" href="/tareas/{{.JobID}}">tarea</a>{{end}}{{if .LibraryID}} <a class="small" href="/bibliotecas/{{.LibraryID}}">biblioteca</a>{{end}}</td>
-      <td data-label="Tipo" class="mono small muted">{{.Type}}</td></tr>
-    {{else}}<tr><td colspan="4" class="muted">Sin eventos.</td></tr>{{end}}
+      <tr><td data-label="Date">{{dt .TS}}</td><td data-label="Severity">{{template "badge" (dict "tone" (sevtone .Severity) "label" (sev .Severity))}}</td>
+      <td data-label="Message">{{.Message}}{{if .JobID}} <a class="small" href="/jobs/{{.JobID}}">job</a>{{end}}{{if .LibraryID}} <a class="small" href="/libraries/{{.LibraryID}}">library</a>{{end}}</td>
+      <td data-label="Type" class="mono small muted">{{.Type}}</td></tr>
+    {{else}}<tr><td colspan="4" class="muted">No events.</td></tr>{{end}}
     </tbody>
   </table>
 </section>

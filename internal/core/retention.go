@@ -57,13 +57,13 @@ func Retain(items []RetentionItem, p RetentionPolicy, now time.Time) (keep map[s
 		switch it.Kind {
 		case KindPreRestore, KindPreDelete, KindPreUpgrade:
 			if now.Sub(it.Started) < p.ProtectedFor {
-				mark(it.ID, "protegido ("+KindLabel(it.Kind)+")")
+				mark(it.ID, "protected ("+KindLabel(it.Kind)+")")
 			}
 		}
 	}
 	for i, it := range sorted {
 		if i < p.KeepLast {
-			mark(it.ID, fmt.Sprintf("entre los %d más recientes", p.KeepLast))
+			mark(it.ID, fmt.Sprintf("among the %d most recent", p.KeepLast))
 		}
 	}
 	bucket := func(n int, key func(time.Time) string, label string) {
@@ -83,9 +83,9 @@ func Retain(items []RetentionItem, p RetentionPolicy, now time.Time) (keep map[s
 			mark(it.ID, label)
 		}
 	}
-	bucket(p.KeepDaily, func(t time.Time) string { return t.Format("2006-01-02") }, "último del día")
-	bucket(p.KeepWeekly, func(t time.Time) string { y, w := t.ISOWeek(); return fmt.Sprintf("%d-%02d", y, w) }, "último de la semana")
-	bucket(p.KeepMonthly, func(t time.Time) string { return t.Format("2006-01") }, "último del mes")
+	bucket(p.KeepDaily, func(t time.Time) string { return t.Format("2006-01-02") }, "last of the day")
+	bucket(p.KeepWeekly, func(t time.Time) string { y, w := t.ISOWeek(); return fmt.Sprintf("%d-%02d", y, w) }, "last of the week")
+	bucket(p.KeepMonthly, func(t time.Time) string { return t.Format("2006-01") }, "last of the month")
 	verifiedKept := 0
 	for _, it := range sorted {
 		if _, ok := keep[it.ID]; ok && it.Verified {
@@ -97,7 +97,7 @@ func Retain(items []RetentionItem, p RetentionPolicy, now time.Time) (keep map[s
 			break
 		}
 		if _, ok := keep[it.ID]; !ok && it.Verified {
-			mark(it.ID, "mínimo de respaldos verificados")
+			mark(it.ID, "minimum of verified backups")
 			verifiedKept++
 		}
 	}
@@ -153,8 +153,8 @@ func (s *Service) applyRetention(ctx context.Context, libraryID string) (int, er
 		if err != nil {
 			continue
 		}
-		if err := s.removeBackupFiles(ctx, b, "retención"); err != nil {
-			s.Log.Error("retención", "backup", id, "err", err)
+		if err := s.removeBackupFiles(ctx, b, "retention"); err != nil {
+			s.Log.Error("retention", "backup", id, "err", err)
 			continue
 		}
 		n++
@@ -177,7 +177,7 @@ func (s *Service) applyRetention(ctx context.Context, libraryID string) (int, er
 			name = l.DisplayName
 		}
 		s.Events.Emit(ctx, events.Event{Type: events.BackupExpired, LibraryID: libraryID,
-			Message: fmt.Sprintf("La retención borró %d respaldos de %q", n, name), Data: map[string]any{"count": n}})
+			Message: fmt.Sprintf("Retention deleted %d backups of %q", n, name), Data: map[string]any{"count": n}})
 	}
 	return n, nil
 }

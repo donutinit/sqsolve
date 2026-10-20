@@ -37,7 +37,7 @@ func TestCheckContract(t *testing.T) {
 	}
 	s["SM_Project"]["ProjectName"] = famInt
 	err := checkContract(m, s)
-	if !errors.Is(err, ErrSchema) || !strings.Contains(err.Error(), "SM_Project.ProjectName es entero y se esperaba texto") {
+	if !errors.Is(err, ErrSchema) || !strings.Contains(err.Error(), "SM_Project.ProjectName is integer and text was expected") {
 		t.Errorf("type mismatch: %v", err)
 	}
 	s["SM_Project"]["ProjectName"] = famText
@@ -46,13 +46,13 @@ func TestCheckContract(t *testing.T) {
 		t.Errorf("missing column: %v", err)
 	}
 	delete(s, "Gallery::GyStill")
-	if err := checkContract(m, s); !errors.Is(err, ErrSchema) || !strings.Contains(err.Error(), "tabla Gallery::GyStill") || !strings.Contains(err.Error(), "SQS-E001") {
+	if err := checkContract(m, s); !errors.Is(err, ErrSchema) || !strings.Contains(err.Error(), "table Gallery::GyStill") || !strings.Contains(err.Error(), "SQS-E001") {
 		t.Errorf("missing table: %v", err)
 	}
 	for table := range s {
 		delete(s, table)
 	}
-	if err := checkContract(m, s); err == nil || !strings.Contains(err.Error(), " más") {
+	if err := checkContract(m, s); err == nil || !strings.Contains(err.Error(), " more") {
 		t.Errorf("many missing tables should be summarized: %v", err)
 	}
 }

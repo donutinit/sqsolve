@@ -1,20 +1,20 @@
 {{define "content"}}
-<div class="pagehead"><h1>Importar un respaldo</h1></div>
+<div class="pagehead"><h1>Import a backup</h1></div>
 <section class="card narrow">
-  <p>Agrega al catálogo un archivo de <code>pg_dump</code> en formato custom: por ejemplo un respaldo de Resolve, del Project Server oficial o de otro servidor. sqsolve comprueba que se pueda leer, lo copia al volumen y lo asocia a una biblioteca. Después puedes restaurarlo.</p>
-  <form method="post" action="/respaldos/importar" class="form" enctype="multipart/form-data">
+  <p>Adds to the catalog a <code>pg_dump</code> file in custom format: for example a backup from Resolve, from the official Project Server or from another server. sqsolve checks that it can be read, copies it to the volume and links it to a library. Afterwards you can restore it.</p>
+  <form method="post" action="/backups/import" class="form" enctype="multipart/form-data">
     {{template "csrf" .CSRF}}
-    <label>Biblioteca a la que pertenece<select name="library" required>{{range .Data.Libraries}}<option value="{{.ID}}" {{if eq .ID $.Data.Selected}}selected{{end}}>{{.DisplayName}} ({{.Slug}})</option>{{end}}</select></label>
+    <label>Library it belongs to<select name="library" required>{{range .Data.Libraries}}<option value="{{.ID}}" {{if eq .ID $.Data.Selected}}selected{{end}}>{{.DisplayName}} ({{.Slug}})</option>{{end}}</select></label>
     <fieldset>
-      <legend>Archivo</legend>
+      <legend>File</legend>
       {{if .Data.Files}}
         {{range .Data.Files}}<label class="radio"><input type="radio" name="file" value="{{.Name}}"> <span class="mono">{{.Name}}</span> <span class="muted">({{bytes .Size}})</span></label>{{end}}
-        <p class="hint">Archivos en <code class="break">{{.Data.Dir}}</code>.</p>
-      {{else}}<p class="hint">Para archivos grandes, cópialos a <code class="break">{{.Data.Dir}}</code> en el servidor y recarga esta página.</p>{{end}}
-      <label>O súbelo desde aquí (hasta {{.Data.MaxMB}} MB)<input type="file" name="upload"></label>
+        <p class="hint">Files in <code class="break">{{.Data.Dir}}</code>.</p>
+      {{else}}<p class="hint">For large files, copy them to <code class="break">{{.Data.Dir}}</code> on the server and reload this page.</p>{{end}}
+      <label>Or upload it from here (up to {{.Data.MaxMB}} MB)<input type="file" name="upload"></label>
     </fieldset>
-    <label class="check"><input type="checkbox" name="delete"> Borrar el original de la carpeta de importación al terminar</label>
-    <div class="actions"><button type="submit">Importar</button><a href="/respaldos">Cancelar</a></div>
+    <label class="check"><input type="checkbox" name="delete"> Delete the original from the import folder when done</label>
+    <div class="actions"><button type="submit">Import</button><a href="/backups">Cancel</a></div>
   </form>
 </section>
 {{end}}

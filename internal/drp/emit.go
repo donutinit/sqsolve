@@ -35,7 +35,7 @@ func (e *emitter) document(header, table, id string) ([]byte, error) {
 		e.b.WriteByte('\n')
 	}
 	if e.g.get(table, id) == nil {
-		return nil, fmt.Errorf("%w: el objeto %s de %s", ErrNotFound, id, table)
+		return nil, fmt.Errorf("%w: object %s of %s", ErrNotFound, id, table)
 	}
 	if err := e.object(table, id, "", 0); err != nil {
 		return nil, err
@@ -55,7 +55,7 @@ func pad(n int) string { return strings.Repeat(" ", n) }
 func (e *emitter) object(table, id, expectClass string, indent int) error {
 	r := e.g.get(table, id)
 	if r == nil {
-		return fmt.Errorf("%w: el objeto %s de %s", ErrNotFound, id, table)
+		return fmt.Errorf("%w: object %s of %s", ErrNotFound, id, table)
 	}
 	class := r.class
 	if class == "" {
@@ -63,12 +63,12 @@ func (e *emitter) object(table, id, expectClass string, indent int) error {
 	}
 	spec := e.m.Classes[class]
 	if spec == nil {
-		return fmt.Errorf("%w: la clase %q de la tabla %s", ErrUnsupported, class, table)
+		return fmt.Errorf("%w: class %q of table %s", ErrUnsupported, class, table)
 	}
 	e.depth++
 	defer func() { e.depth-- }()
 	if e.depth > maxDepth {
-		return fmt.Errorf("SQS-E006 los objetos se anidan más de %d niveles en %s %s", maxDepth, class, id)
+		return fmt.Errorf("SQS-E006 objects nest more than %d levels deep in %s %s", maxDepth, class, id)
 	}
 	e.b.WriteString(pad(indent))
 	e.b.WriteString("<" + class + " DbId=\"" + id + "\">\n")
@@ -113,7 +113,7 @@ func (e *emitter) field(class string, spec *Class, r *row, f string, indent int)
 		}
 		ct := e.m.ChildTable(spec, f)
 		if e.g.get(ct, v) == nil {
-			e.note("%s.%s apunta al objeto %s que no existe; se omitió", class, f, v)
+			e.note("%s.%s points to object %s, which does not exist; skipped", class, f, v)
 			return nil
 		}
 		e.b.WriteString(pad(indent) + "<" + f + ">\n")
@@ -154,7 +154,7 @@ func (e *emitter) field(class string, spec *Class, r *row, f string, indent int)
 		var present []string
 		for _, id := range ids {
 			if e.g.get(ct, id) == nil {
-				e.note("%s.%s lista el objeto %s que no existe; se omitió", class, f, id)
+				e.note("%s.%s lists object %s, which does not exist; skipped", class, f, id)
 				continue
 			}
 			present = append(present, id)
@@ -191,7 +191,7 @@ func (e *emitter) field(class string, spec *Class, r *row, f string, indent int)
 	if b, ok := v.([]byte); ok && class == "ListMgt::LmVersion" && f == "Body" && e.inMediaPool {
 		nb, err := rewriteOFXContext(b, r.id)
 		if err != nil {
-			return fmt.Errorf("SQS-E006 árbol de nodos de %s: %w", r.id, err)
+			return fmt.Errorf("SQS-E006 node tree of %s: %w", r.id, err)
 		}
 		v = nb
 	}

@@ -1,73 +1,72 @@
-# Instrucciones para agentes en sqsolve
+# Instructions for agents working on sqsolve
 
-Lee esto completo antes de tocar el repo. Las reglas globales de `~/.claude/CLAUDE.md` y
-`~/dev/README.md` siguen aplicando.
+Read this in full before touching the repo. The global rules in `~/.claude/CLAUDE.md` and
+`~/dev/README.md` still apply.
 
-## Estado del proyecto
+## Project status
 
-Versiones 0.1 a 0.6 implementadas (2026-10-18) por encargo de Diego, antes de correr las
-pruebas de concepto con Resolve. La arquitectura está en `docs/` y el avance en
-`docs/21-tareas.md` §12. Lo que depende de una PoC (columna "Bloquea" de
-`docs/02-pruebas-de-concepto.md`) está escrito según la hipótesis del plan y **no está validado
-con Resolve real**: no lo extiendas ni lo des por bueno hasta que la PoC lo confirme.
+Versions 0.1 to 0.6 implemented (2026-10-18) on Diego's request, before running the proofs of
+concept with Resolve. The architecture is in `docs/` and the progress in `docs/21-tasks.md` §12.
+Whatever depends on a PoC (the "Blocks" column of `docs/02-proofs-of-concept.md`) is written
+according to the plan's hypothesis and is **not validated with real Resolve**: do not extend it
+or take it for granted until the PoC confirms it.
 
-## Cómo elegir y cerrar una tarea
+## How to pick and close a task
 
-1. Las tareas viven en `docs/21-tareas.md` con un ID `SQS-NNN`. Toma una cuyas dependencias
-   estén cerradas.
-2. Lee los documentos que la tarea cita en "Referencias" y los ADR relacionados.
-3. Implementa solo lo que pide la tarea. Si descubres que una decisión no se sostiene, no la
-   cambies en silencio: escribe un ADR nuevo con estado "Propuesto" y avísale a Diego.
-4. La tarea se cierra cuando cumple todos sus criterios de aceptación y la "definición de
-   terminado" global de abajo.
+1. Tasks live in `docs/21-tasks.md` with an ID `SQS-NNN`. Take one whose dependencies are
+   closed.
+2. Read the documents the task cites under "References" and the related ADRs.
+3. Implement only what the task asks for. If you find that a decision does not hold up, do not
+   change it silently: write a new ADR with status "Proposed" and tell Diego.
+4. The task is closed when it meets all its acceptance criteria and the global "definition of
+   done" below.
 
-## Definición de terminado (todas las tareas)
+## Definition of done (all tasks)
 
-- `make check` pasa: formato, `go vet`, `staticcheck`, pruebas unitarias y `govulncheck`.
-- Las pruebas de integración de los paquetes tocados pasan (`make test-integration`).
-- Cada comportamiento nuevo tiene prueba. Cada error esperado tiene prueba de su mensaje y
-  código.
-- Ninguna operación destructiva sin respaldo previo, confirmación y entrada en la auditoría.
-- La documentación afectada está actualizada en el mismo cambio.
-- Sin dependencias nuevas fuera de las aprobadas en `docs/06-stack.md`. Agregar una requiere
-  ADR y permiso de Diego.
+- `make check` passes: formatting, `go vet`, `staticcheck`, unit tests and `govulncheck`.
+- The integration tests of the touched packages pass (`make test-integration`).
+- Every new behavior has a test. Every expected error has a test of its message and code.
+- No destructive operation without a prior backup, confirmation and an audit log entry.
+- The affected documentation is updated in the same change.
+- No new dependencies beyond those approved in `docs/06-stack.md`. Adding one requires an ADR and
+  Diego's permission.
 
-## Reglas técnicas que no se negocian
+## Non-negotiable technical rules
 
-- Las bases de datos de Resolve son una caja negra (ADR 0007): sqsolve no lee ni escribe
-  tablas de Resolve salvo las consultas de catálogo y conteos descritos en
-  `docs/07-bibliotecas-y-postgresql.md`. La única excepción es la lectura acotada de
-  `internal/drp` para exportar .drp/.drx (ADR 0019), que no se extiende sin otro ADR.
-- SQL siempre con parámetros. Los identificadores (nombres de base y de rol) pasan por la
-  validación por expresión regular y por `pgx.Identifier.Sanitize`. Nunca concatenar texto
-  del usuario en SQL.
-- Procesos externos solo con `exec.CommandContext` y argumentos en arreglo, desde
-  `internal/execx`. Nada de `sh -c`. Contraseñas por `PGPASSFILE` temporal, nunca en argumentos.
-- Cancelar una tarea solo manda señales a procesos hijos que lanzó esa misma tarea. Nunca
-  `pkill`, nunca señales a PIDs ajenos (en pruebas, simula `os.Process`).
-- Secretos: nunca en logs, nunca en variables de entorno de larga vida; en el panel y la API solo
-  a quien tiene el permiso, con entrada en la auditoría (sin reautenticación, ADR 0021). El
-  manejador de `slog` redacta campos marcados como secretos.
-- Escrituras de archivos importantes: archivo `.partial`, `fsync`, `rename`, `fsync` del
-  directorio (`internal/fsx`).
+- Resolve databases are a black box (ADR 0007): sqsolve neither reads nor writes Resolve tables
+  except for the catalog queries and counts described in `docs/07-libraries-and-postgresql.md`.
+  The only exception is the bounded read in `internal/drp` to export .drp/.drx (ADR 0019), which
+  is not extended without another ADR.
+- SQL always with parameters. Identifiers (database and role names) go through the regular
+  expression validation and through `pgx.Identifier.Sanitize`. Never concatenate user text into
+  SQL.
+- External processes only with `exec.CommandContext` and an argument array, from
+  `internal/execx`. No `sh -c`. Passwords through a temporary `PGPASSFILE`, never in arguments.
+- Cancelling a job only sends signals to child processes that same job launched. Never `pkill`,
+  never signals to foreign PIDs (in tests, simulate `os.Process`).
+- Secrets: never in logs, never in long-lived environment variables; in the panel and the API
+  only to whoever has the permission, with an audit log entry (no reauthentication, ADR 0021).
+  The `slog` handler redacts fields marked as secrets.
+- Writes of important files: `.partial` file, `fsync`, `rename`, `fsync` of the directory
+  (`internal/fsx`).
 
-## Código
+## Code
 
-- Go estable vigente (ver `go.mod`), `CGO_ENABLED=0`. Identificadores y comentarios de código en
-  inglés; documentación, interfaz y mensajes de commit en español.
-- Paquetes bajo `internal/`. Sin frameworks web: `net/http`, `html/template`, `log/slog`.
-- Interfaz: plantillas en el servidor, formularios estándar y `app.js` propio (ADR 0004). Sin
-  htmx, sin JavaScript de terceros, sin Node ni npm en la compilación.
-- Antes de la primera tarea que cambie la interfaz, corre la fase de patrones de
-  `ui-consistency` (finding-patterns) y deja su lista de verificación en
-  `docs/ui/checklist.md`.
+- Current stable Go (see `go.mod`), `CGO_ENABLED=0`.
+- Everything is in English, and English is the only supported language: code identifiers and
+  comments, documentation, user interface, error messages, logs and commit messages. Do not add
+  other languages or translation layers.
+- Packages under `internal/`. No web frameworks: `net/http`, `html/template`, `log/slog`.
+- Interface: server-side templates, standard forms and our own `app.js` (ADR 0004). No htmx, no
+  third-party JavaScript, no Node or npm in the build.
+- Before the first task that changes the interface, run the patterns phase of `ui-consistency`
+  (finding-patterns) and leave its checklist in `docs/ui/checklist.md`.
 
-## Texto en español
+## Text style
 
-Sin rayas largas ni cortas, comillas rectas, nada de datos inventados: si falta un dato,
-"Por confirmar".
+No em or en dashes, straight quotes, no invented data: if a datum is missing, "To be confirmed".
 
 ## Commits
 
-Mensaje de una línea, corto, en español. Sin trailers de ningún tipo. No hagas commit ni push
-sin que Diego lo pida.
+One-line, short message, in English. No trailers of any kind. Do not commit or push unless Diego
+asks.

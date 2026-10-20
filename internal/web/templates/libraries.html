@@ -1,32 +1,32 @@
 {{define "content"}}
 <div class="pagehead">
-  <h1>Bibliotecas</h1>
-  {{if .P.Can "library.create"}}<div class="actions"><a class="button" href="/bibliotecas/nueva">Nueva biblioteca</a></div>{{end}}
+  <h1>Libraries</h1>
+  {{if .P.Can "library.create"}}<div class="actions"><a class="button" href="/libraries/new">New library</a></div>{{end}}
 </div>
-<nav class="tabs" aria-label="Filtro">
-  <a href="/bibliotecas" {{if eq .Data.Show ""}}aria-current="page"{{end}}>En uso</a>
-  <a href="/bibliotecas?ver=papelera" {{if eq .Data.Show "papelera"}}aria-current="page"{{end}}>Papelera</a>
-  <a href="/bibliotecas?ver=eliminadas" {{if eq .Data.Show "eliminadas"}}aria-current="page"{{end}}>Purgadas (con respaldos)</a>
+<nav class="tabs" aria-label="Filter">
+  <a href="/libraries" {{if eq .Data.Show ""}}aria-current="page"{{end}}>In use</a>
+  <a href="/libraries?view=trash" {{if eq .Data.Show "trash"}}aria-current="page"{{end}}>Trash</a>
+  <a href="/libraries?view=deleted" {{if eq .Data.Show "deleted"}}aria-current="page"{{end}}>Purged (with backups)</a>
 </nav>
 {{if .Data.Rows}}
 <section class="card flush">
 <table class="table cards-on-mobile">
-  <thead><tr><th>Biblioteca</th><th>Estado</th><th>Protección (14 días)</th><th>Último verificado</th><th>Conexiones</th><th>Tamaño</th></tr></thead>
+  <thead><tr><th>Library</th><th>State</th><th>Protection (14 days)</th><th>Last verified</th><th>Connections</th><th>Size</th></tr></thead>
   <tbody>
   {{range .Data.Rows}}
   <tr>
-    <td data-label="Biblioteca"><a href="/bibliotecas/{{.L.ID}}"><strong>{{.L.DisplayName}}</strong></a><br><span class="mono small muted">{{.L.Slug}}</span></td>
-    <td data-label="Estado">{{template "librarystate" .L}}{{if .L.ResolveVersion}}<br><span class="muted small">Resolve {{.L.ResolveVersion}}</span>{{end}}</td>
-    <td data-label="Protección" class="trackcell">{{template "track" (dict "t" .Track "big" false)}}</td>
-    <td data-label="Último verificado">{{template "badge" (dict "tone" .Track.Tone "label" .Track.LastAgo)}}</td>
-    <td data-label="Conexiones">{{.Sessions}}</td>
-    <td data-label="Tamaño">{{if .Size}}{{bytes .Size}}{{end}}</td>
+    <td data-label="Library"><a href="/libraries/{{.L.ID}}"><strong>{{.L.DisplayName}}</strong></a><br><span class="mono small muted">{{.L.Slug}}</span></td>
+    <td data-label="State">{{template "librarystate" .L}}{{if .L.ResolveVersion}}<br><span class="muted small">Resolve {{.L.ResolveVersion}}</span>{{end}}</td>
+    <td data-label="Protection" class="trackcell">{{template "track" (dict "t" .Track "big" false)}}</td>
+    <td data-label="Last verified">{{template "badge" (dict "tone" .Track.Tone "label" .Track.LastAgo)}}</td>
+    <td data-label="Connections">{{.Sessions}}</td>
+    <td data-label="Size">{{if .Size}}{{bytes .Size}}{{end}}</td>
   </tr>
   {{end}}
   </tbody>
 </table>
 </section>
 {{else}}
-  {{if eq .Data.Show ""}}{{template "empty" (dict "text" "Aún no hay bibliotecas. Una biblioteca es una base de datos de PostgreSQL donde Resolve guarda proyectos; las estaciones se conectan a ella." "href" "/bibliotecas/nueva" "action" "Crear la primera")}}{{else if eq .Data.Show "papelera"}}<p class="muted">Sin bibliotecas en la papelera.</p>{{else}}<p class="muted">Sin bibliotecas purgadas.</p>{{end}}
+  {{if eq .Data.Show ""}}{{template "empty" (dict "text" "There are no libraries yet. A library is a PostgreSQL database where Resolve stores projects; workstations connect to it." "href" "/libraries/new" "action" "Create the first one")}}{{else if eq .Data.Show "trash"}}<p class="muted">No libraries in the trash.</p>{{else}}<p class="muted">No purged libraries.</p>{{end}}
 {{end}}
 {{end}}

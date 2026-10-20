@@ -4,19 +4,19 @@
 {{template "libtabs" .}}
 
 <section class="card emphasis">
-  <div class="cardhead"><h2>Exportar proyectos y grados</h2>{{template "badge" (dict "tone" "warn" "label" "Experimental")}}</div>
-  <p>Produce archivos <code>.drp</code> (proyecto completo, sin stills) y <code>.drx</code> (grado: árbol de nodos y miniatura de un still) leyendo la biblioteca, sin abrir Resolve. Lee tablas que Blackmagic no documenta: <strong>sin garantía</strong>. Comprueba cada archivo importándolo en Resolve antes de confiar en él.</p>
+  <div class="cardhead"><h2>Export projects and grades</h2>{{template "badge" (dict "tone" "warn" "label" "Experimental")}}</div>
+  <p>Produces <code>.drp</code> files (full project, without stills) and <code>.drx</code> files (grade: node tree and still thumbnail) by reading the library, without opening Resolve. It reads tables that Blackmagic does not document: <strong>no guarantee</strong>. Check each file by importing it into Resolve before relying on it.</p>
   {{if .Data.Fingerprint}}
-  <p class="muted small">Esquema de la biblioteca: {{if .Data.KnownOK}}{{template "badge" (dict "tone" "ok" "label" (printf "Verificado con Resolve %s" .Data.Known.Resolve))}}{{else}}{{template "badge" (dict "tone" "warn" "label" "No verificado con Resolve")}} Las tablas coinciden con el modelo, pero nadie comparó archivos de esta versión con los de Resolve.{{end}}</p>
+  <p class="muted small">Library schema: {{if .Data.KnownOK}}{{template "badge" (dict "tone" "ok" "label" (printf "Verified with Resolve %s" .Data.Known.Resolve))}}{{else}}{{template "badge" (dict "tone" "warn" "label" "Not verified with Resolve")}} The tables match the model, but nobody has compared files of this version with those from Resolve.{{end}}</p>
   {{end}}
 </section>
 
 {{if not .Data.Enabled}}
-<div class="flash info" role="status">{{.Data.Err}}{{if .P.Can "settings.edit"}} <a href="/ajustes">Ir a Ajustes</a>.{{end}}</div>
+<div class="flash info" role="status">{{.Data.Err}}{{if .P.Can "settings.edit"}} <a href="/settings">Go to Settings</a>.{{end}}</div>
 {{else if .Data.Err}}
 <div class="flash error" role="alert">{{.Data.Err}}</div>
 {{else}}
 
-{{template "exportcatalog" (dict "base" (printf "/bibliotecas/%s/exportar" $id) "can" .Data.CanExport "projects" .Data.Projects "power" .Data.PowerGrades "albums" .Data.ProjectAlbums)}}
+{{template "exportcatalog" (dict "base" (printf "/libraries/%s/export" $id) "can" .Data.CanExport "projects" .Data.Projects "power" .Data.PowerGrades "albums" .Data.ProjectAlbums)}}
 {{end}}
 {{end}}

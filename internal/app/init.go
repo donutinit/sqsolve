@@ -45,7 +45,7 @@ func dataDirMode(root, pgdata string) error {
 			return err
 		}
 		if st.Mode().Perm()&0o001 == 0 {
-			return fmt.Errorf("%s quedó en %04o y el usuario de PostgreSQL no puede entrar", dir, st.Mode().Perm())
+			return fmt.Errorf("%s was left at %04o and the PostgreSQL user cannot enter it", dir, st.Mode().Perm())
 		}
 		if dir == root || dir == filepath.Dir(dir) {
 			break
@@ -56,7 +56,7 @@ func dataDirMode(root, pgdata string) error {
 		return err
 	}
 	if p := st.Mode().Perm(); p != 0o700 && p != 0o750 {
-		return fmt.Errorf("su carpeta quedó en %04o y PostgreSQL exige 0700", p)
+		return fmt.Errorf("its folder was left at %04o and PostgreSQL requires 0700", p)
 	}
 	return nil
 }
@@ -69,13 +69,13 @@ func Init(c *config.Config, out io.Writer) error {
 	chown := func(path string, uid, gid int) {
 		if root {
 			if err := os.Lchown(path, uid, gid); err != nil {
-				say("aviso: no se pudo cambiar el dueño de %s: %v", path, err)
+				say("warning: could not change the owner of %s: %v", path, err)
 			}
 		}
 	}
 	mkdir := func(path string, mode os.FileMode, uid, gid int) error {
 		if err := os.MkdirAll(path, mode); err != nil {
-			return fmt.Errorf("SQS-C050 no se pudo crear %s: %w", path, err)
+			return fmt.Errorf("SQS-C050 could not create %s: %w", path, err)
 		}
 		os.Chmod(path, mode)
 		chown(path, uid, gid)
@@ -103,7 +103,7 @@ func Init(c *config.Config, out io.Writer) error {
 
 	// Backups volume and instance identity.
 	if err := os.MkdirAll(c.BackupDir, 0o700); err != nil {
-		return fmt.Errorf("SQS-C051 volumen de respaldos: %w", err)
+		return fmt.Errorf("SQS-C051 backups volume: %w", err)
 	}
 	instanceID := ""
 	if b, err := os.ReadFile(instanceIDPath(c)); err == nil {
@@ -113,16 +113,16 @@ func Init(c *config.Config, out io.Writer) error {
 	switch {
 	case merr == nil && instanceID == "":
 		instanceID = marker.InstanceID
-		say("se adopta la identidad %s del volumen de respaldos (recuperación de una instalación anterior)", instanceID)
+		say("adopting identity %s from the backups volume (recovery of a previous installation)", instanceID)
 	case merr == nil && marker.InstanceID != instanceID:
-		return fmt.Errorf("SQS-S003 el volumen de respaldos pertenece a otra instalación (%s); esta es %s", marker.InstanceID, instanceID)
+		return fmt.Errorf("SQS-S003 the backups volume belongs to another installation (%s); this one is %s", marker.InstanceID, instanceID)
 	case errors.Is(merr, fsx.ErrNoMarker):
 		empty, err := fsx.IsEmptyDir(c.BackupDir)
 		if err != nil {
 			return err
 		}
 		if !empty && os.Getenv("SQSOLVE_BACKUPS_ADOPT") != "1" {
-			return errors.New("SQS-S004 el volumen de respaldos tiene archivos pero no es de sqsolve. Monta una carpeta vacía o define SQSOLVE_BACKUPS_ADOPT=1 si sabes que es la correcta")
+			return errors.New("SQS-S004 the backups volume has files but does not belong to sqsolve. Mount an empty folder or set SQSOLVE_BACKUPS_ADOPT=1 if you know it is the right one")
 		}
 		if instanceID == "" {
 			instanceID = ulid.New()
@@ -130,7 +130,7 @@ func Init(c *config.Config, out io.Writer) error {
 		if err := fsx.WriteMarker(c.BackupDir, fsx.Marker{InstanceID: instanceID, Volume: "backups", CreatedAt: time.Now().UTC()}); err != nil {
 			return err
 		}
-		say("volumen de respaldos marcado para la instalación %s", instanceID)
+		say("backups volume marked for installation %s", instanceID)
 	case merr != nil:
 		return merr
 	}
@@ -150,7 +150,7 @@ func Init(c *config.Config, out io.Writer) error {
 	if created, err := writeIfMissing(masterKeyPath(c), []byte(base64.StdEncoding.EncodeToString(secrets.RandomBytes(32))+"\n"), 0o400, c.UID, c.GID); err != nil {
 		return err
 	} else if created {
-		say("clave maestra generada")
+		say("master key generated")
 	}
 	if _, err := writeIfMissing(adminPassPath(c), []byte(secrets.GeneratePassword(32).Reveal()+"\n"), 0o400, c.UID, c.GID); err != nil {
 		return err
@@ -183,8 +183,8 @@ func Init(c *config.Config, out io.Writer) error {
 		return dataDirCheck(c.PGDir, c.PGDataDir)
 	}
 	if err := pgdata(); err != nil {
-		return fmt.Errorf("SQS-C054 PostgreSQL no podrá usar el volumen de la base de datos (%v). "+
-			"Pasa con carpetas que usan ACL de tipo NFSv4: en TrueNAS, crea el dataset con el preset Generic", err)
+		return fmt.Errorf("SQS-C054 PostgreSQL will not be able to use the database volume (%v). "+
+			"This happens with folders that use NFSv4 ACLs: on TrueNAS, create the dataset with the Generic preset", err)
 	}
 	if err := mkdir(conf, 0o750, c.UID, c.PGGID); err != nil {
 		return err
@@ -195,7 +195,7 @@ func Init(c *config.Config, out io.Writer) error {
 	if created, err := writeIfMissing(c.SuperuserPasswordFile(), []byte(secrets.GeneratePassword(32).Reveal()+"\n"), 0o440, c.UID, c.PGGID); err != nil {
 		return err
 	} else if created {
-		say("contraseña del superusuario de PostgreSQL generada")
+		say("PostgreSQL superuser password generated")
 	}
 	pgc := pgconf.PostgresConf(pgconf.Params{DataDir: c.PGDataDir, ConfDir: conf, SocketDir: c.PGSocket, Port: c.PGPort,
 		Listen: c.PGListen, MaxConnections: c.PGMaxConnections, MemoryMB: c.PGMemoryMB, SSL: true})
@@ -207,7 +207,7 @@ func Init(c *config.Config, out io.Writer) error {
 	if _, err := writeIfMissing(filepath.Join(conf, "pg_hba.conf"), []byte(hba), 0o640, c.UID, c.PGGID); err != nil {
 		return err
 	}
-	if _, err := writeIfMissing(filepath.Join(conf, "pg_ident.conf"), []byte("# Vacío: sqsolve no usa mapas de usuarios.\n"), 0o640, c.UID, c.PGGID); err != nil {
+	if _, err := writeIfMissing(filepath.Join(conf, "pg_ident.conf"), []byte("# Empty: sqsolve does not use user name maps.\n"), 0o640, c.UID, c.PGGID); err != nil {
 		return err
 	}
 	tlsDir := filepath.Join(conf, "tls")
@@ -238,7 +238,7 @@ func Init(c *config.Config, out io.Writer) error {
 		if err := fsx.WriteFileAtomic(key, kp, keyMode); err != nil {
 			return err
 		}
-		say("certificado TLS de PostgreSQL generado")
+		say("PostgreSQL TLS certificate generated")
 	}
 	chown(crt, tlsOwner, c.PGGID)
 	chown(key, tlsOwner, c.PGGID)
@@ -255,11 +255,11 @@ func Init(c *config.Config, out io.Writer) error {
 				return nil
 			})
 		}
-		say("permisos corregidos de forma recursiva")
+		say("permissions fixed recursively")
 	}
 	if !root {
-		say("aviso: no se ejecutó como root; no se cambiaron dueños de archivos")
+		say("warning: not run as root; file owners were not changed")
 	}
-	say("listo")
+	say("done")
 	return nil
 }

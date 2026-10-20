@@ -22,18 +22,18 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
-      - name: PostgreSQL 18 para las pruebas de integración
+      - name: PostgreSQL 18 for the integration tests
         run: |
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y --no-install-recommends postgresql-18
-      - name: Formato y vet
+      - name: Format and vet
         run: make fmt vet
       # staticcheck v0.8.1 cannot read Go 1.27.2 export data; v0.8.2 can, but it was
       # published on 2026-10-12 and the 7-day rule allows it from 2026-10-19.
       - name: staticcheck
         if: matrix.go == '1.26.x'
         run: make lint
-      - name: Pruebas (incluidas las de integración con PostgreSQL real)
+      - name: Tests (including integration tests against real PostgreSQL)
         env:
           SQSOLVE_TEST_PG_BIN: /usr/lib/postgresql/18/bin
           SQSOLVE_REQUIRE_PG: "1"
@@ -54,7 +54,7 @@ jobs:
         run: |
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y --no-install-recommends postgresql-18
-      - name: Escenarios de falla (estaciones simuladas, procesos que mueren, PostgreSQL caído)
+      - name: Failure scenarios (simulated workstations, dying processes, PostgreSQL down)
         env:
           SQSOLVE_TEST_PG_BIN: /usr/lib/postgresql/18/bin
           SQSOLVE_SCENARIOS_DIR: ${{ runner.temp }}/escenarios
@@ -70,22 +70,22 @@ jobs:
         uid: ["1000", "568"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Construir la imagen
+      - name: Build the image
         run: docker build --build-arg VERSION=ci --build-arg COMMIT=${GITHUB_SHA::7} -t sqsolve:ci .
-      - name: Preparar el compose de referencia tal cual, con rutas temporales
+      - name: Prepare the reference compose as is, with temporary paths
         run: |
           mkdir -p "$RUNNER_TEMP/sq"
           sed -e "s#ghcr.io/donutinit/sqsolve:[0-9.]*#sqsolve:ci#" \
-              -e "s#/ruta/sqsolve-respaldos#$RUNNER_TEMP/sq/respaldos#g" \
-              -e "s#/ruta/sqsolve#$RUNNER_TEMP/sq#g" \
+              -e "s#/path/to/sqsolve-backups#$RUNNER_TEMP/sq/backups#g" \
+              -e "s#/path/to/sqsolve#$RUNNER_TEMP/sq#g" \
               -e "s#SQSOLVE_UID: \"1000\"#SQSOLVE_UID: \"${{ matrix.uid }}\"#" \
               -e "s#SQSOLVE_GID: \"1000\"#SQSOLVE_GID: \"${{ matrix.uid }}\"#" \
               -e "s#user: \"1000:1000\"#user: \"${{ matrix.uid }}:${{ matrix.uid }}\"#" \
               deploy/compose.yaml > "$RUNNER_TEMP/compose.yaml"
           grep -n "sqsolve:ci\|SQSOLVE_UID\|user:" "$RUNNER_TEMP/compose.yaml"
           docker compose -f "$RUNNER_TEMP/compose.yaml" up -d
-      - name: Recorrido completo contra la imagen
+      - name: Full walkthrough against the image
         run: python3 test/compose_e2e.py "$RUNNER_TEMP/compose.yaml" "$RUNNER_TEMP/sq"
-      - name: Registros si algo falló
+      - name: Logs if something failed
         if: failure()
         run: docker compose -f "$RUNNER_TEMP/compose.yaml" logs

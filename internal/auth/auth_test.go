@@ -43,12 +43,12 @@ func TestPasswordHash(t *testing.T) {
 }
 
 func TestValidatePassword(t *testing.T) {
-	for _, bad := range []string{"short", "tung32K", "password1234", "aaaaaaaaaaaaaaaa", "diego-es-genial-123"} {
+	for _, bad := range []string{"short", "tung32K", "password1234", "aaaaaaaaaaaaaaaa", "diego-is-great-123"} {
 		if ValidatePassword(bad, "diego") == nil {
 			t.Errorf("%q accepted", bad)
 		}
 	}
-	for _, ok := range []string{"luz de tungsteno 3200K", "tung 32K"} {
+	for _, ok := range []string{"tungsten light 3200K", "tung 32K"} {
 		if err := ValidatePassword(ok, "diego"); err != nil {
 			t.Fatal(err)
 		}
@@ -120,14 +120,14 @@ func TestLoginSessionCSRFAndLockout(t *testing.T) {
 	if _, err := s.CreateUser(ctx, audit.System, "diego", "", "password1234", RoleAdmin); err == nil {
 		t.Fatal("weak password accepted")
 	}
-	u, err := s.CreateUser(ctx, audit.System, "diego", "Diego", "luz de tungsteno 3200K", RoleAdmin)
+	u, err := s.CreateUser(ctx, audit.System, "diego", "Diego", "tungsten light 3200K", RoleAdmin)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateUser(ctx, audit.System, "DIEGO", "", "luz de tungsteno 3200K", RoleViewer); err == nil {
+	if _, err := s.CreateUser(ctx, audit.System, "DIEGO", "", "tungsten light 3200K", RoleViewer); err == nil {
 		t.Fatal("duplicate username accepted")
 	}
-	raw, p, mfa, err := s.Login(ctx, "Diego", "luz de tungsteno 3200K", "10.0.0.2", "test")
+	raw, p, mfa, err := s.Login(ctx, "Diego", "tungsten light 3200K", "10.0.0.2", "test")
 	if err != nil || mfa || p.User.ID != u.ID {
 		t.Fatalf("login: %v %v", err, mfa)
 	}
@@ -152,7 +152,7 @@ func TestLoginSessionCSRFAndLockout(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		s.Login(ctx, "diego", "wrong", "10.0.0.9", "")
 	}
-	_, _, _, err = s.Login(ctx, "diego", "luz de tungsteno 3200K", "10.0.0.3", "")
+	_, _, _, err = s.Login(ctx, "diego", "tungsten light 3200K", "10.0.0.3", "")
 	var locked ErrLocked
 	if !errors.As(err, &locked) {
 		t.Fatalf("expected lockout, got %v", err)
@@ -167,7 +167,7 @@ func TestLoginSessionCSRFAndLockout(t *testing.T) {
 	}
 	base = base.Add(20 * time.Minute)
 	s.Now = func() time.Time { return base }
-	if _, _, _, err := s.Login(ctx, "diego", "luz de tungsteno 3200K", "10.0.0.3", ""); !errors.Is(err, ErrAccountLocked) {
+	if _, _, _, err := s.Login(ctx, "diego", "tungsten light 3200K", "10.0.0.3", ""); !errors.Is(err, ErrAccountLocked) {
 		t.Fatalf("expected account lock, got %v", err)
 	}
 	if u2, _ := s.UserByName(ctx, "diego"); u2.LockedAt == nil || u2.FailedLogins < LockoutAttempts {
@@ -179,7 +179,7 @@ func TestLoginSessionCSRFAndLockout(t *testing.T) {
 	if err := s.Unlock(ctx, audit.CLI, u.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := s.Login(ctx, "diego", "luz de tungsteno 3200K", "10.0.0.3", ""); err != nil {
+	if _, _, _, err := s.Login(ctx, "diego", "tungsten light 3200K", "10.0.0.3", ""); err != nil {
 		t.Fatal("login after unlock:", err)
 	}
 	if u3, _ := s.UserByName(ctx, "diego"); u3.FailedLogins != 0 || u3.LockedAt != nil {
@@ -191,8 +191,8 @@ func TestLoginSessionCSRFAndLockout(t *testing.T) {
 func TestTOTPFlowAndTokens(t *testing.T) {
 	ctx := context.Background()
 	s := newService(t)
-	s.CreateUser(ctx, audit.System, "ana", "", "monitor de referencia 709", RoleOperator)
-	raw, p, _, _ := s.Login(ctx, "ana", "monitor de referencia 709", "1.1.1.1", "")
+	s.CreateUser(ctx, audit.System, "ana", "", "reference monitor 709", RoleOperator)
+	raw, p, _, _ := s.Login(ctx, "ana", "reference monitor 709", "1.1.1.1", "")
 	secret, uri := s.BeginTOTP(p.User)
 	if !strings.HasPrefix(uri, "otpauth://totp/sqsolve:ana?") {
 		t.Fatal(uri)
@@ -206,7 +206,7 @@ func TestTOTPFlowAndTokens(t *testing.T) {
 	if _, err := s.Session(ctx, raw, "", false); err == nil {
 		t.Fatal("logout did not end session")
 	}
-	raw, p, mfa, _ := s.Login(ctx, "ana", "monitor de referencia 709", "1.1.1.1", "")
+	raw, p, mfa, _ := s.Login(ctx, "ana", "reference monitor 709", "1.1.1.1", "")
 	if !mfa {
 		t.Fatal("mfa not required")
 	}
@@ -241,7 +241,7 @@ func TestTOTPFlowAndTokens(t *testing.T) {
 func TestLastAdminProtected(t *testing.T) {
 	ctx := context.Background()
 	s := newService(t)
-	u, _ := s.CreateUser(ctx, audit.System, "root1", "", "una contraseña larga y rara", RoleAdmin)
+	u, _ := s.CreateUser(ctx, audit.System, "root1", "", "a long and odd password", RoleAdmin)
 	if err := s.UpdateUser(ctx, audit.System, u.ID, "", RoleViewer, false); err == nil {
 		t.Fatal("last admin demoted")
 	}

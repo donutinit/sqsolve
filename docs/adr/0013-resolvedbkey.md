@@ -1,16 +1,16 @@
-# ADR 0013. Llaves `.resolvedbkey`
+# ADR 0013. `.resolvedbkey` keys
 
-**Estado:** Aceptado, pendiente de PoC-05.
+**Status:** Accepted, pending PoC-05.
 
-**Contexto.** Resolve importa llaves `.resolvedbkey` (XML según el manual de 18) exportadas por
-Project Server [01 §8]. El formato no está documentado y no hay implementaciones libres.
+**Context.** Resolve imports `.resolvedbkey` keys (XML according to the 18 manual) exported by
+Project Server [01 §8]. The format is undocumented and there are no free implementations.
 
-**Decisión.** Módulo experimental, desactivado por defecto, solo si PoC-05 demuestra que Resolve
-acepta llaves generadas en Windows, macOS y Linux, y tras la revisión legal J-02. Las
-instrucciones de conexión manual son siempre el camino principal.
+**Decision.** Experimental module, disabled by default, only if PoC-05 shows that Resolve
+accepts generated keys on Windows, macOS and Linux, and after legal review J-02. Manual
+connection instructions are always the main path.
 
-**Alternativas.** No ofrecerlo nunca (peor experiencia); ofrecerlo sin pruebas (riesgo de
-llaves que no funcionan o que filtran la contraseña).
+**Alternatives.** Never offering it (worse experience); offering it untested (risk of keys that
+do not work or that leak the password).
 
-**Consecuencias.** La llave contiene la contraseña: descargarla exige reautenticación, queda en
-la auditoría y la interfaz advierte que se trate como una contraseña.
+**Consequences.** The key contains the password: downloading it requires reauthentication, is
+recorded in the audit log, and the UI warns that it must be treated like a password.

@@ -77,7 +77,7 @@ func (c *Class) Kind(field string) string { return c.Kinds[field] }
 func ParseModel(data []byte) (*Model, error) {
 	m := &Model{}
 	if err := json.Unmarshal(data, m); err != nil {
-		return nil, fmt.Errorf("modelo de exportación inválido: %w", err)
+		return nil, fmt.Errorf("invalid export model: %w", err)
 	}
 	m.emptyNull = map[string]bool{}
 	for _, k := range m.EmptyNullUUID {
@@ -90,10 +90,10 @@ func ParseModel(data []byte) (*Model, error) {
 	m.tableOf = map[string]string{}
 	for name, c := range m.Classes {
 		if c.Table == "" || m.Tables[c.Table] == nil {
-			return nil, fmt.Errorf("modelo de exportación: la clase %s no tiene tabla", name)
+			return nil, fmt.Errorf("export model: class %s has no table", name)
 		}
 		if m.Tables[c.Table][c.Table+"_id"] == "" {
-			return nil, fmt.Errorf("modelo de exportación: la tabla %s no declara su columna de id", c.Table)
+			return nil, fmt.Errorf("export model: table %s does not declare its id column", c.Table)
 		}
 		m.tableOf[name] = c.Table
 		for f, kids := range c.Children {
@@ -101,35 +101,35 @@ func ParseModel(data []byte) (*Model, error) {
 			for _, k := range kids {
 				kc := m.Classes[k]
 				if kc == nil {
-					return nil, fmt.Errorf("modelo de exportación: %s.%s apunta a la clase desconocida %s", name, f, k)
+					return nil, fmt.Errorf("export model: %s.%s points to unknown class %s", name, f, k)
 				}
 				tables = append(tables, kc.Table)
 			}
 			sort.Strings(tables)
 			if len(tables) > 0 && tables[0] != tables[len(tables)-1] {
-				return nil, fmt.Errorf("modelo de exportación: %s.%s mezcla tablas %v", name, f, tables)
+				return nil, fmt.Errorf("export model: %s.%s mixes tables %v", name, f, tables)
 			}
 		}
 		for f, k := range c.Kinds {
 			switch k {
 			case KindObject, KindListObj:
 				if len(c.Children[f]) == 0 {
-					return nil, fmt.Errorf("modelo de exportación: %s.%s no declara la clase hija", name, f)
+					return nil, fmt.Errorf("export model: %s.%s does not declare the child class", name, f)
 				}
 			case KindListText:
 			default:
-				return nil, fmt.Errorf("modelo de exportación: %s.%s tiene el tipo desconocido %q", name, f, k)
+				return nil, fmt.Errorf("export model: %s.%s has unknown type %q", name, f, k)
 			}
 		}
 	}
 	for key, t := range m.Assoc {
 		if m.Tables[t] == nil {
-			return nil, fmt.Errorf("modelo de exportación: la asociación %s usa la tabla desconocida %s", key, t)
+			return nil, fmt.Errorf("export model: association %s uses unknown table %s", key, t)
 		}
 	}
 	for key, b := range m.Backref {
 		if m.Tables[b.Table] == nil || m.Tables[b.Table][b.Column] == "" {
-			return nil, fmt.Errorf("modelo de exportación: la referencia inversa %s es inválida", key)
+			return nil, fmt.Errorf("export model: reverse reference %s is invalid", key)
 		}
 	}
 	return m, nil

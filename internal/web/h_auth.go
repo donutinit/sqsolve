@@ -36,7 +36,7 @@ func requestHost(r *http.Request) string {
 
 func (s *Server) setupForm(w http.ResponseWriter, r *http.Request) {
 	if has, _ := s.A.Auth.HasAdmin(r.Context()); has {
-		http.Redirect(w, r, "/entrar", http.StatusSeeOther)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 	data := map[string]any{
@@ -50,7 +50,7 @@ func (s *Server) setupForm(w http.ResponseWriter, r *http.Request) {
 	if info, err := s.A.PanelCertInfo(); err == nil {
 		data["Fingerprint"] = info.Fingerprint
 	}
-	s.render(w, r, "setup", "Instalación", "", data)
+	s.render(w, r, "setup", "Setup", "", data)
 }
 
 func (s *Server) checkInstallCode(code string) bool {
@@ -64,27 +64,27 @@ func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request) {
 	back := func(msg string) {
 		s.flash(w, "error", msg)
 		q := url.Values{"username": {r.FormValue("username")}, "host": {r.FormValue("host")}, "name": {r.FormValue("name")}}
-		http.Redirect(w, r, "/instalar?"+q.Encode(), http.StatusSeeOther)
+		http.Redirect(w, r, "/setup?"+q.Encode(), http.StatusSeeOther)
 	}
 	if has, _ := s.A.Auth.HasAdmin(ctx); has {
-		http.Redirect(w, r, "/entrar", http.StatusSeeOther)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 	if !s.checkPre(r) {
-		back("El formulario venció; vuelve a intentarlo.")
+		back("The form expired; try again.")
 		return
 	}
 	if !s.checkInstallCode(r.FormValue("code")) {
 		s.A.Audit.Record(ctx, audit.Actor{Type: "anonymous", IP: s.clientIP(r)}, "setup.code", "system", "", audit.Denied, nil)
 		time.Sleep(time.Second)
-		back("El código de instalación no es correcto. Búscalo en el registro del contenedor sqsolve.")
+		back("The installation code is not correct. Look for it in the sqsolve container log.")
 		return
 	}
 	if r.FormValue("password") != r.FormValue("password2") {
-		back("Las contraseñas no coinciden.")
+		back("The passwords do not match.")
 		return
 	}
-	u, err := s.A.Auth.CreateUser(ctx, audit.Actor{Type: "setup", Name: "instalación", IP: s.clientIP(r)}, r.FormValue("username"), r.FormValue("display"), r.FormValue("password"), auth.RoleAdmin)
+	u, err := s.A.Auth.CreateUser(ctx, audit.Actor{Type: "setup", Name: "setup", IP: s.clientIP(r)}, r.FormValue("username"), r.FormValue("display"), r.FormValue("password"), auth.RoleAdmin)
 	if err != nil {
 		back(humanError(err))
 		return
@@ -96,11 +96,11 @@ func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	st.DefaultPolicy.Mode, st.DefaultPolicy.CheckMinutes = core.ModeCron, 15
 	switch r.FormValue("preset") {
-	case "laboral":
+	case "workdays":
 		st.DefaultPolicy.Cron = "0 9-21/4 * * 1-6"
-	case "cada4":
+	case "every4h":
 		st.DefaultPolicy.Cron = "0 */4 * * *"
-	case "diario":
+	case "daily":
 		st.DefaultPolicy.Cron = "0 2 * * *"
 	default:
 		st.DefaultPolicy.Mode, st.DefaultPolicy.Cron = core.ModeActivity, core.ActivityCron(15)
@@ -112,30 +112,30 @@ func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request) {
 	s.A.ClearInstallCode()
 	token, p, _, err := s.A.Auth.Login(ctx, u.Username, r.FormValue("password"), s.clientIP(r), r.UserAgent())
 	if err != nil {
-		http.Redirect(w, r, "/entrar", http.StatusSeeOther)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 	s.setCookie(w, sessionCookie, token, int(auth.SessionAbsolute.Seconds()))
 	s.A.Audit.Record(ctx, p.Actor(), "setup.complete", "system", "", audit.OK, map[string]any{"advertised_host": st.AdvertisedHost})
-	http.Redirect(w, r, "/instalar/kit", http.StatusSeeOther)
+	http.Redirect(w, r, "/setup/kit", http.StatusSeeOther)
 }
 
 func (s *Server) setupRecover(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	back := func(msg string) {
-		http.Redirect(w, r, "/instalar?recuperar=1&error="+url.QueryEscape(msg), http.StatusSeeOther)
+		http.Redirect(w, r, "/setup?recover=1&error="+url.QueryEscape(msg), http.StatusSeeOther)
 	}
 	if has, _ := s.A.Auth.HasAdmin(ctx); has {
-		http.Redirect(w, r, "/entrar", http.StatusSeeOther)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 	if !s.checkPre(r) {
-		back("El formulario venció; vuelve a intentarlo.")
+		back("The form expired; try again.")
 		return
 	}
 	if !s.checkInstallCode(r.FormValue("code")) {
 		time.Sleep(time.Second)
-		back("El código de instalación no es correcto.")
+		back("The installation code is not correct.")
 		return
 	}
 	name, err := app.StageRecovery(s.A.Cfg, r.FormValue("key"))
@@ -143,39 +143,39 @@ func (s *Server) setupRecover(w http.ResponseWriter, r *http.Request) {
 		back(humanError(err))
 		return
 	}
-	s.A.Audit.Record(ctx, audit.Actor{Type: "setup", Name: "recuperación", IP: s.clientIP(r)}, "setup.recover", "system", "", audit.OK, map[string]any{"copy": name})
-	s.render(w, r, "recovering", "Recuperando", "", map[string]any{"Copy": name})
+	s.A.Audit.Record(ctx, audit.Actor{Type: "setup", Name: "recovery", IP: s.clientIP(r)}, "setup.recover", "system", "", audit.OK, map[string]any{"copy": name})
+	s.render(w, r, "recovering", "Recovering", "", map[string]any{"Copy": name})
 	go func() {
 		time.Sleep(2 * time.Second)
-		s.log.Warn("reinicio para aplicar la recuperación")
+		s.log.Warn("restarting to apply the recovery")
 		os.Exit(3)
 	}()
 }
 
 func (s *Server) setupKit(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "kit", "Kit de recuperación", "", nil)
+	s.render(w, r, "kit", "Recovery kit", "", nil)
 }
 
 func (s *Server) loginForm(w http.ResponseWriter, r *http.Request) {
 	if has, _ := s.A.Auth.HasAdmin(r.Context()); !has {
-		http.Redirect(w, r, "/instalar", http.StatusSeeOther)
+		http.Redirect(w, r, "/setup", http.StatusSeeOther)
 		return
 	}
 	if p, _ := s.principal(r, false); p != nil {
 		http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusSeeOther)
 		return
 	}
-	s.render(w, r, "login", "Entrar", "", map[string]any{"Pre": s.preToken(w, r), "Next": safeNext(r.URL.Query().Get("next")), "User": r.URL.Query().Get("u")})
+	s.render(w, r, "login", "Sign in", "", map[string]any{"Pre": s.preToken(w, r), "Next": safeNext(r.URL.Query().Get("next")), "User": r.URL.Query().Get("u")})
 }
 
 func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	next := safeNext(r.FormValue("next"))
 	fail := func(msg string) {
 		s.flash(w, "error", msg)
-		http.Redirect(w, r, "/entrar?"+url.Values{"next": {next}, "u": {r.FormValue("username")}}.Encode(), http.StatusSeeOther)
+		http.Redirect(w, r, "/login?"+url.Values{"next": {next}, "u": {r.FormValue("username")}}.Encode(), http.StatusSeeOther)
 	}
 	if !s.checkPre(r) {
-		fail("El formulario venció; vuelve a intentarlo.")
+		fail("The form expired; try again.")
 		return
 	}
 	token, _, mfa, err := s.A.Auth.Login(r.Context(), r.FormValue("username"), r.FormValue("password"), s.clientIP(r), r.UserAgent())
@@ -185,7 +185,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setCookie(w, sessionCookie, token, int(auth.SessionAbsolute.Seconds()))
 	if mfa {
-		http.Redirect(w, r, "/entrar/codigo?next="+url.QueryEscape(next), http.StatusSeeOther)
+		http.Redirect(w, r, "/login/code?next="+url.QueryEscape(next), http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, next, http.StatusSeeOther)
@@ -194,26 +194,26 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) totpForm(w http.ResponseWriter, r *http.Request) {
 	p, _ := s.principal(r, true)
 	if p == nil {
-		http.Redirect(w, r, "/entrar", http.StatusSeeOther)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	s.render(w, r, "totp", "Segundo factor", "", map[string]any{"CSRF": p.CSRF, "Next": safeNext(r.URL.Query().Get("next"))})
+	s.render(w, r, "totp", "Second factor", "", map[string]any{"CSRF": p.CSRF, "Next": safeNext(r.URL.Query().Get("next"))})
 }
 
 func (s *Server) totpSubmit(w http.ResponseWriter, r *http.Request) {
 	p, raw := s.principal(r, true)
 	if p == nil {
-		http.Redirect(w, r, "/entrar", http.StatusSeeOther)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 	next := safeNext(r.FormValue("next"))
 	if !s.A.Auth.CheckCSRF(raw, r.FormValue("csrf")) {
-		http.Redirect(w, r, "/entrar/codigo", http.StatusSeeOther)
+		http.Redirect(w, r, "/login/code", http.StatusSeeOther)
 		return
 	}
 	if err := s.A.Auth.VerifySecondFactor(r.Context(), p, r.FormValue("code")); err != nil {
 		s.flash(w, "error", humanError(err))
-		http.Redirect(w, r, "/entrar/codigo?"+url.Values{"next": {next}}.Encode(), http.StatusSeeOther)
+		http.Redirect(w, r, "/login/code?"+url.Values{"next": {next}}.Encode(), http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, next, http.StatusSeeOther)
@@ -222,37 +222,37 @@ func (s *Server) totpSubmit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	s.A.Auth.Logout(r.Context(), principalOf(r))
 	s.setCookie(w, sessionCookie, "", -1)
-	http.Redirect(w, r, "/entrar", http.StatusSeeOther)
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 func (s *Server) logoutEverywhere(w http.ResponseWriter, r *http.Request) {
 	s.A.Auth.LogoutEverywhere(r.Context(), principalOf(r))
-	s.ok(w, r, "/cuenta", "Se cerraron tus otras sesiones.")
+	s.ok(w, r, "/account", "Your other sessions were closed.")
 }
 
 func (s *Server) account(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	tokens, _ := s.A.Auth.Tokens(r.Context(), p.User.ID)
-	s.render(w, r, "account", "Mi cuenta", "cuenta", map[string]any{"Tokens": tokens, "Scopes": []string{"read", "backup", "restore", "export", "admin"}})
+	s.render(w, r, "account", "My account", "account", map[string]any{"Tokens": tokens, "Scopes": []string{"read", "backup", "restore", "export", "admin"}})
 }
 
 func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	if r.FormValue("password") != r.FormValue("password2") {
-		s.fail(w, r, "/cuenta", errors.New("SQS-A015 las contraseñas no coinciden"))
+		s.fail(w, r, "/account", errors.New("SQS-A015 the passwords do not match"))
 		return
 	}
 	if err := s.A.Auth.SetPassword(r.Context(), p.Actor(), p.User.ID, r.FormValue("password"), p.SessionID); err != nil {
-		s.fail(w, r, "/cuenta", err)
+		s.fail(w, r, "/account", err)
 		return
 	}
-	s.ok(w, r, "/cuenta", "Contraseña cambiada. Se cerraron tus otras sesiones.")
+	s.ok(w, r, "/account", "Password changed. Your other sessions were closed.")
 }
 
 func (s *Server) accountTOTPBegin(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	secret, uri := s.A.Auth.BeginTOTP(p.User)
-	s.render(w, r, "totp_setup", "Activar segundo factor", "cuenta", map[string]any{"Secret": secret, "URI": uri, "Grouped": group4(secret)})
+	s.render(w, r, "totp_setup", "Enable second factor", "account", map[string]any{"Secret": secret, "URI": uri, "Grouped": group4(secret)})
 }
 
 func group4(s string) string {
@@ -271,24 +271,24 @@ func (s *Server) accountTOTPEnable(w http.ResponseWriter, r *http.Request) {
 	secret := strings.ReplaceAll(r.FormValue("secret"), " ", "")
 	codes, err := s.A.Auth.EnableTOTP(r.Context(), p, secret, r.FormValue("code"))
 	if err != nil {
-		s.flash(w, "error", humanError(err)+". Vuelve a escanear el código e inténtalo de nuevo.")
-		http.Redirect(w, r, "/cuenta", http.StatusSeeOther)
+		s.flash(w, "error", humanError(err)+". Scan the code again and try once more.")
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
 		return
 	}
-	s.render(w, r, "recovery_codes", "Códigos de recuperación", "cuenta", map[string]any{"Codes": codes})
+	s.render(w, r, "recovery_codes", "Recovery codes", "account", map[string]any{"Codes": codes})
 }
 
 func (s *Server) accountTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	if s.A.Svc.Settings(r.Context()).TOTPRequiredAdmins && p.User.Role == auth.RoleAdmin {
-		s.fail(w, r, "/cuenta", errors.New("SQS-A040 el segundo factor es obligatorio para administradores en esta instalación"))
+		s.fail(w, r, "/account", errors.New("SQS-A040 the second factor is required for administrators on this installation"))
 		return
 	}
 	if err := s.A.Auth.DisableTOTP(r.Context(), p.Actor(), p.User.ID); err != nil {
-		s.fail(w, r, "/cuenta", err)
+		s.fail(w, r, "/account", err)
 		return
 	}
-	s.ok(w, r, "/cuenta", "Segundo factor desactivado.")
+	s.ok(w, r, "/account", "Second factor disabled.")
 }
 
 func (s *Server) tokenCreate(w http.ResponseWriter, r *http.Request) {
@@ -303,18 +303,18 @@ func (s *Server) tokenCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	raw, _, err := s.A.Auth.CreateToken(r.Context(), p, r.FormValue("name"), r.Form["scope"], time.Duration(days)*24*time.Hour)
 	if err != nil {
-		s.fail(w, r, "/cuenta", err)
+		s.fail(w, r, "/account", err)
 		return
 	}
-	s.render(w, r, "token_created", "Token creado", "cuenta", map[string]any{"Token": raw})
+	s.render(w, r, "token_created", "Token created", "account", map[string]any{"Token": raw})
 }
 
 func (s *Server) tokenRevoke(w http.ResponseWriter, r *http.Request) {
 	if err := s.A.Auth.RevokeToken(r.Context(), principalOf(r), r.PathValue("id")); err != nil {
-		s.fail(w, r, "/cuenta", err)
+		s.fail(w, r, "/account", err)
 		return
 	}
-	s.ok(w, r, "/cuenta", "Token revocado.")
+	s.ok(w, r, "/account", "Token revoked.")
 }
 
 var _ = context.Background

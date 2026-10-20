@@ -29,16 +29,16 @@ func (s String) Reveal() string { return s.v }
 // Empty reports whether the secret is unset.
 func (s String) Empty() bool { return s.v == "" }
 
-func (s String) String() string { return "[redactado]" }
+func (s String) String() string { return "[redacted]" }
 
 // GoString hides the value from %#v.
-func (s String) GoString() string { return "[redactado]" }
+func (s String) GoString() string { return "[redacted]" }
 
 // LogValue hides the value from slog.
-func (s String) LogValue() slog.Value { return slog.StringValue("[redactado]") }
+func (s String) LogValue() slog.Value { return slog.StringValue("[redacted]") }
 
 // MarshalJSON hides the value from JSON output.
-func (s String) MarshalJSON() ([]byte, error) { return json.Marshal("[redactado]") }
+func (s String) MarshalJSON() ([]byte, error) { return json.Marshal("[redacted]") }
 
 // Password alphabet: no symbols and no look-alike characters.
 const passwordAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
@@ -80,7 +80,7 @@ func RandomToken(n int) string {
 }
 
 // ErrPermissions is returned for secret files readable by others.
-var ErrPermissions = errors.New("SQS-C010 permisos demasiado abiertos en un archivo de secretos")
+var ErrPermissions = errors.New("SQS-C010 permissions too open on a secrets file")
 
 // ReadFile reads a secret file and rejects files that others can read or
 // anyone can write.
@@ -90,7 +90,7 @@ func ReadFile(path string) (String, error) {
 		return String{}, err
 	}
 	if st.Mode().Perm()&0o037 != 0 {
-		return String{}, fmt.Errorf("%w: %s tiene %o", ErrPermissions, path, st.Mode().Perm())
+		return String{}, fmt.Errorf("%w: %s has mode %o", ErrPermissions, path, st.Mode().Perm())
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -108,7 +108,7 @@ type Box struct {
 // NewBox builds a Box from a 32-byte key.
 func NewBox(key []byte) (*Box, error) {
 	if len(key) != chacha20poly1305.KeySize {
-		return nil, fmt.Errorf("SQS-C011 la clave maestra debe tener %d bytes, tiene %d", chacha20poly1305.KeySize, len(key))
+		return nil, fmt.Errorf("SQS-C011 the master key must be %d bytes, it has %d", chacha20poly1305.KeySize, len(key))
 	}
 	id := base64.RawURLEncoding.EncodeToString(key[:4])
 	return &Box{keyID: id, key: append([]byte(nil), key...)}, nil
@@ -127,7 +127,7 @@ func (b *Box) Seal(plaintext String, aad string) (string, error) {
 }
 
 // ErrDecrypt means the value cannot be decrypted with this key and context.
-var ErrDecrypt = errors.New("SQS-C012 no se pudo descifrar el secreto")
+var ErrDecrypt = errors.New("SQS-C012 could not decrypt the secret")
 
 // Open decrypts a value produced by Seal.
 func (b *Box) Open(sealed, aad string) (String, error) {
@@ -136,7 +136,7 @@ func (b *Box) Open(sealed, aad string) (String, error) {
 		return String{}, ErrDecrypt
 	}
 	if parts[1] != b.keyID {
-		return String{}, fmt.Errorf("%w: cifrado con otra clave maestra", ErrDecrypt)
+		return String{}, fmt.Errorf("%w: encrypted with another master key", ErrDecrypt)
 	}
 	raw, err := base64.RawStdEncoding.DecodeString(parts[2])
 	if err != nil {

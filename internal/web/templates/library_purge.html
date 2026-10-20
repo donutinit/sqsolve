@@ -1,12 +1,12 @@
 {{define "content"}}
 {{$l := .Data.L}}
 <section class="card narrow danger-zone">
-  <h1>Purgar {{$l.DisplayName}}</h1>
-  <p>Se borran del servidor la base en la papelera y sus usuarios. No se puede deshacer, pero los respaldos se conservan y sirven para restaurarla como biblioteca nueva.</p>
-  <form method="post" action="/bibliotecas/{{$l.ID}}/purgar" class="form">
+  <h1>Purge {{$l.DisplayName}}</h1>
+  <p>The database in the trash and its users are deleted from the server. This cannot be undone, but the backups are kept and can be used to restore it as a new library.</p>
+  <form method="post" action="/libraries/{{$l.ID}}/purge" class="form">
     {{template "csrf" .CSRF}}
-    <label>Escribe <code>{{$l.Slug}}</code> para confirmar<input name="confirm" required autocomplete="off" class="mono" data-confirm-match="{{$l.Slug}}"></label>
-    <div class="actions"><button type="submit" class="danger" data-needs-match>Purgar</button><a href="/bibliotecas/{{$l.ID}}">Cancelar</a></div>
+    <label>Type <code>{{$l.Slug}}</code> to confirm<input name="confirm" required autocomplete="off" class="mono" data-confirm-match="{{$l.Slug}}"></label>
+    <div class="actions"><button type="submit" class="danger" data-needs-match>Purge</button><a href="/libraries/{{$l.ID}}">Cancel</a></div>
   </form>
 </section>
 {{end}}

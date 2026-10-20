@@ -37,21 +37,21 @@ const (
 	Interrupted State = "interrupted"
 )
 
-// Label in Spanish.
+// Label returns the display label of a state.
 func (s State) Label() string {
 	switch s {
 	case Queued:
-		return "En cola"
+		return "Queued"
 	case Running:
-		return "En curso"
+		return "Running"
 	case Succeeded:
-		return "Completada"
+		return "Succeeded"
 	case Failed:
-		return "Fallida"
+		return "Failed"
 	case Cancelled:
-		return "Cancelada"
+		return "Cancelled"
 	case Interrupted:
-		return "Interrumpida"
+		return "Interrupted"
 	}
 	return string(s)
 }
@@ -222,7 +222,7 @@ func Priority(p int) Option { return func(o *enqueueOpts) { o.priority = p } }
 func Unique() Option { return func(o *enqueueOpts) { o.unique = true } }
 
 // ErrUnknownType is returned for unregistered job types.
-var ErrUnknownType = errors.New("SQS-J001 tipo de tarea desconocido")
+var ErrUnknownType = errors.New("SQS-J001 unknown job type")
 
 // Enqueue stores a new job.
 func (m *Manager) Enqueue(ctx context.Context, typ, libraryID string, params any, by audit.Actor, opts ...Option) (*Job, error) {
@@ -300,7 +300,7 @@ func (m *Manager) scanJob(row interface{ Scan(...any) error }) (*Job, error) {
 }
 
 // ErrNotFound is returned for unknown jobs.
-var ErrNotFound = errors.New("SQS-J002 tarea no encontrada")
+var ErrNotFound = errors.New("SQS-J002 job not found")
 
 // Get returns one job.
 func (m *Manager) Get(ctx context.Context, id string) (*Job, error) {
@@ -425,7 +425,7 @@ func (m *Manager) FailedSince(ctx context.Context, t time.Time) (int, error) {
 }
 
 // ErrNotCancellable is returned when a running job cannot be cancelled.
-var ErrNotCancellable = errors.New("SQS-J003 esta tarea no se puede cancelar en este momento")
+var ErrNotCancellable = errors.New("SQS-J003 this job cannot be cancelled right now")
 
 // Cancel stops a queued or cancellable running job.
 func (m *Manager) Cancel(ctx context.Context, id string) error {
@@ -458,7 +458,7 @@ func (m *Manager) Retry(ctx context.Context, id string, by audit.Actor) (*Job, e
 		return nil, err
 	}
 	if j.State != Failed && j.State != Interrupted && j.State != Cancelled {
-		return nil, errors.New("SQS-J004 solo se reintentan tareas fallidas, canceladas o interrumpidas")
+		return nil, errors.New("SQS-J004 only failed, cancelled or interrupted jobs can be retried")
 	}
 	var params any
 	json.Unmarshal(j.Params, &params)
@@ -478,10 +478,10 @@ func (m *Manager) MarkInterrupted(ctx context.Context) ([]*Job, error) {
 		return nil, err
 	}
 	for _, j := range running {
-		m.db.ExecContext(ctx, `UPDATE jobs SET state = 'interrupted', finished_at = ?, error_code = 'SQS-J010', error_detail = 'El proceso se detuvo mientras la tarea corría' WHERE id = ?`, store.NowT(), j.ID)
+		m.db.ExecContext(ctx, `UPDATE jobs SET state = 'interrupted', finished_at = ?, error_code = 'SQS-J010', error_detail = 'The process stopped while the job was running' WHERE id = ?`, store.NowT(), j.ID)
 		m.db.ExecContext(ctx, `UPDATE job_steps SET state = 'interrupted', finished_at = ? WHERE job_id = ? AND state = 'running'`, store.NowT(), j.ID)
 		m.ev.Emit(ctx, events.Event{Type: events.JobInterrupted, Severity: events.Warning, LibraryID: j.LibraryID, JobID: j.ID,
-			Message: fmt.Sprintf("La tarea %q quedó interrumpida por un reinicio", m.Title(j.Type))})
+			Message: fmt.Sprintf("The job %q was interrupted by a restart", m.Title(j.Type))})
 		j.State = Interrupted
 	}
 	return running, nil
@@ -557,7 +557,7 @@ func (m *Manager) dispatch(ctx context.Context) {
 	rows, err := m.db.QueryContext(ctx, `SELECT `+jobCols+` FROM jobs WHERE state = 'queued' AND scheduled_for <= ?
 		ORDER BY priority DESC, scheduled_for, id LIMIT 50`, store.NowT())
 	if err != nil {
-		m.log.Error("cola de tareas", "err", err)
+		m.log.Error("job queue", "err", err)
 		return
 	}
 	var queued []*Job
@@ -621,7 +621,7 @@ func (m *Manager) execute(ctx context.Context, cancel context.CancelFunc, j *Job
 		defer func() {
 			if p := recover(); p != nil {
 				err = fmt.Errorf("SQS-X999 error interno: %v", p)
-				m.log.Error("pánico en tarea", "job", j.ID, "panic", p, "stack", string(debug.Stack()))
+				m.log.Error("panic in job", "job", j.ID, "panic", p, "stack", string(debug.Stack()))
 			}
 		}()
 		return spec.Run(ctx, r)
@@ -668,7 +668,7 @@ func (m *Manager) finish(ctx context.Context, j *Job, state State, err error) {
 	m.bus.Publish("jobs", u)
 	if state == Failed {
 		m.ev.Emit(ctx, events.Event{Type: events.JobFailed, Severity: events.Error, LibraryID: j.LibraryID, JobID: j.ID,
-			Message: fmt.Sprintf("Falló la tarea %q: %s", m.Title(j.Type), shorten(detail, 300)), Data: map[string]any{"code": code}})
+			Message: fmt.Sprintf("The job %q failed: %s", m.Title(j.Type), shorten(detail, 300)), Data: map[string]any{"code": code}})
 	}
 }
 

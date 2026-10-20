@@ -40,7 +40,7 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 func (s *Session) ExportProject(ctx context.Context, id string, w io.Writer) (*ExportInfo, error) {
 	id, ok := ValidID(id)
 	if !ok {
-		return nil, fmt.Errorf("%w: identificador de proyecto inválido", ErrNotFound)
+		return nil, fmt.Errorf("%w: invalid project identifier", ErrNotFound)
 	}
 	g := newGraph()
 	if err := s.load(ctx, g, "SM_Project", []string{id}); err != nil {
@@ -48,7 +48,7 @@ func (s *Session) ExportProject(ctx context.Context, id string, w io.Writer) (*E
 	}
 	prj := g.get("SM_Project", id)
 	if prj == nil {
-		return nil, fmt.Errorf("%w: el proyecto %s", ErrNotFound, id)
+		return nil, fmt.Errorf("%w: project %s", ErrNotFound, id)
 	}
 	name, _ := prj.vals["ProjectName"].(string)
 	pool, _ := prj.vals["MediaPool"].(string)
@@ -179,7 +179,7 @@ func (s *Session) folderTree(ctx context.Context, pool string) ([]*folder, error
 	scan := func(q string, args ...any) ([]*folder, error) {
 		rows, err := s.tx.Query(ctx, q, args...)
 		if err != nil {
-			return nil, fmt.Errorf("SQS-E005 lectura de Sm2MpFolder: %w", err)
+			return nil, fmt.Errorf("SQS-E005 reading Sm2MpFolder: %w", err)
 		}
 		defer rows.Close()
 		var out []*folder
@@ -237,7 +237,7 @@ func (e *emitter) orderFolders(g *graph, f *folder, kids []*folder) []*folder {
 		if blob, ok := r.vals["FieldsBlob"].([]byte); ok {
 			var err error
 			if order, err = childOrder(blob); err != nil {
-				e.note("carpeta %q: no se pudo leer el orden de sus subcarpetas (%v)", f.name, err)
+				e.note("folder %q: could not read the order of its subfolders (%v)", f.name, err)
 			}
 		}
 	}
@@ -256,7 +256,7 @@ func (e *emitter) orderFolders(g *graph, f *folder, kids []*folder) []*folder {
 		sort.SliceStable(out, func(i, j int) bool { return pos[out[i].id] < pos[out[j].id] })
 		return out
 	}
-	e.note("carpeta %q: sus subcarpetas van en orden alfabético porque Resolve no guardó el orden", f.name)
+	e.note("folder %q: its subfolders are in alphabetical order because Resolve did not store the order", f.name)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out
 }
@@ -266,7 +266,7 @@ func (s *Session) containersOf(ctx context.Context, seqIDs []string) ([]string, 
 	for _, chunk := range chunks(seqIDs) {
 		rows, err := s.tx.Query(ctx, `SELECT "Sm2SequenceContainer_id"::text FROM "Sm2SequenceContainer" WHERE "Sm2Sequence_id"::text = ANY($1)`, chunk)
 		if err != nil {
-			return nil, fmt.Errorf("SQS-E005 lectura de Sm2SequenceContainer: %w", err)
+			return nil, fmt.Errorf("SQS-E005 reading Sm2SequenceContainer: %w", err)
 		}
 		for rows.Next() {
 			var id string
@@ -292,7 +292,7 @@ func (s *Session) galleryOf(ctx context.Context, projectID string) (string, erro
 		if strings.Contains(err.Error(), "no rows") {
 			return "", nil
 		}
-		return "", fmt.Errorf("SQS-E005 lectura de Gallery::GyGallery: %w", err)
+		return "", fmt.Errorf("SQS-E005 reading Gallery::GyGallery: %w", err)
 	}
 	return id, nil
 }
@@ -301,7 +301,7 @@ func (s *Session) galleryOf(ctx context.Context, projectID string) (string, erro
 func (s *Session) ExportStill(ctx context.Context, id string, w io.Writer) (*ExportInfo, error) {
 	id, ok := ValidID(id)
 	if !ok {
-		return nil, fmt.Errorf("%w: identificador de still inválido", ErrNotFound)
+		return nil, fmt.Errorf("%w: invalid still identifier", ErrNotFound)
 	}
 	g := newGraph()
 	if err := s.load(ctx, g, "Gallery::GyStill", []string{id}); err != nil {
@@ -309,7 +309,7 @@ func (s *Session) ExportStill(ctx context.Context, id string, w io.Writer) (*Exp
 	}
 	st := g.get("Gallery::GyStill", id)
 	if st == nil {
-		return nil, fmt.Errorf("%w: el still %s", ErrNotFound, id)
+		return nil, fmt.Errorf("%w: still %s", ErrNotFound, id)
 	}
 	e := &emitter{m: s.m, g: g}
 	doc, err := e.document(s.Header(0), "Gallery::GyStill", id)
@@ -328,14 +328,14 @@ func (s *Session) ExportStill(ctx context.Context, id string, w io.Writer) (*Exp
 func (s *Session) ExportAlbum(ctx context.Context, viewID string, w io.Writer) (*ExportInfo, error) {
 	viewID, ok := ValidID(viewID)
 	if !ok {
-		return nil, fmt.Errorf("%w: identificador de álbum inválido", ErrNotFound)
+		return nil, fmt.Errorf("%w: invalid album identifier", ErrNotFound)
 	}
 	albums, err := s.albums(ctx, viewID)
 	if err != nil {
 		return nil, err
 	}
 	if len(albums) == 0 || len(albums[0].Stills) == 0 {
-		return nil, fmt.Errorf("%w: el álbum %s", ErrNotFound, viewID)
+		return nil, fmt.Errorf("%w: album %s", ErrNotFound, viewID)
 	}
 	album := albums[0]
 	var ids []string

@@ -1,9 +1,9 @@
 {{define "content"}}
 <section class="card narrow">
-  <h1>Códigos de recuperación</h1>
-  <p>El segundo factor está activo. Guarda estos códigos: cada uno sirve una vez si pierdes la aplicación. No se volverán a mostrar.</p>
+  <h1>Recovery codes</h1>
+  <p>The second factor is active. Save these codes: each one works once if you lose the app. They will not be shown again.</p>
   <pre class="codes" id="codes">{{range .Data.Codes}}{{.}}
 {{end}}</pre>
-  <p><button type="button" class="ghost" data-copy="#codes">Copiar</button> <a class="button" href="/cuenta">Listo</a></p>
+  <p><button type="button" class="ghost" data-copy="#codes">Copy</button> <a class="button" href="/account">Done</a></p>
 </section>
 {{end}}

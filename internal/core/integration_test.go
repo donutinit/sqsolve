@@ -328,7 +328,7 @@ func TestSwapRecoveryAfterCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.svc.DB.ExecContext(ctx, `INSERT INTO jobs(id, type, library_id, state, scheduled_for, created_at, created_by_type) VALUES ('J1', 'restore.replace', ?, 'running', ?, ?, 'user')`, l.ID, store.NowT(), store.NowT())
-	e.svc.DB.ExecContext(ctx, `INSERT INTO job_steps(job_id, seq, name, state, started_at, data) VALUES ('J1', 1, 'intercambiar', 'running', ?, ?)`, store.NowT(),
+	e.svc.DB.ExecContext(ctx, `INSERT INTO job_steps(job_id, seq, name, state, started_at, data) VALUES ('J1', 1, 'swap', 'running', ?, ?)`, store.NowT(),
 		`{"live":"`+l.DBName+`","prev":"`+prev+`","restored":"`+restoreDB+`","phase":"rename_restored","state_before":"active"}`)
 	e.svc.DB.ExecContext(ctx, `UPDATE libraries SET state = 'restoring' WHERE id = ?`, l.ID)
 	interrupted, err := e.svc.Jobs.MarkInterrupted(ctx)

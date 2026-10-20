@@ -91,7 +91,7 @@ func (p *Principal) Can(a Action) bool {
 // Actor for audit entries.
 func (p *Principal) Actor() audit.Actor {
 	if p == nil || p.User == nil {
-		return audit.Actor{Type: "anonymous", ID: "", Name: "anónimo", IP: ipOf(p)}
+		return audit.Actor{Type: "anonymous", ID: "", Name: "anonymous", IP: ipOf(p)}
 	}
 	t := "user"
 	if p.TokenID != "" {
@@ -143,7 +143,7 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 }
 
 // ErrUserNotFound is returned for unknown users.
-var ErrUserNotFound = errors.New("SQS-A001 usuario no encontrado")
+var ErrUserNotFound = errors.New("SQS-A001 user not found")
 
 // UserByID returns a user.
 func (s *Service) UserByID(ctx context.Context, id string) (*User, error) {
@@ -194,10 +194,10 @@ var usernameRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9._-]{1,31}$`)
 func (s *Service) CreateUser(ctx context.Context, by audit.Actor, username, display, password string, role Role) (*User, error) {
 	username = strings.TrimSpace(username)
 	if !usernameRe.MatchString(username) {
-		return nil, errors.New("SQS-A011 usuario inválido: de 2 a 32 caracteres, letras, números, punto, guion o guion bajo")
+		return nil, errors.New("SQS-A011 invalid username: 2 to 32 characters, letters, digits, dot, hyphen or underscore")
 	}
 	if !role.Valid() {
-		return nil, errors.New("SQS-A012 rol inválido")
+		return nil, errors.New("SQS-A012 invalid role")
 	}
 	if err := ValidatePassword(password, username); err != nil {
 		return nil, err
@@ -208,7 +208,7 @@ func (s *Service) CreateUser(ctx context.Context, by audit.Actor, username, disp
 		id, username, strings.TrimSpace(display), HashPassword(password), string(role), now, now)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
-			return nil, errors.New("SQS-A013 ya existe un usuario con ese nombre")
+			return nil, errors.New("SQS-A013 a user with that name already exists")
 		}
 		return nil, err
 	}
@@ -235,7 +235,7 @@ func (s *Service) SetPassword(ctx context.Context, by audit.Actor, userID, passw
 // UpdateUser changes display name and role, and enables or disables.
 func (s *Service) UpdateUser(ctx context.Context, by audit.Actor, userID, display string, role Role, disabled bool) error {
 	if !role.Valid() {
-		return errors.New("SQS-A012 rol inválido")
+		return errors.New("SQS-A012 invalid role")
 	}
 	u, err := s.UserByID(ctx, userID)
 	if err != nil {
@@ -245,7 +245,7 @@ func (s *Service) UpdateUser(ctx context.Context, by audit.Actor, userID, displa
 		var n int
 		s.db.QueryRowContext(ctx, `SELECT count(*) FROM admin_users WHERE role = 'admin' AND disabled_at IS NULL AND id <> ?`, userID).Scan(&n)
 		if n == 0 {
-			return errors.New("SQS-A014 debe quedar al menos un administrador activo")
+			return errors.New("SQS-A014 at least one active administrator must remain")
 		}
 	}
 	var dis any
@@ -266,16 +266,16 @@ func (s *Service) UpdateUser(ctx context.Context, by audit.Actor, userID, displa
 }
 
 // ErrBadCredentials hides whether the user exists.
-var ErrBadCredentials = errors.New("SQS-A002 usuario o contraseña incorrectos")
+var ErrBadCredentials = errors.New("SQS-A002 incorrect username or password")
 
 // ErrAccountLocked is returned for an account locked after LockoutAttempts.
-var ErrAccountLocked = errors.New("SQS-A004 cuenta bloqueada por contraseñas incorrectas; en la consola del contenedor: sqsolve admin unlock <usuario>")
+var ErrAccountLocked = errors.New("SQS-A004 account locked after incorrect passwords; in the container console: sqsolve admin unlock <username>")
 
 // ErrLocked is returned while a login is rate limited.
 type ErrLocked struct{ Until time.Time }
 
 func (e ErrLocked) Error() string {
-	return fmt.Sprintf("SQS-A003 demasiados intentos; espera %s", time.Until(e.Until).Round(time.Second))
+	return fmt.Sprintf("SQS-A003 too many attempts; wait %s", time.Until(e.Until).Round(time.Second))
 }
 
 // Login checks credentials and creates a session. When the user has TOTP the
@@ -298,7 +298,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 	if uerr != nil || !ok || u.DisabledAt != nil {
 		if s.limiter.fail(ip, username, now) {
 			s.ev.Emit(ctx, events.Event{Type: events.AuthBruteforce, Severity: events.Warning,
-				Message: fmt.Sprintf("Muchos intentos fallidos de inicio de sesión desde %s", ip), Data: map[string]any{"ip": ip, "username": username}})
+				Message: fmt.Sprintf("Many failed login attempts from %s", ip), Data: map[string]any{"ip": ip, "username": username}})
 		}
 		s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: username, IP: ip}, "auth.login", "user", username, audit.Denied, nil)
 		if uerr == nil && !ok && s.countFailure(ctx, u, ip) {
@@ -333,7 +333,7 @@ func (s *Service) countFailure(ctx context.Context, u *User, ip string) bool {
 	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, u.ID)
 	s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: u.Username, IP: ip}, "auth.locked", "user", u.ID, audit.OK, map[string]any{"attempts": n})
 	s.ev.Emit(ctx, events.Event{Type: events.AuthLocked, Severity: events.Critical,
-		Message: fmt.Sprintf("La cuenta %q quedó bloqueada tras %d contraseñas incorrectas seguidas; se desbloquea con \"sqsolve admin unlock %s\" en la consola del contenedor", u.Username, n, u.Username),
+		Message: fmt.Sprintf("Account %q was locked after %d consecutive incorrect passwords; unlock it with \"sqsolve admin unlock %s\" in the container console", u.Username, n, u.Username),
 		Data:    map[string]any{"username": u.Username, "ip": ip}})
 	return true
 }
@@ -386,10 +386,10 @@ func (s *Service) CheckCSRF(rawSession, token string) bool {
 }
 
 // ErrNoSession means the cookie is missing, expired or revoked.
-var ErrNoSession = errors.New("SQS-A004 sesión no válida o vencida")
+var ErrNoSession = errors.New("SQS-A004 invalid or expired session")
 
 // ErrMFAPending means the session still needs the second factor.
-var ErrMFAPending = errors.New("SQS-A005 falta el segundo factor")
+var ErrMFAPending = errors.New("SQS-A005 second factor required")
 
 // Session resolves a session cookie. allowPending accepts sessions waiting
 // for the second factor (only for the TOTP page).
@@ -442,7 +442,7 @@ func (s *Service) LogoutEverywhere(ctx context.Context, p *Principal) {
 }
 
 // ErrBadCode is returned for a wrong second factor.
-var ErrBadCode = errors.New("SQS-A006 código incorrecto")
+var ErrBadCode = errors.New("SQS-A006 incorrect code")
 
 func (s *Service) checkSecondFactor(ctx context.Context, u *User, code string) error {
 	code = strings.TrimSpace(code)
@@ -552,15 +552,15 @@ type Token struct {
 func (s *Service) CreateToken(ctx context.Context, p *Principal, name string, scopes []string, ttl time.Duration) (string, *Token, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 80 {
-		return "", nil, errors.New("SQS-A020 el token necesita un nombre de hasta 80 caracteres")
+		return "", nil, errors.New("SQS-A020 the token needs a name of up to 80 characters")
 	}
 	for _, sc := range scopes {
 		if _, ok := Scopes[sc]; !ok {
-			return "", nil, fmt.Errorf("SQS-A021 alcance desconocido: %s", sc)
+			return "", nil, fmt.Errorf("SQS-A021 unknown scope: %s", sc)
 		}
 	}
 	if len(scopes) == 0 {
-		return "", nil, errors.New("SQS-A022 elige al menos un alcance")
+		return "", nil, errors.New("SQS-A022 choose at least one scope")
 	}
 	if ttl <= 0 || ttl > 365*24*time.Hour {
 		ttl = 365 * 24 * time.Hour
@@ -620,13 +620,13 @@ func (s *Service) RevokeToken(ctx context.Context, p *Principal, id string) erro
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return errors.New("SQS-A023 token no encontrado")
+		return errors.New("SQS-A023 token not found")
 	}
 	return s.audit.Record(ctx, p.Actor(), "token.revoke", "token", id, audit.OK, nil)
 }
 
 // ErrBadToken is returned for invalid API tokens.
-var ErrBadToken = errors.New("SQS-A024 token inválido, vencido o revocado")
+var ErrBadToken = errors.New("SQS-A024 invalid, expired or revoked token")
 
 // TokenPrincipal resolves a bearer token.
 func (s *Service) TokenPrincipal(ctx context.Context, raw, ip string) (*Principal, error) {

@@ -1,20 +1,20 @@
 {{define "content"}}
 {{$l := .Data.L}}
 <section class="card narrow danger-zone">
-  <h1>Eliminar {{$l.DisplayName}}</h1>
-  <p>Esto va a pasar:</p>
+  <h1>Delete {{$l.DisplayName}}</h1>
+  <p>This is what will happen:</p>
   <ol>
-    <li>Se toma un respaldo final y se verifica. Si falla, no se elimina nada.</li>
-    <li>Se bloquean las conexiones{{with .Data.Sessions}} y se cierran <strong>{{len .}} sesiones abiertas</strong>{{end}}.</li>
-    <li>La base pasa a la papelera durante {{.Data.Settings.TrashDays}} días; puedes recuperarla en ese plazo.</li>
-    <li>Después se borra del servidor. Los respaldos se quedan según la retención.</li>
+    <li>A final backup is taken and verified. If it fails, nothing is deleted.</li>
+    <li>Connections are blocked{{with .Data.Sessions}} and <strong>{{len .}} open sessions</strong> are closed{{end}}.</li>
+    <li>The database goes to the trash for {{.Data.Settings.TrashDays}} days; you can recover it within that period.</li>
+    <li>After that it is deleted from the server. Backups stay according to the retention.</li>
   </ol>
-  {{with .Data.Sessions}}<div class="flash error" role="alert">Hay {{len .}} conexiones abiertas: {{range $i, $s := .}}{{if $i}}, {{end}}<span class="mono">{{$s.User}}@{{$s.ClientAddr}}</span>{{end}}. Avisa antes de continuar.</div>{{end}}
-  {{with .Data.DB}}<p class="muted">Tamaño actual: {{bytes .SizeBytes}}.</p>{{end}}
-  <form method="post" action="/bibliotecas/{{$l.ID}}/eliminar" class="form">
+  {{with .Data.Sessions}}<div class="flash error" role="alert">There are {{len .}} open connections: {{range $i, $s := .}}{{if $i}}, {{end}}<span class="mono">{{$s.User}}@{{$s.ClientAddr}}</span>{{end}}. Warn people before continuing.</div>{{end}}
+  {{with .Data.DB}}<p class="muted">Current size: {{bytes .SizeBytes}}.</p>{{end}}
+  <form method="post" action="/libraries/{{$l.ID}}/delete" class="form">
     {{template "csrf" .CSRF}}
-    <label>Escribe <code>{{$l.Slug}}</code> para confirmar<input name="confirm" required autocomplete="off" class="mono" data-confirm-match="{{$l.Slug}}"></label>
-    <div class="actions"><button type="submit" class="danger" data-needs-match>Eliminar biblioteca</button><a href="/bibliotecas/{{$l.ID}}">Cancelar</a></div>
+    <label>Type <code>{{$l.Slug}}</code> to confirm<input name="confirm" required autocomplete="off" class="mono" data-confirm-match="{{$l.Slug}}"></label>
+    <div class="actions"><button type="submit" class="danger" data-needs-match>Delete library</button><a href="/libraries/{{$l.ID}}">Cancel</a></div>
   </form>
 </section>
 {{end}}

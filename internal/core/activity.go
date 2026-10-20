@@ -74,16 +74,16 @@ func (s *Service) BackupGate(ctx context.Context, libraryID string) (bool, strin
 		ORDER BY started_at DESC LIMIT 1`, l.ID, l.DBName).Scan(&lastMark, &lastAt)
 	if err != nil || lastMark == "" {
 		s.recordActivityCheck(ctx, l.ID, false)
-		return true, "sin respaldo previo con marca de actividad"
+		return true, "no earlier backup with an activity mark"
 	}
 	cur, err := s.PG.ActivityMark(ctx, l.DBName)
 	if err != nil || cur == "" {
-		return true, "no se pudo leer la actividad"
+		return true, "could not read the activity"
 	}
 	same := cur == lastMark
 	s.recordActivityCheck(ctx, l.ID, same)
 	if same {
-		return false, fmt.Sprintf("sin cambios desde el respaldo del %s", store.ParseT(lastAt).In(s.Cfg.Location).Format("2006-01-02 15:04"))
+		return false, fmt.Sprintf("no changes since the backup from %s", store.ParseT(lastAt).In(s.Cfg.Location).Format("2006-01-02 15:04"))
 	}
 	return true, ""
 }

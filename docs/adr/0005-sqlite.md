@@ -1,14 +1,15 @@
-# ADR 0005. Estado del plano de control
+# ADR 0005. Control plane state
 
-**Estado:** Aceptado (2026-10-18).
+**Status:** Accepted (2026-10-18).
 
-**Contexto.** Usuarios del panel, catálogo de respaldos, tareas y auditoría deben seguir
-disponibles cuando PostgreSQL está caído o restaurándose.
+**Context.** Panel users, backup catalog, jobs and audit log must stay available while
+PostgreSQL is down or being restored.
 
-**Decisión.** SQLite (`modernc.org/sqlite`, sin CGO) en el volumen `state`, modo WAL, copia
-diaria con `VACUUM INTO` al volumen de respaldos y catálogo reconstruible desde manifiestos.
+**Decision.** SQLite (`modernc.org/sqlite`, no CGO) in the `state` volume, WAL mode, daily copy
+with `VACUUM INTO` to the backups volume, and a catalog that can be rebuilt from manifests.
 
-**Alternativas.** Base `sqsolve` dentro del mismo PostgreSQL; archivos JSON (`06-stack.md` §3).
+**Alternatives.** An `sqsolve` database inside the same PostgreSQL; JSON files (`06-stack.md`
+§3).
 
-**Consecuencias.** Dos motores de base de datos, pero uno es una biblioteca embebida sin
-servidor. Escrituras serializadas, suficiente para la carga esperada.
+**Consequences.** Two database engines, but one is an embedded library without a server.
+Serialized writes, enough for the expected load.

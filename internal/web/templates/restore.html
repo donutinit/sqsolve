@@ -1,42 +1,42 @@
 {{define "content"}}
 {{$b := .Data.B}}{{$l := .Data.L}}{{$p := .P}}
-<div class="pagehead"><h1>Restaurar el respaldo del {{dt $b.StartedAt}}</h1></div>
-{{if .Data.SchemaDiffers}}<div class="flash warn" role="status">Este respaldo tiene otra estructura que la biblioteca actual: probablemente es de otra versión de Resolve{{if $b.ResolveVersion}} (declarada: {{$b.ResolveVersion}}){{end}}. Las estaciones con una versión más nueva lo actualizarán al abrirlo, y la versión anterior dejará de abrir esos proyectos.</div>{{end}}
+<div class="pagehead"><h1>Restore the backup of {{dt $b.StartedAt}}</h1></div>
+{{if .Data.SchemaDiffers}}<div class="flash warn" role="status">This backup has a different structure than the current library: it probably comes from another Resolve version{{if $b.ResolveVersion}} (declared: {{$b.ResolveVersion}}){{end}}. Workstations with a newer version will upgrade it when opening it, and the older version will stop opening those projects.</div>{{end}}
 <div class="grid2">
-  <section class="card {{if ne .Data.Mode "reemplazar"}}emphasis{{end}}">
-    <h2>Como biblioteca nueva {{template "badge" (dict "tone" "ok" "label" "Recomendado")}}</h2>
-    <p>No toca la biblioteca actual. Úsalo para recuperar un proyecto: abre la copia en Resolve, exporta el proyecto (.drp) e impórtalo en la biblioteca original.</p>
-    <form method="post" action="/respaldos/{{$b.ID}}/restaurar" class="form">
+  <section class="card {{if ne .Data.Mode "replace"}}emphasis{{end}}">
+    <h2>As a new library {{template "badge" (dict "tone" "ok" "label" "Recommended")}}</h2>
+    <p>It does not touch the current library. Use it to recover a project: open the copy in Resolve, export the project (.drp) and import it into the original library.</p>
+    <form method="post" action="/backups/{{$b.ID}}/restore" class="form">
       {{template "csrf" .CSRF}}
-      <input type="hidden" name="mode" value="nueva">
-      <label>Nombre visible<input name="name" required maxlength="80" value="{{.Data.SuggestName}}"></label>
-      <label>Identificador<input name="slug" required class="mono" pattern="[a-z][a-z0-9_]{2,39}" value="{{.Data.SuggestSlug}}"></label>
-      <div class="actions"><button type="submit">Restaurar como nueva</button></div>
+      <input type="hidden" name="mode" value="new">
+      <label>Display name<input name="name" required maxlength="80" value="{{.Data.SuggestName}}"></label>
+      <label>Identifier<input name="slug" required class="mono" pattern="[a-z][a-z0-9_]{2,39}" value="{{.Data.SuggestSlug}}"></label>
+      <div class="actions"><button type="submit">Restore as new</button></div>
     </form>
   </section>
   {{if and .Data.CanReplace ($p.Can "restore.replace")}}
-  <section class="card danger-zone {{if eq .Data.Mode "reemplazar"}}emphasis{{end}}">
-    <h2>Reemplazar {{$l.DisplayName}}</h2>
-    <p>La biblioteca vuelve al momento del respaldo: <strong>se pierden los cambios hechos {{ago $b.StartedAt}}</strong> hasta ahora.</p>
+  <section class="card danger-zone {{if eq .Data.Mode "replace"}}emphasis{{end}}">
+    <h2>Replace {{$l.DisplayName}}</h2>
+    <p>The library goes back to the moment of the backup: <strong>changes made since {{ago $b.StartedAt}} are lost</strong>.</p>
     <ol>
-      <li>Se toma un respaldo del estado actual.</li>
-      <li>El respaldo se restaura en una base aparte y se compara con su manifiesto.</li>
-      <li>Solo entonces se bloquean las conexiones y se intercambian las bases.</li>
-      <li>El estado actual se conserva {{.Data.Settings.PrevDays}} días para revertir.</li>
+      <li>A backup of the current state is taken.</li>
+      <li>The backup is restored into a separate database and compared with its manifest.</li>
+      <li>Only then are connections blocked and the databases swapped.</li>
+      <li>The current state is kept for {{.Data.Settings.PrevDays}} days so it can be reverted.</li>
     </ol>
-    {{with .Data.Sessions}}<div class="flash warn" role="status">Hay {{len .}} conexiones abiertas: {{range $i, $s := .}}{{if $i}}, {{end}}<span class="mono">{{$s.User}}@{{$s.ClientAddr}}</span>{{end}}. Pide que cierren Resolve.</div>{{end}}
-    <form method="post" action="/respaldos/{{$b.ID}}/restaurar" class="form">
+    {{with .Data.Sessions}}<div class="flash warn" role="status">There are {{len .}} open connections: {{range $i, $s := .}}{{if $i}}, {{end}}<span class="mono">{{$s.User}}@{{$s.ClientAddr}}</span>{{end}}. Ask people to close Resolve.</div>{{end}}
+    <form method="post" action="/backups/{{$b.ID}}/restore" class="form">
       {{template "csrf" .CSRF}}
-      <input type="hidden" name="mode" value="reemplazar">
-      <label class="check"><input type="checkbox" name="terminate"> Cerrar las sesiones abiertas (si no, la tarea espera hasta 10 minutos a que se cierren)</label>
-      <label>Escribe <code>{{$l.Slug}}</code> para confirmar<input name="confirm" required autocomplete="off" class="mono" data-confirm-match="{{$l.Slug}}"></label>
-      <div class="actions"><button type="submit" class="danger" data-needs-match>Reemplazar biblioteca</button></div>
+      <input type="hidden" name="mode" value="replace">
+      <label class="check"><input type="checkbox" name="terminate"> Close open sessions (otherwise the job waits up to 10 minutes for them to close)</label>
+      <label>Type <code>{{$l.Slug}}</code> to confirm<input name="confirm" required autocomplete="off" class="mono" data-confirm-match="{{$l.Slug}}"></label>
+      <div class="actions"><button type="submit" class="danger" data-needs-match>Replace library</button></div>
     </form>
   </section>
   {{end}}
 </div>
 <section class="card">
-  <h2>Restaurar desde Resolve</h2>
-  <p>También puedes <a href="/respaldos/{{$b.ID}}/descargar">descargar el archivo</a> y restaurarlo desde el Project Manager de Resolve. La compatibilidad del formato con cada versión de Resolve está pendiente de comprobar (PoC-04).</p>
+  <h2>Restore from Resolve</h2>
+  <p>You can also <a href="/backups/{{$b.ID}}/download">download the file</a> and restore it from the Resolve Project Manager. Compatibility of the format with each Resolve version is still to be verified (PoC-04).</p>
 </section>
 {{end}}

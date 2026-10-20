@@ -1,6 +1,6 @@
--- Respaldo según actividad (ADR 0022): la política puede revisar cada N minutos y respaldar
--- solo cuando la biblioteca cambió desde el último respaldo. Cada respaldo guarda la marca de
--- actividad de pg_stat_database con la que se tomó.
+-- Activity-based backups (ADR 0022): the policy can check every N minutes and back up
+-- only when the library changed since the last backup. Each backup stores the activity
+-- mark of pg_stat_database it was taken with.
 ALTER TABLE backup_policies ADD COLUMN mode TEXT NOT NULL DEFAULT 'cron';
 ALTER TABLE backup_policies ADD COLUMN check_minutes INTEGER NOT NULL DEFAULT 15;
 ALTER TABLE backup_policies ADD COLUMN last_check_at TEXT;

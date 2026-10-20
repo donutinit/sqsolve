@@ -17,12 +17,12 @@ import (
 // projects and albums of a real library so they can be compared with what
 // Resolve exports. It only runs with SQSOLVE_DRP_DSN set.
 //
-//	SQSOLVE_DRP_DSN=postgres://user:pass@host/db SQSOLVE_DRP_OUT=/tmp/salida \
-//	SQSOLVE_DRP_PROJECTS='carpeta/proyecto,otro' go test ./internal/drp -run TestCorpus -v
+//	SQSOLVE_DRP_DSN=postgres://user:pass@host/db SQSOLVE_DRP_OUT=/tmp/out \
+//	SQSOLVE_DRP_PROJECTS='folder/project,other' go test ./internal/drp -run TestCorpus -v
 func TestCorpus(t *testing.T) {
 	dsn := os.Getenv("SQSOLVE_DRP_DSN")
 	if dsn == "" {
-		t.Skip("SQSOLVE_DRP_DSN no definido")
+		t.Skip("SQSOLVE_DRP_DSN not set")
 	}
 	out := os.Getenv("SQSOLVE_DRP_OUT")
 	if out == "" {
@@ -42,7 +42,7 @@ func TestCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close(ctx)
-	t.Logf("huella %s conocida=%v %+v", s.Fingerprint, s.KnownOK, s.Known)
+	t.Logf("fingerprint %s known=%v %+v", s.Fingerprint, s.KnownOK, s.Known)
 
 	projects, err := s.Projects(ctx)
 	if err != nil {
@@ -74,10 +74,10 @@ func TestCorpus(t *testing.T) {
 			continue
 		}
 		exported++
-		t.Logf("%s: %d archivos, %d bytes, notas %v", spec, info.Files, info.Bytes, info.Notes)
+		t.Logf("%s: %d files, %d bytes, notes %v", spec, info.Files, info.Bytes, info.Notes)
 	}
 	if len(want) > 0 && exported != len(want) {
-		t.Errorf("se pidieron %d proyectos y se exportaron %d", len(want), exported)
+		t.Errorf("requested %d projects and exported %d", len(want), exported)
 	}
 
 	albums, err := s.Albums(ctx)
@@ -95,9 +95,9 @@ func TestCorpus(t *testing.T) {
 		info, err := s.ExportAlbum(ctx, a.ViewID, f)
 		f.Close()
 		if err != nil {
-			t.Errorf("álbum %s: %v", a.Name, err)
+			t.Errorf("album %s: %v", a.Name, err)
 			continue
 		}
-		t.Logf("álbum %s: %d stills, %d bytes", a.Name, info.Files, info.Bytes)
+		t.Logf("album %s: %d stills, %d bytes", a.Name, info.Files, info.Bytes)
 	}
 }

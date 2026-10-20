@@ -107,7 +107,7 @@ type Marker struct {
 }
 
 // ErrNoMarker means the directory has no marker.
-var ErrNoMarker = errors.New("SQS-S001 el volumen no tiene marcador de sqsolve")
+var ErrNoMarker = errors.New("SQS-S001 the volume has no sqsolve marker")
 
 // ReadMarker reads the marker of dir.
 func ReadMarker(dir string) (*Marker, error) {
@@ -120,7 +120,7 @@ func ReadMarker(dir string) (*Marker, error) {
 	}
 	var m Marker
 	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("SQS-S002 marcador ilegible en %s: %w", dir, err)
+		return nil, fmt.Errorf("SQS-S002 unreadable marker in %s: %w", dir, err)
 	}
 	return &m, nil
 }
@@ -141,7 +141,7 @@ func CheckMarker(dir, instanceID string) error {
 		return err
 	}
 	if m.InstanceID != instanceID {
-		return fmt.Errorf("SQS-S003 el volumen %s pertenece a otra instalación (%s)", dir, m.InstanceID)
+		return fmt.Errorf("SQS-S003 volume %s belongs to another installation (%s)", dir, m.InstanceID)
 	}
 	return nil
 }

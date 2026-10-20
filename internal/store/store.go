@@ -87,7 +87,7 @@ func Open(ctx context.Context, path, backupDir string) (*DB, error) {
 	db := &DB{DB: sqldb, Path: path}
 	if err := db.PingContext(ctx); err != nil {
 		sqldb.Close()
-		return nil, fmt.Errorf("SQS-X010 no se pudo abrir %s: %w", path, err)
+		return nil, fmt.Errorf("SQS-X010 could not open %s: %w", path, err)
 	}
 	if existed {
 		if err := os.Chmod(path, 0o600); err != nil && !errors.Is(err, os.ErrPermission) {
@@ -138,7 +138,7 @@ func loadMigrations() ([]migration, error) {
 		}
 		v, err := strconv.Atoi(strings.SplitN(name, "_", 2)[0])
 		if err != nil {
-			return nil, fmt.Errorf("nombre de migración inválido: %s", name)
+			return nil, fmt.Errorf("invalid migration name: %s", name)
 		}
 		b, err := migrationsFS.ReadFile("migrations/" + name)
 		if err != nil {
@@ -185,7 +185,7 @@ func (db *DB) migrate(ctx context.Context, existed bool, backupDir string) error
 				continue
 			}
 			if c != m.checksum {
-				return fmt.Errorf("SQS-X011 la migración %s cambió después de aplicarse", m.name)
+				return fmt.Errorf("SQS-X011 migration %s changed after being applied", m.name)
 			}
 			continue
 		}
@@ -197,7 +197,7 @@ func (db *DB) migrate(ctx context.Context, existed bool, backupDir string) error
 	}
 	for v := range applied {
 		if !known[v] {
-			return fmt.Errorf("SQS-X012 la base de datos tiene la migración %d, más nueva que esta versión de sqsolve; usa la versión con la que se creó o restaura la copia previa", v)
+			return fmt.Errorf("SQS-X012 the database has migration %d, newer than this sqsolve version; use the version it was created with or restore the previous copy", v)
 		}
 	}
 	if len(pending) == 0 {
@@ -207,15 +207,15 @@ func (db *DB) migrate(ctx context.Context, existed bool, backupDir string) error
 		if err := os.MkdirAll(backupDir, 0o700); err != nil {
 			return err
 		}
-		dst := filepath.Join(backupDir, fmt.Sprintf("sqsolve-antes-de-%04d-%s.db", pending[0].version, time.Now().UTC().Format("20060102T150405Z")))
+		dst := filepath.Join(backupDir, fmt.Sprintf("sqsolve-before-%04d-%s.db", pending[0].version, time.Now().UTC().Format("20060102T150405Z")))
 		if err := db.BackupTo(ctx, dst); err != nil {
-			return fmt.Errorf("SQS-X013 no se pudo copiar la base antes de migrar: %w", err)
+			return fmt.Errorf("SQS-X013 could not copy the database before migrating: %w", err)
 		}
 	}
 	for _, m := range pending {
 		err := db.Tx(ctx, func(tx *sql.Tx) error {
 			if _, err := tx.ExecContext(ctx, m.sql); err != nil {
-				return fmt.Errorf("migración %s: %w", m.name, err)
+				return fmt.Errorf("migration %s: %w", m.name, err)
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES (?, ?, ?, ?)`,
 				m.version, m.name, m.checksum, NowT())
@@ -244,7 +244,7 @@ func (db *DB) Tx(ctx context.Context, fn func(*sql.Tx) error) error {
 // BackupTo writes a consistent copy of the database to dst.
 func (db *DB) BackupTo(ctx context.Context, dst string) error {
 	if strings.ContainsAny(dst, "'\x00") {
-		return errors.New("ruta inválida")
+		return errors.New("invalid path")
 	}
 	tmp := dst + ".partial"
 	os.Remove(tmp)
@@ -270,7 +270,7 @@ func (db *DB) IntegrityCheck(ctx context.Context) error {
 		return err
 	}
 	if res != "ok" {
-		return fmt.Errorf("SQS-X014 integridad de SQLite: %s", res)
+		return fmt.Errorf("SQS-X014 SQLite integrity: %s", res)
 	}
 	return nil
 }

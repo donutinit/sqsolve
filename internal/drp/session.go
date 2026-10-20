@@ -19,11 +19,11 @@ import (
 // Errors of the exporter. Every message carries its SQS-E code.
 var (
 	// ErrSchema means the library's tables do not match the model.
-	ErrSchema = errors.New("SQS-E001 la biblioteca no tiene las tablas y columnas que la exportación experimental conoce")
+	ErrSchema = errors.New("SQS-E001 the library does not have the tables and columns the experimental export knows")
 	// ErrNotFound means the project, still or album does not exist.
-	ErrNotFound = errors.New("SQS-E003 no existe en la biblioteca")
+	ErrNotFound = errors.New("SQS-E003 does not exist in the library")
 	// ErrUnsupported means the project uses something the exporter never saw.
-	ErrUnsupported = errors.New("SQS-E004 la exportación experimental no reproduce esta función")
+	ErrUnsupported = errors.New("SQS-E004 the experimental export does not reproduce this feature")
 )
 
 // StatementTimeout bounds every query of a session.
@@ -71,7 +71,7 @@ func Open(ctx context.Context, conn *pgx.Conn) (*Session, error) {
 func open(ctx context.Context, conn *pgx.Conn, m *Model) (*Session, error) {
 	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
-		return nil, fmt.Errorf("SQS-E005 no se pudo abrir la biblioteca: %w", err)
+		return nil, fmt.Errorf("SQS-E005 could not open the library: %w", err)
 	}
 	s := &Session{conn: conn, tx: tx, m: m}
 	ok := false
@@ -85,7 +85,7 @@ func open(ctx context.Context, conn *pgx.Conn, m *Model) (*Session, error) {
 	}
 	fp, err := pg.SchemaFingerprint(ctx, conn)
 	if err != nil {
-		return nil, fmt.Errorf("SQS-E005 no se pudo leer el catálogo: %w", err)
+		return nil, fmt.Errorf("SQS-E005 could not read the catalog: %w", err)
 	}
 	s.Fingerprint = fp.Hash
 	s.Known, s.KnownOK = compat.Lookup(fp.Hash)
@@ -135,7 +135,7 @@ func readSchema(ctx context.Context, tx pgx.Tx, m *Model) (schema, error) {
 		WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped
 		  AND c.relname = ANY($1)`, m.TableNames())
 	if err != nil {
-		return nil, fmt.Errorf("SQS-E005 no se pudo leer el catálogo: %w", err)
+		return nil, fmt.Errorf("SQS-E005 could not read the catalog: %w", err)
 	}
 	defer rows.Close()
 	out := schema{}
@@ -164,7 +164,7 @@ func checkContract(m *Model, s schema) error {
 		cols := s[t]
 		if cols == nil {
 			if !optional[t] {
-				missing = append(missing, "tabla "+t)
+				missing = append(missing, "table "+t)
 			}
 			continue
 		}
@@ -180,7 +180,7 @@ func checkContract(m *Model, s schema) error {
 			case !ok:
 				missing = append(missing, t+"."+c)
 			case got != want:
-				missing = append(missing, fmt.Sprintf("%s.%s es %s y se esperaba %s", t, c, got, want))
+				missing = append(missing, fmt.Sprintf("%s.%s is %s and %s was expected", t, c, got, want))
 			}
 		}
 	}
@@ -190,7 +190,7 @@ func checkContract(m *Model, s schema) error {
 	sort.Strings(missing)
 	detail := strings.Join(missing[:min(len(missing), 5)], "; ")
 	if len(missing) > 5 {
-		detail += fmt.Sprintf(" y %d más", len(missing)-5)
+		detail += fmt.Sprintf(" and %d more", len(missing)-5)
 	}
 	return fmt.Errorf("%w: %s", ErrSchema, detail)
 }

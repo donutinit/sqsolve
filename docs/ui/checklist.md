@@ -1,81 +1,80 @@
-# Lista de verificación de la interfaz
+# UI checklist
 
-Páginas del panel con `pagehead` (lo decide lo que renderiza la referencia: un encabezado
-`pagehead` con título y acciones, y debajo secciones `card`). Referencia: `library.html`, la
-cambiada más recientemente. 14 miembros de 29 candidatos en `internal/web` (plantillas,
-`static/app.css`, `funcs.go`), servido por `cmd/sqsolve serve`. Leído el 2026-10-18 con la
-fase de patrones de `ui-consistency`.
+Panel pages with `pagehead` (decided by what the reference renders: a `pagehead` header with a
+title and actions, and `card` sections below it). Reference: `library.html`, the most recently
+changed. 14 members out of 29 candidates in `internal/web` (templates, `static/app.css`,
+`funcs.go`), served by `cmd/sqsolve serve`. Read on 2026-10-18 with the patterns phase of
+`ui-consistency`.
 
-Miembros: account, activity, backup, backups, dashboard, health, import, job, jobs, libraries,
-library, library_export, library_new, restore, settings. No miembros (15): las páginas de una sola tarjeta
-`card narrow` sin `pagehead` (confirmaciones, acceso, kit, error, instrucciones); siguen las
-mismas reglas de insignias, avisos, fechas y CSRF.
+Members: account, activity, backup, backups, dashboard, health, import, job, jobs, libraries,
+library, library_export, library_new, restore, settings. Non-members (15): single-card
+`card narrow` pages without `pagehead` (confirmations, access, kit, error, instructions); they
+follow the same rules for badges, notices, dates and CSRF.
 
-Es una foto: si esta lista y el código no coinciden, manda el código y se vuelve a contar.
+It is a snapshot: if this list and the code disagree, the code wins and the count is redone.
 
-- [ ] Contenedor: la página solo define `content`. `layout.html` pone la navegación, el aviso
-      de una sola lectura (`{{template "flash" .}}`) y `<main id="contenido">`. 14 de 14.
-- [ ] Encabezado: `<div class="pagehead">` con un solo `<h1>`; la acción principal va a la
-      derecha, siempre dentro de `<div class="actions">`. `h1` en 14 de 14; acción en el
-      encabezado en 6 de 14, 3 de ellas sueltas hasta el 2026-10-18 (ahora 6 de 6 en
-      `div.actions`; sin mayoría antes, decidió la referencia, nivel 7).
-- [ ] Secciones: `<section class="card">` con `<h2>` como título; nunca se salta del `h1` al
-      `h3`. 61 secciones en 14 de 14 archivos; 52 de 61 con `h2`. Las 9 sin título: la tabla
-      `flush` que es toda la página (3), la tarjeta principal bajo el `h1` (import, library_new y
-      la de progreso en job), un formulario con `legend` (ajustes generales), un `details` con su `summary` y un
-      aviso de una línea.
-- [ ] Estado: siempre el parcial `badge` (`dict "tone" "label"`) o los que lo envuelven
-      (`jobstate`, `librarystate`), que ponen texto y figura (círculo, rombo, cuadrado,
-      contorno). Nunca `<span class="badge">` a mano. Pieza compartida (nivel 4): antes 15 usos
-      en 8 de 14 contra 13 a mano en 9 archivos, 8 de ellos sin figura; corregido el
-      2026-10-18. Excepción: los enlaces `a.badge` de la barra superior, escritos a mano porque
-      el parcial no hace enlaces, con su `span.dot`.
-- [ ] Aviso dentro de la página: `<div class="flash TONO" role="...">`, con `alert` solo para
-      `error` y `status` para lo demás, la misma regla del parcial `flash` (nivel 4). 10 avisos
-      en 6 archivos; los 2 que no tenían `role` se corrigieron. Desde el 2026-10-19 el aviso
-      lleva la misma figura que las insignias (`::before` por tono: círculo, rombo, cuadrado,
-      contorno) y borde fino alrededor; se quitó la franja lateral de color.
-- [ ] Tablas anchas: dentro de una tarjeta normal van envueltas en `<div class="scroll-x">`
-      para desplazarse de lado en pantallas angostas (7 tablas el 2026-10-19); las tablas
-      `cards-on-mobile` que son toda la página van en `card flush`, que ya desplaza.
-- [ ] Lista de acciones con explicación: `<div class="actionrow">` con `h3`, un párrafo que
-      dice qué hace y un botón corto ("Ejecutar"); nunca un botón largo que describe la acción
-      y se parte en dos líneas (mantenimiento, 7 acciones, corregido el 2026-10-19).
-- [ ] Vacío: una frase corta con `.muted` que nombra lo que falta ("Sin eventos."), en el
-      elemento del contenedor: `p` en una sección o bajo el encabezado (11), `li` en una lista y
-      `td colspan` en una tabla (5). Toda lista o tabla tiene su vacío (la auditoría no lo tenía; corregido). El
-      parcial `empty`, con explicación y acción, es solo para el primer uso sin bibliotecas
-      (2 usos).
-- [ ] Formularios: `{{template "csrf" .CSRF}}` es el primer campo, obligatorio en los
-      `multipart` porque el servidor lo lee antes que el archivo. 48 de 48 por el parcial.
-      Botón principal `<button type="submit">` sin clase (21); secundario `ghost` (13);
-      destructivo principal `danger`; destructivo secundario `ghost danger` (2) y, dentro de
-      tablas, `ghost small danger`; `warn` para revertir y para mantenimiento (2). Toda acción destructiva pide
-      confirmación: `data-confirm` o escribir el identificador (8 de 8; "Revocar" token no
-      la pedía, corregido).
-- [ ] Fechas: siempre `dt`, `ago` o `until`, que usan la zona del servidor; nunca `.Format`
-      en una plantilla. 37 de 37 en las páginas, más 4 en los parciales. Un `<time>` lleva
+- [ ] Container: the page only defines `content`. `layout.html` provides the navigation, the
+      single-read notice (`{{template "flash" .}}`) and `<main id="content">`. 14 of 14.
+- [ ] Header: `<div class="pagehead">` with a single `<h1>`; the main action goes on the right,
+      always inside `<div class="actions">`. `h1` in 14 of 14; action in the header in 6 of 14, 3
+      of them loose until 2026-10-18 (now 6 of 6 in `div.actions`; no majority before, the
+      reference decided, level 7).
+- [ ] Sections: `<section class="card">` with `<h2>` as the title; never jump from `h1` to
+      `h3`. 61 sections in 14 of 14 files; 52 of 61 with `h2`. The 9 without a title: the
+      `flush` table that is the whole page (3), the main card under the `h1` (import, library_new
+      and the progress one in job), a form with a `legend` (general settings), a `details` with
+      its `summary` and a one-line notice.
+- [ ] State: always the `badge` partial (`dict "tone" "label"`) or the ones that wrap it
+      (`jobstate`, `librarystate`), which set text and shape (circle, diamond, square, outline).
+      Never a hand-written `<span class="badge">`. Shared piece (level 4): before, 15 uses in 8
+      of 14 files against 13 by hand in 9 files, 8 of them without a shape; fixed on 2026-10-18.
+      Exception: the `a.badge` links of the top bar, written by hand because the partial does not
+      make links, with their `span.dot`.
+- [ ] In-page notice: `<div class="flash TONE" role="...">`, with `alert` only for `error` and
+      `status` for the rest, the same rule as the `flash` partial (level 4). 10 notices in 6
+      files; the 2 that had no `role` were fixed. Since 2026-10-19 the notice carries the same
+      shape as the badges (`::before` per tone: circle, diamond, square, outline) and a thin
+      border around it; the colored side stripe was removed.
+- [ ] Wide tables: inside a normal card they are wrapped in `<div class="scroll-x">` to scroll
+      sideways on narrow screens (7 tables on 2026-10-19); `cards-on-mobile` tables that are the
+      whole page go in `card flush`, which already scrolls.
+- [ ] Action list with explanation: `<div class="actionrow">` with `h3`, a paragraph saying what
+      it does and a short button ("Run"); never a long button that describes the action and
+      wraps onto two lines (maintenance, 7 actions, fixed on 2026-10-19).
+- [ ] Empty: a short sentence with `.muted` naming what is missing ("No events."), in the
+      container element: `p` in a section or under the header (11), `li` in a list and `td
+      colspan` in a table (5). Every list or table has its empty state (the audit log did not;
+      fixed). The `empty` partial, with explanation and action, is only for the first use with no
+      libraries (2 uses).
+- [ ] Forms: `{{template "csrf" .CSRF}}` is the first field, mandatory in `multipart` forms
+      because the server reads it before the file. 48 of 48 through the partial. Main button
+      `<button type="submit">` with no class (21); secondary `ghost` (13); main destructive
+      `danger`; secondary destructive `ghost danger` (2) and, inside tables, `ghost small
+      danger`; `warn` for revert and for maintenance (2). Every destructive action asks for
+      confirmation: `data-confirm` or typing the identifier (8 of 8; "Revoke" token did not ask
+      for it, fixed).
+- [ ] Dates: always `dt`, `ago` or `until`, which use the server's time zone; never `.Format` in
+      a template. 37 of 37 in the pages, plus 4 in the partials. A `<time>` carries
       `datetime="{{iso ...}}"`.
-- [ ] Palabras: un nombre para cada cosa en todo el panel, y las etiquetas de estado en
-      español con mayúscula inicial (nunca el código interno como `ok` o `denied`):
-      "Eventos" (no "Avisos", que es una severidad), "Almacenamiento", "Conectada" para la
-      hora de una sesión, "Papelera" y "Purgada", "PostgreSQL sin respuesta", "Quitar" el
-      segundo factor ("Desactivado" es solo una cuenta deshabilitada), "Correcto", "Aviso" y
-      "Fallido" para resultados, "la dirección que usan las estaciones". Corregido el 2026-10-18
-      tras la revisión.
-- [ ] Valores: colores solo por las variables de `:root` en `app.css` (`--text`, `--muted`,
-      `--ok`, `--warn`, `--bad`, `--run`, `--on-run`, `--on-danger`, y `--brand-in` y `--brand-out`
-      solo para los puertos de la marca y de los íconos de navegación), que también definen el
-      tema oscuro; tres colores literales pasaron a variables el 2026-10-18. Sin estilos en
-      línea, que la CSP bloquea: 0 `style=`. El espaciado no tiene base (literales de 1 a
-      56 px): reutiliza los ya escritos, sobre todo 8, 10, 12 y 16 px. Tipografía en `rem`:
-      `h1` 1.5rem peso 650, `h2` 1.15rem peso 600 (1.07rem hasta el 2026-10-19), `h3` 1rem peso 600, ayuda `.hint` 0.87rem en `--muted`. Transiciones con `--ease-out`, nunca `ease` del navegador.
-- [ ] No copiado de `library.html`: sus siete pestañas, la línea de tiempo de 30 días y la
-      cuadrícula de datos para copiar (`copy`), que solo tiene ella.
+- [ ] Words: one name for each thing across the whole panel, and state labels in English with an
+      initial capital (never the internal code such as `ok` or `denied`): "Events" (not
+      "Notifications", which is a severity), "Storage", "Connected" for the time of a session,
+      "Trash" and "Purged", "PostgreSQL not responding", "Remove" the second factor ("Disabled"
+      is only a disabled account), "OK", "Warning" and "Failed" for results, "the address
+      workstations use". Fixed on 2026-10-18 after the review.
+- [ ] Values: colors only through the `:root` variables in `app.css` (`--text`, `--muted`,
+      `--ok`, `--warn`, `--bad`, `--run`, `--on-run`, `--on-danger`, and `--brand-in` and
+      `--brand-out` only for the brand ports and the navigation icons), which also define the
+      dark theme; three literal colors became variables on 2026-10-18. No inline styles, which
+      the CSP blocks: 0 `style=`. Spacing has no base (literals from 1 to 56 px): reuse the
+      ones already written, mostly 8, 10, 12 and 16 px. Typography in `rem`: `h1` 1.5rem weight
+      650, `h2` 1.15rem weight 600 (1.07rem until 2026-10-19), `h3` 1rem weight 600, `.hint`
+      help 0.87rem in `--muted`. Transitions with `--ease-out`, never the browser's `ease`.
+- [ ] Not copied from `library.html`: its seven tabs, the 30-day timeline and the data grid for
+      copying (`copy`), which only it has.
 
-Búsquedas: grep por línea de los nombres exactos (`class="pagehead`, `<h1>`,
+Searches: line-by-line grep of the exact names (`class="pagehead`, `<h1>`,
 `<section class="card`, `<h2`, `class="tabs`, `{{template "badge"`, `class="badge`,
 `class="flash`, `{{template "csrf"`, `name="csrf"`, `{{template "empty"`, `{{dt `, `{{ago `,
-`{{until `, `style=`) sobre los 14 archivos miembros, cada una probada primero en
-`library.html`. Quedó fuera, sin convención que contar: las pestañas, que solo tienen 5 de
-14 páginas, cada una con las suyas.
+`{{until `, `style=`) over the 14 member files, each tried first on `library.html`. Left out,
+with no convention to count: the tabs, which only 5 of 14 pages have, each with its own.

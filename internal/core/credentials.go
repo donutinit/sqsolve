@@ -94,7 +94,7 @@ func (s *Service) credential(ctx context.Context, libraryID, credID string) (*Cr
 			return c, nil
 		}
 	}
-	return nil, errors.New("SQS-L030 credencial no encontrada")
+	return nil, errors.New("SQS-L030 credential not found")
 }
 
 // ConnectionInfo is what a workstation needs.
@@ -127,7 +127,7 @@ func (s *Service) RevealPassword(ctx context.Context, by audit.Actor, libraryID,
 		return secrets.String{}, err
 	}
 	if c.RevokedAt != nil {
-		return secrets.String{}, errors.New("SQS-L031 la credencial está revocada")
+		return secrets.String{}, errors.New("SQS-L031 the credential is revoked")
 	}
 	p, err := s.Box.Open(c.passwordEnc, credAAD(c.ID))
 	if err != nil {
@@ -135,7 +135,7 @@ func (s *Service) RevealPassword(ctx context.Context, by audit.Actor, libraryID,
 	}
 	s.Audit.Record(ctx, by, "library.credential_reveal", "library", libraryID, audit.OK, map[string]any{"role": c.PGRole})
 	s.Events.Emit(ctx, events.Event{Type: events.CredentialRevealed, LibraryID: libraryID,
-		Message: fmt.Sprintf("%s consultó la contraseña de %s", by.Label(), c.PGRole)})
+		Message: fmt.Sprintf("%s viewed the password of %s", by.Label(), c.PGRole)})
 	return p, nil
 }
 
@@ -146,7 +146,7 @@ func (s *Service) RotatePassword(ctx context.Context, by audit.Actor, libraryID,
 		return err
 	}
 	if c.RevokedAt != nil {
-		return errors.New("SQS-L031 la credencial está revocada")
+		return errors.New("SQS-L031 the credential is revoked")
 	}
 	pass := secrets.GeneratePassword(24)
 	v, err := pg.ScramVerifier(pass)
@@ -165,7 +165,7 @@ func (s *Service) RotatePassword(ctx context.Context, by audit.Actor, libraryID,
 	}
 	s.Audit.Record(ctx, by, "library.credential_rotate", "library", libraryID, audit.OK, map[string]any{"role": c.PGRole})
 	s.Events.Emit(ctx, events.Event{Type: events.CredentialRotated, LibraryID: libraryID,
-		Message: fmt.Sprintf("Se cambió la contraseña de %s. Las estaciones deben usar la nueva al volver a conectarse", c.PGRole)})
+		Message: fmt.Sprintf("Changed the password of %s. Workstations must use the new one when they reconnect", c.PGRole)})
 	return nil
 }
 
@@ -176,7 +176,7 @@ func (s *Service) AddMember(ctx context.Context, by audit.Actor, libraryID, pers
 		return nil, err
 	}
 	if !l.Live() {
-		return nil, errors.New("SQS-L032 solo se agregan personas a bibliotecas activas")
+		return nil, errors.New("SQS-L032 people can only be added to active libraries")
 	}
 	person = strings.ToLower(strings.TrimSpace(person))
 	if err := pg.ValidatePerson(person); err != nil {
@@ -186,7 +186,7 @@ func (s *Service) AddMember(ctx context.Context, by audit.Actor, libraryID, pers
 	if ok, err := s.PG.RoleExists(ctx, role); err != nil {
 		return nil, err
 	} else if ok {
-		return nil, fmt.Errorf("SQS-L033 ya existe el rol %s", role)
+		return nil, fmt.Errorf("SQS-L033 role %s already exists", role)
 	}
 	pass := secrets.GeneratePassword(24)
 	v, err := pg.ScramVerifier(pass)
@@ -222,7 +222,7 @@ func (s *Service) RevokeMember(ctx context.Context, by audit.Actor, libraryID, c
 		return err
 	}
 	if c.Kind != "member" {
-		return errors.New("SQS-L034 la credencial principal no se revoca; rota su contraseña")
+		return errors.New("SQS-L034 the primary credential cannot be revoked; rotate its password")
 	}
 	l, err := s.Library(ctx, libraryID)
 	if err != nil {

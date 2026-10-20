@@ -30,7 +30,7 @@ var (
 // payload returns the protobuf bytes of a version 2 payload and whether it was compressed.
 func payload(b []byte) (raw []byte, compressed bool, err error) {
 	if len(b) == 0 {
-		return nil, false, errors.New("carga vacía")
+		return nil, false, errors.New("empty payload")
 	}
 	switch b[0] {
 	case 0x80:
@@ -39,7 +39,7 @@ func payload(b []byte) (raw []byte, compressed bool, err error) {
 		raw, err = zstdDecoder.DecodeAll(b[1:], nil)
 		return raw, true, err
 	}
-	return nil, false, fmt.Errorf("carga con marca 0x%02x", b[0])
+	return nil, false, fmt.Errorf("payload with marker 0x%02x", b[0])
 }
 
 func encodePayload(raw []byte, compressed bool) []byte {
@@ -94,7 +94,7 @@ func qdsMap(b []byte) (map[string]string, error) {
 	r := bytes.NewReader(b)
 	var version, n uint32
 	if err := binary.Read(r, binary.BigEndian, &version); err != nil || version != 1 {
-		return nil, errors.New("mapa QDataStream con versión desconocida")
+		return nil, errors.New("QDataStream map with unknown version")
 	}
 	if err := binary.Read(r, binary.BigEndian, &n); err != nil {
 		return nil, err
@@ -138,7 +138,7 @@ func qdsMap(b []byte) (map[string]string, error) {
 				r.Seek(int64(ln), 1)
 			}
 		default:
-			return nil, fmt.Errorf("QVariant de tipo %d no previsto", typ)
+			return nil, fmt.Errorf("unexpected QVariant of type %d", typ)
 		}
 	}
 	return out, nil
@@ -153,7 +153,7 @@ func qdsString(r *bytes.Reader) (string, error) {
 		return "", nil
 	}
 	if ln%2 != 0 || int(ln) > r.Len() {
-		return "", errors.New("cadena QDataStream inválida")
+		return "", errors.New("invalid QDataStream string")
 	}
 	buf := make([]byte, ln)
 	if _, err := r.Read(buf); err != nil {
@@ -175,7 +175,7 @@ func childOrder(fieldsBlob []byte) ([]string, error) {
 	}
 	ln := binary.BigEndian.Uint32(fieldsBlob[4:])
 	if int(ln) > len(fieldsBlob)-8 {
-		return nil, errors.New("FieldsBlob truncado")
+		return nil, errors.New("truncated FieldsBlob")
 	}
 	raw, _, err := payload(fieldsBlob[8 : 8+ln])
 	if err != nil {
@@ -197,7 +197,7 @@ func childOrder(fieldsBlob []byte) ([]string, error) {
 	for k, v := range m {
 		i, err := strconv.Atoi(k)
 		if err != nil {
-			return nil, fmt.Errorf("índice de carpeta %q", k)
+			return nil, fmt.Errorf("folder index %q", k)
 		}
 		items = append(items, kv{i, v})
 	}

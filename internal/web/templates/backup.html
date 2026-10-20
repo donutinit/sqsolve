@@ -2,49 +2,49 @@
 {{$b := .Data.B}}{{$p := .P}}
 <div class="pagehead">
   <div>
-    <h1>Respaldo del {{dt $b.StartedAt}}</h1>
-    <p class="muted">{{with .Data.L}}<a href="/bibliotecas/{{.ID}}">{{.DisplayName}}</a> · {{end}}{{kind $b.Kind}} · {{template "badge" (dict "tone" (backuptone $b.Status) "label" (backuplabel $b.Status))}}</p>
+    <h1>Backup of {{dt $b.StartedAt}}</h1>
+    <p class="muted">{{with .Data.L}}<a href="/libraries/{{.ID}}">{{.DisplayName}}</a> · {{end}}{{kind $b.Kind}} · {{template "badge" (dict "tone" (backuptone $b.Status) "label" (backuplabel $b.Status))}}</p>
   </div>
   <div class="actions">
     {{if eq $b.Status "ok"}}
-      {{if $p.Can "restore.new"}}<a class="button" href="/respaldos/{{$b.ID}}/restaurar">Restaurar</a>{{end}}
-      {{if $p.Can "backup.download"}}<a class="button ghost" href="/respaldos/{{$b.ID}}/descargar">Descargar</a>{{end}}
-      <a class="button ghost" href="/respaldos/{{$b.ID}}/exportar">Exportar .drp y .drx</a>
+      {{if $p.Can "restore.new"}}<a class="button" href="/backups/{{$b.ID}}/restore">Restore</a>{{end}}
+      {{if $p.Can "backup.download"}}<a class="button ghost" href="/backups/{{$b.ID}}/download">Download</a>{{end}}
+      <a class="button ghost" href="/backups/{{$b.ID}}/export">Export .drp and .drx</a>
     {{end}}
   </div>
 </div>
 <div class="grid2">
   <section class="card">
-    <h2>Detalle</h2>
+    <h2>Details</h2>
     <dl class="facts">
-      <dt>Tamaño</dt><dd>{{bytes $b.SizeBytes}}</dd>
-      <dt>Duración</dt><dd>{{dur $b.Duration}}</dd>
+      <dt>Size</dt><dd>{{bytes $b.SizeBytes}}</dd>
+      <dt>Duration</dt><dd>{{dur $b.Duration}}</dd>
       <dt>SHA-256</dt><dd class="mono break small">{{$b.SHA256}}</dd>
-      <dt>Archivo</dt><dd class="mono break small">{{$b.FilePath}}</dd>
-      <dt>PostgreSQL</dt><dd>servidor {{or $b.PGServerVersion "?"}} · pg_dump {{or $b.PGDumpVersion "?"}}{{if $b.ArchiveVersion}} · formato {{$b.ArchiveVersion}}{{end}}{{if $b.Compression}} · {{$b.Compression}}{{end}}</dd>
-      <dt>Estructura</dt><dd>{{if $b.Fingerprint}}{{$b.TableCount}} tablas <span class="mono small break">{{$b.Fingerprint}}</span>{{else}}<span class="muted">sin huella</span>{{end}}</dd>
-      {{if $b.ResolveVersion}}<dt>Resolve declarado</dt><dd>{{$b.ResolveVersion}}</dd>{{end}}
+      <dt>File</dt><dd class="mono break small">{{$b.FilePath}}</dd>
+      <dt>PostgreSQL</dt><dd>server {{or $b.PGServerVersion "?"}} · pg_dump {{or $b.PGDumpVersion "?"}}{{if $b.ArchiveVersion}} · format {{$b.ArchiveVersion}}{{end}}{{if $b.Compression}} · {{$b.Compression}}{{end}}</dd>
+      <dt>Structure</dt><dd>{{if $b.Fingerprint}}{{$b.TableCount}} tables <span class="mono small break">{{$b.Fingerprint}}</span>{{else}}<span class="muted">no fingerprint</span>{{end}}</dd>
+      {{if $b.ResolveVersion}}<dt>Declared Resolve</dt><dd>{{$b.ResolveVersion}}</dd>{{end}}
       {{if $b.Error}}<dt>Error</dt><dd class="bad">{{$b.Error}}</dd>{{end}}
-      {{with .Data.Job}}<dt>Tarea</dt><dd><a href="/tareas/{{.ID}}">{{.Title}}</a></dd>{{end}}
+      {{with .Data.Job}}<dt>Job</dt><dd><a href="/jobs/{{.ID}}">{{.Title}}</a></dd>{{end}}
     </dl>
   </section>
   <section class="card">
-    <h2>Verificación</h2>
+    <h2>Verification</h2>
     {{if eq $b.Status "ok"}}
     <p>{{template "badge" (dict "tone" (verifytone $b.VerifyStatus) "label" (verifylabel $b.VerifyStatus))}}</p>
     {{if $b.VerifiedAt}}<p class="muted">{{dt $b.VerifiedAt}}: {{$b.VerifyDetail}}</p>{{end}}
-    <p class="hint">La restauración de prueba carga el respaldo en una base temporal y compara tablas y filas con el manifiesto.</p>
+    <p class="hint">The test restore loads the backup into a temporary database and compares tables and rows with the manifest.</p>
     <div class="actions">
-      {{if $p.Can "backup.verify"}}<form method="post" action="/respaldos/{{$b.ID}}/verificar">{{template "csrf" $.CSRF}}<button type="submit" class="ghost">Restauración de prueba</button></form>{{end}}
-      {{if $p.Can "backup.pin"}}<form method="post" action="/respaldos/{{$b.ID}}/fijar">{{template "csrf" $.CSRF}}<input type="hidden" name="pin" value="{{if $b.Pinned}}0{{else}}1{{end}}"><button type="submit" class="ghost">{{if $b.Pinned}}Dejar de fijar{{else}}Fijar (no borrar){{end}}</button></form>{{end}}
-      {{if $p.Can "library.delete"}}<form method="post" action="/respaldos/{{$b.ID}}/borrar" data-confirm="El archivo se borra del volumen. ¿Continuar?">{{template "csrf" $.CSRF}}<button type="submit" class="ghost danger">Borrar</button></form>{{end}}
+      {{if $p.Can "backup.verify"}}<form method="post" action="/backups/{{$b.ID}}/verify">{{template "csrf" $.CSRF}}<button type="submit" class="ghost">Test restore</button></form>{{end}}
+      {{if $p.Can "backup.pin"}}<form method="post" action="/backups/{{$b.ID}}/pin">{{template "csrf" $.CSRF}}<input type="hidden" name="pin" value="{{if $b.Pinned}}0{{else}}1{{end}}"><button type="submit" class="ghost">{{if $b.Pinned}}Unpin{{else}}Pin (do not delete){{end}}</button></form>{{end}}
+      {{if $p.Can "library.delete"}}<form method="post" action="/backups/{{$b.ID}}/delete" data-confirm="The file is deleted from the volume. Continue?">{{template "csrf" $.CSRF}}<button type="submit" class="ghost danger">Delete</button></form>{{end}}
     </div>
-    {{else}}<p class="muted">El respaldo no está disponible.</p>{{end}}
+    {{else}}<p class="muted">The backup is not available.</p>{{end}}
   </section>
 </div>
 {{with .Data.M}}
 <section class="card">
-  <details class="more"><summary>Conteo de filas por tabla ({{len .RowCounts}} tablas{{if not .CountsExact}}, estimado{{end}})</summary>
+  <details class="more"><summary>Row count per table ({{len .RowCounts}} tables{{if not .CountsExact}}, estimated{{end}})</summary>
     <div class="scroll-x"><table class="table compact"><tbody>{{range $t, $n := .RowCounts}}<tr><td class="mono small">{{$t}}</td><td>{{$n}}</td></tr>{{end}}</tbody></table></div>
   </details>
 </section>

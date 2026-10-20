@@ -238,10 +238,10 @@ func (c *Client) CreateLibraryRole(ctx context.Context, name string, o RoleOptio
 		return err
 	}
 	if err := c.exec(ctx, "CREATE ROLE "+q+" "+attrs); err != nil {
-		return fmt.Errorf("SQS-P020 crear rol %s: %w", name, redact(err, o.Verifier))
+		return fmt.Errorf("SQS-P020 creating role %s: %w", name, redact(err, o.Verifier))
 	}
 	if err := c.exec(ctx, "GRANT "+q+" TO "+MustIdent(AdminRole)+" WITH INHERIT TRUE, SET TRUE"); err != nil {
-		return fmt.Errorf("SQS-P021 membresía de %s: %w", name, err)
+		return fmt.Errorf("SQS-P021 membership of %s: %w", name, err)
 	}
 	return nil
 }
@@ -421,7 +421,7 @@ func (c *Client) ReloadConf(ctx context.Context) error {
 		return err
 	}
 	if !ok {
-		return errors.New("SQS-P030 pg_reload_conf devolvió false")
+		return errors.New("SQS-P030 pg_reload_conf returned false")
 	}
 	return nil
 }
@@ -432,7 +432,7 @@ func (c *Client) HBAErrors(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := p.Query(ctx, `SELECT format('línea %s: %s', line_number, error) FROM pg_hba_file_rules WHERE error IS NOT NULL`)
+	rows, err := p.Query(ctx, `SELECT format('line %s: %s', line_number, error) FROM pg_hba_file_rules WHERE error IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}
@@ -514,7 +514,7 @@ func CountRows(ctx context.Context, q interface {
 				WHERE n.nspname = 'public' AND c.relname = $1`, t).Scan(&n)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("conteo de %s: %w", t, err)
+			return nil, fmt.Errorf("count of %s: %w", t, err)
 		}
 		out[t] = n
 	}
@@ -530,7 +530,7 @@ func ParseCIDR(s string) (string, error) {
 	if a, err := netip.ParseAddr(s); err == nil {
 		return netip.PrefixFrom(a, a.BitLen()).String(), nil
 	}
-	return "", fmt.Errorf("SQS-L020 red inválida: %q", s)
+	return "", fmt.Errorf("SQS-L020 invalid network: %q", s)
 }
 
 // ActivityMark summarizes the writes a database has received since its

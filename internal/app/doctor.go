@@ -39,10 +39,10 @@ func Doctor(ctx context.Context, a *App) []Check {
 	add := func(name, status, detail, hint string) { out = append(out, Check{name, status, detail, hint}) }
 	c := a.Cfg
 
-	for _, v := range []struct{ name, path string }{{"Volumen de la aplicación", c.AppDir}, {"Volumen de respaldos", c.BackupDir}, {"Volumen de la base de datos", c.PGConfDir()}} {
+	for _, v := range []struct{ name, path string }{{"Application volume", c.AppDir}, {"Backups volume", c.BackupDir}, {"Database volume", c.PGConfDir()}} {
 		probe := filepath.Join(v.path, ".sqsolve-probe")
 		if err := os.WriteFile(probe, []byte("x"), 0o600); err != nil {
-			add(v.name, "fail", "no se puede escribir en "+v.path+": "+err.Error(), "revisa que el volumen esté montado y que SQSOLVE_UID coincida con user: del compose")
+			add(v.name, "fail", "cannot write to "+v.path+": "+err.Error(), "check that the volume is mounted and that SQSOLVE_UID matches user: in the compose file")
 		} else {
 			os.Remove(probe)
 			sp, _ := fsx.Statfs(v.path)
@@ -52,48 +52,48 @@ func Doctor(ctx context.Context, a *App) []Check {
 			} else if sp.UsedPercent() >= 80 {
 				status = "warn"
 			}
-			add(v.name, status, fmt.Sprintf("%s libres de %s (%.0f %% usado)", core.HumanBytes(int64(sp.Free)), core.HumanBytes(int64(sp.Total)), sp.UsedPercent()), "")
+			add(v.name, status, fmt.Sprintf("%s free of %s (%.0f %% used)", core.HumanBytes(int64(sp.Free)), core.HumanBytes(int64(sp.Total)), sp.UsedPercent()), "")
 		}
 	}
 	if err := a.Svc.BackupVolumeOK(); err != nil {
-		add("Marcador del volumen de respaldos", "fail", err.Error(), "monta el volumen correcto o vuelve a correr sqsolve init")
+		add("Backups volume marker", "fail", err.Error(), "mount the right volume or run sqsolve init again")
 	} else {
-		add("Marcador del volumen de respaldos", "ok", "pertenece a esta instalación ("+a.InstanceID+")", "")
+		add("Backups volume marker", "ok", "belongs to this installation ("+a.InstanceID+")", "")
 	}
 	for _, f := range []string{masterKeyPath(c), adminPassPath(c)} {
 		st, err := os.Stat(f)
 		switch {
 		case err != nil:
-			add("Secreto "+filepath.Base(f), "fail", err.Error(), "corre sqsolve init")
+			add("Secret "+filepath.Base(f), "fail", err.Error(), "run sqsolve init")
 		case st.Mode().Perm()&0o077 != 0:
-			add("Secreto "+filepath.Base(f), "fail", fmt.Sprintf("permisos %o", st.Mode().Perm()), "deben ser 0400")
+			add("Secret "+filepath.Base(f), "fail", fmt.Sprintf("permissions %o", st.Mode().Perm()), "they must be 0400")
 		default:
-			add("Secreto "+filepath.Base(f), "ok", "presente y protegido", "")
+			add("Secret "+filepath.Base(f), "ok", "present and protected", "")
 		}
 	}
 	if err := a.PG.Ping(ctx); err != nil {
-		add("PostgreSQL", "fail", err.Error(), "revisa el contenedor postgres y el volumen compartido del socket")
+		add("PostgreSQL", "fail", err.Error(), "check the postgres container and the shared socket volume")
 	} else {
 		info, _ := a.PG.Server(ctx)
-		detail := fmt.Sprintf("versión %s, %d de %d conexiones", info.Version, info.Connections, info.MaxConnections)
+		detail := fmt.Sprintf("version %s, %d of %d connections", info.Version, info.Connections, info.MaxConnections)
 		status := "ok"
 		if !info.DataChecksums {
-			detail += "; sin sumas de verificación de páginas"
+			detail += "; no page checksums"
 			status = "warn"
 		}
 		add("PostgreSQL", status, detail, "")
 		if conn, err := a.PG.Superuser(ctx, "postgres"); err != nil {
-			add("Superusuario por socket", "fail", err.Error(), "la contraseña en "+c.SuperuserPasswordFile()+" no coincide con la del clúster")
+			add("Superuser over the socket", "fail", err.Error(), "the password in "+c.SuperuserPasswordFile()+" does not match the cluster")
 		} else {
 			conn.Close(ctx)
-			add("Superusuario por socket", "ok", "accesible solo por el socket local", "")
+			add("Superuser over the socket", "ok", "reachable only through the local socket", "")
 		}
 		if errs, err := a.PG.HBAErrors(ctx); err != nil {
-			add("pg_hba.conf", "warn", "no se pudo validar: "+err.Error(), "")
+			add("pg_hba.conf", "warn", "could not validate: "+err.Error(), "")
 		} else if len(errs) > 0 {
-			add("pg_hba.conf", "fail", strings.Join(errs, "; "), "usa Mantenimiento > Regenerar pg_hba.conf")
+			add("pg_hba.conf", "fail", strings.Join(errs, "; "), "use Maintenance > Regenerate pg_hba.conf")
 		} else {
-			add("pg_hba.conf", "ok", "válido", "")
+			add("pg_hba.conf", "ok", "valid", "")
 		}
 		// Catalog against the server.
 		libs, _ := a.Svc.Libraries(ctx, core.ListOptions{})
@@ -115,22 +115,22 @@ func Doctor(ctx context.Context, a *App) []Check {
 			}
 		}
 		if len(orphans) > 0 {
-			add("Bases fuera del catálogo", "warn", strings.Join(orphans, ", "), "pueden ser bibliotecas creadas a mano; no se respaldan")
+			add("Databases outside the catalog", "warn", strings.Join(orphans, ", "), "they may be libraries created by hand; they are not backed up")
 		} else {
-			add("Bases fuera del catálogo", "ok", "ninguna", "")
+			add("Databases outside the catalog", "ok", "none", "")
 		}
 	}
 	if broken, n, err := a.Audit.Verify(ctx); err != nil {
-		add("Auditoría", "warn", err.Error(), "")
+		add("Audit log", "warn", err.Error(), "")
 	} else if broken != 0 {
-		add("Auditoría", "fail", fmt.Sprintf("cadena rota en la entrada %d", broken), "alguien modificó la base de sqsolve")
+		add("Audit log", "fail", fmt.Sprintf("chain broken at entry %d", broken), "someone modified the sqsolve database")
 	} else {
-		add("Auditoría", "ok", fmt.Sprintf("%d entradas íntegras", n), "")
+		add("Audit log", "ok", fmt.Sprintf("%d intact entries", n), "")
 	}
 	if err := a.DB.IntegrityCheck(ctx); err != nil {
-		add("SQLite", "fail", err.Error(), "restaura la copia de _system más reciente")
+		add("SQLite", "fail", err.Error(), "restore the most recent _system copy")
 	} else {
-		add("SQLite", "ok", "integridad correcta", "")
+		add("SQLite", "ok", "integrity OK", "")
 	}
 	return out
 }

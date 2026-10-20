@@ -1,40 +1,39 @@
-# Seguridad
+# Security
 
-sqsolve está pensado para una red local de estudio o una VPN; el panel (9432) y PostgreSQL
-(5432) nunca deben exponerse a Internet (ADR 0015). Con ese modelo, el panel pide usuario y
-contraseña normales, sin reautenticación ni fricción extra (ADR 0021); lo que protege los
-proyectos es la red, los respaldos verificados y la auditoría.
+sqsolve is designed for a studio's local network or a VPN; the panel (9432) and PostgreSQL (5432)
+must never be exposed to the Internet (ADR 0015). With that model, the panel asks for a normal
+username and password, with no reauthentication or extra friction (ADR 0021); what protects the
+projects is the network, the verified backups and the audit log.
 
-## Reportar una vulnerabilidad
+## Reporting a vulnerability
 
-Usa el reporte privado de GitHub: en el repositorio, pestaña **Security**, "Report a
-vulnerability". No abras un issue público con los detalles.
+Use GitHub's private reporting: in the repository, the **Security** tab, "Report a
+vulnerability". Do not open a public issue with the details.
 
-Qué incluir: versión de sqsolve (pie del panel o `sqsolve version`), cómo reproducirlo y qué
-impacto tiene. Si puedes, adjunta el paquete de diagnóstico de Ajustes, Mantenimiento, que no
-contiene secretos.
+What to include: sqsolve version (panel footer or `sqsolve version`), how to reproduce it and
+what impact it has. If you can, attach the diagnostic bundle from Settings, Maintenance, which
+contains no secrets.
 
-Compromiso: respuesta en 7 días; arreglo en una versión de parche de la serie vigente y aviso en
-las notas de la versión. Divulgación coordinada a 90 días, o antes si el arreglo ya está
-publicado.
+Commitment: response within 7 days; fix in a patch version of the current series and a notice in
+the release notes. Coordinated disclosure at 90 days, or earlier if the fix is already
+published.
 
-## Alcance
+## Scope
 
-Dentro: el binario `sqsolve`, la imagen `ghcr.io/donutinit/sqsolve`, `deploy/compose.yaml`, el
-panel, la API y la consola.
+In scope: the `sqsolve` binary, the image `ghcr.io/donutinit/sqsolve`, `deploy/compose.yaml`, the
+panel, the API and the console.
 
-Fuera: DaVinci Resolve, PostgreSQL y Docker en sí (repórtalos a sus proyectos), y
-configuraciones que exponen los puertos a Internet contra la documentación.
+Out of scope: DaVinci Resolve, PostgreSQL and Docker themselves (report them to their projects),
+and configurations that expose the ports to the Internet against the documentation.
 
-## Qué hace sqsolve por su cuenta
+## What sqsolve does on its own
 
-- Contraseñas con Argon2id; límite de intentos por IP y por cuenta; bloqueo tras diez
-  contraseñas incorrectas seguidas que solo levanta `sqsolve admin unlock` desde la consola.
-- TOTP opcional; tokens de API con alcances; CSRF; cabeceras estrictas (CSP sin recursos
-  externos).
-- Panel siempre por HTTPS. PostgreSQL ofrece TLS a Resolve; el modo "Solo TLS" lo exige.
-- Contraseñas de biblioteca cifradas con la clave maestra; secretos nunca en registros.
-- Auditoría encadenada por hashes de cada acción, exportable.
-- Contenedor sin privilegios, sistema de archivos de solo lectura, sin capacidades de Linux.
+- Passwords with Argon2id; attempt limits per IP and per account; lock after ten consecutive
+  wrong passwords that only `sqsolve admin unlock` from the console lifts.
+- Optional TOTP; API tokens with scopes; CSRF; strict headers (CSP without external resources).
+- Panel always over HTTPS. PostgreSQL offers TLS to Resolve; "TLS only" mode requires it.
+- Library passwords encrypted with the master key; secrets never in logs.
+- Hash-chained audit log of every action, exportable.
+- Unprivileged container, read-only file system, no Linux capabilities.
 
-El modelo de amenazas completo está en [`docs/08-seguridad.md`](docs/08-seguridad.md).
+The full threat model is in [`docs/08-security.md`](docs/08-security.md).

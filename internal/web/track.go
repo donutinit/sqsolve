@@ -81,20 +81,20 @@ func (s *Server) track(ctx context.Context, l *core.Library, days int) Track {
 		switch {
 		case b.Status == core.BackupFailed:
 			m.Kind = "failed"
-			m.Title = when + ": respaldo fallido"
+			m.Title = when + ": backup failed"
 			failCount++
 		case b.VerifyStatus == core.VerifyL2OK:
 			m.Kind = "l2"
-			m.Title = when + ": restauración de prueba correcta"
+			m.Title = when + ": test restore OK"
 		case b.VerifyStatus == core.VerifyL1OK || b.VerifyStatus == core.VerifyPartial:
 			m.Kind = "l1"
-			m.Title = when + ": suma e índice correctos"
+			m.Title = when + ": checksum and index OK"
 		default:
 			m.Kind = "unverified"
-			m.Title = when + ": sin verificar"
+			m.Title = when + ": unverified"
 		}
 		if b.Status == core.BackupDeleted {
-			m.Title += " (ya borrado por la retención)"
+			m.Title += " (already deleted by retention)"
 		}
 		if m.Kind == "l1" || m.Kind == "l2" {
 			verified = append(verified, b.StartedAt)
@@ -158,15 +158,15 @@ func (s *Server) track(ctx context.Context, l *core.Library, days int) Track {
 	}
 	switch {
 	case last.IsZero():
-		t.LastAgo = "sin respaldo verificado"
+		t.LastAgo = "no verified backup"
 	case unchanged:
-		t.LastAgo = humanAgo(now.Sub(last)) + ", sin cambios"
+		t.LastAgo = humanAgo(now.Sub(last)) + ", unchanged"
 	default:
 		t.LastAgo = humanAgo(now.Sub(last))
 	}
-	t.Summary = fmt.Sprintf("%s: %d respaldos verificados y %d fallidos en %d días; último verificado %s", l.Slug, okCount, failCount, days, t.LastAgo)
+	t.Summary = fmt.Sprintf("%s: %d verified and %d failed backups in %d days; last verified %s", l.Slug, okCount, failCount, days, t.LastAgo)
 	if t.GapHours > 0 {
-		t.Summary += fmt.Sprintf("; %d horas sin respaldo verificado reciente", t.GapHours)
+		t.Summary += fmt.Sprintf("; %d hours without a recent verified backup", t.GapHours)
 	}
 	return t
 }

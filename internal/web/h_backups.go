@@ -29,8 +29,8 @@ type backupRow struct {
 func (s *Server) backups(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
-	f := core.BackupFilter{LibraryID: q.Get("biblioteca"), Limit: 300}
-	if st := q.Get("estado"); st != "" {
+	f := core.BackupFilter{LibraryID: q.Get("library"), Limit: 300}
+	if st := q.Get("state"); st != "" {
 		f.Statuses = []string{st}
 	}
 	bs, _ := s.A.Svc.Backups(ctx, f)
@@ -48,13 +48,13 @@ func (s *Server) backups(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	imports, _ := s.A.Svc.ImportCandidates()
-	s.render(w, r, "backups", "Respaldos", "respaldos", map[string]any{"Rows": rows, "Libraries": libs, "Filter": f, "Total": total, "Imports": len(imports)})
+	s.render(w, r, "backups", "Backups", "backups", map[string]any{"Rows": rows, "Libraries": libs, "Filter": f, "Total": total, "Imports": len(imports)})
 }
 
 func (s *Server) backupOr404(w http.ResponseWriter, r *http.Request) (*core.Backup, *core.Library) {
 	b, err := s.A.Svc.Backup(r.Context(), r.PathValue("id"))
 	if err != nil {
-		s.renderError(w, r, principalOf(r), http.StatusNotFound, "SQS-B001 Respaldo no encontrado.")
+		s.renderError(w, r, principalOf(r), http.StatusNotFound, "SQS-B001 Backup not found.")
 		return nil, nil
 	}
 	l, _ := s.A.Svc.Library(r.Context(), b.LibraryID)
@@ -73,7 +73,7 @@ func (s *Server) backup(w http.ResponseWriter, r *http.Request) {
 	if b.JobID != "" {
 		data["Job"], _ = s.A.Jobs.Get(r.Context(), b.JobID)
 	}
-	s.render(w, r, "backup", "Respaldo", "respaldos", data)
+	s.render(w, r, "backup", "Backup", "backups", data)
 }
 
 func (s *Server) backupVerify(w http.ResponseWriter, r *http.Request) {
@@ -83,38 +83,38 @@ func (s *Server) backupVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	j, err := s.A.Jobs.Enqueue(r.Context(), core.JobBackupVerify, b.LibraryID, core.VerifyParams{BackupID: b.ID}, principalOf(r).Actor(), jobs.Priority(60))
 	if err != nil {
-		s.fail(w, r, "/respaldos/"+b.ID, err)
+		s.fail(w, r, "/backups/"+b.ID, err)
 		return
 	}
-	s.ok(w, r, "/tareas/"+j.ID, "")
+	s.ok(w, r, "/jobs/"+j.ID, "")
 }
 
 func (s *Server) backupPin(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	pin := r.FormValue("pin") == "1"
 	if err := s.A.Svc.SetPinned(r.Context(), principalOf(r).Actor(), id, pin); err != nil {
-		s.fail(w, r, "/respaldos/"+id, err)
+		s.fail(w, r, "/backups/"+id, err)
 		return
 	}
-	msg := "Respaldo fijado: la retención no lo borrará."
+	msg := "Backup pinned: retention will not delete it."
 	if !pin {
-		msg = "Respaldo suelto: la retención lo trata como los demás."
+		msg = "Backup unpinned: retention treats it like the others."
 	}
-	s.ok(w, r, "/respaldos/"+id, msg)
+	s.ok(w, r, "/backups/"+id, msg)
 }
 
 func (s *Server) backupDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	b, err := s.A.Svc.Backup(r.Context(), id)
 	if err != nil {
-		s.fail(w, r, "/respaldos", err)
+		s.fail(w, r, "/backups", err)
 		return
 	}
 	if err := s.A.Svc.DeleteBackup(r.Context(), principalOf(r).Actor(), id); err != nil {
-		s.fail(w, r, "/respaldos/"+id, err)
+		s.fail(w, r, "/backups/"+id, err)
 		return
 	}
-	s.ok(w, r, "/respaldos?biblioteca="+b.LibraryID, "Respaldo borrado.")
+	s.ok(w, r, "/backups?library="+b.LibraryID, "Backup deleted.")
 }
 
 func (s *Server) backupDownload(w http.ResponseWriter, r *http.Request) {
@@ -123,16 +123,16 @@ func (s *Server) backupDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if b.Status != core.BackupOK {
-		s.renderError(w, r, principalOf(r), http.StatusGone, "SQS-B001 El archivo de este respaldo ya no existe.")
+		s.renderError(w, r, principalOf(r), http.StatusGone, "SQS-B001 The file of this backup no longer exists.")
 		return
 	}
 	f, err := os.Open(s.A.Svc.AbsPath(b))
 	if err != nil {
-		s.renderError(w, r, principalOf(r), http.StatusNotFound, "SQS-B001 No se encontró el archivo: "+err.Error())
+		s.renderError(w, r, principalOf(r), http.StatusNotFound, "SQS-B001 File not found: "+err.Error())
 		return
 	}
 	defer f.Close()
-	slug := "biblioteca"
+	slug := "library"
 	if l != nil {
 		slug = l.Slug
 	}
@@ -149,35 +149,35 @@ func (s *Server) restoreForm(w http.ResponseWriter, r *http.Request) {
 	if b == nil {
 		return
 	}
-	data := map[string]any{"B": b, "L": l, "Mode": r.URL.Query().Get("modo")}
+	data := map[string]any{"B": b, "L": l, "Mode": r.URL.Query().Get("mode")}
 	if l != nil {
 		for k, v := range s.confirmData(r, l) {
 			data[k] = v
 		}
 		data["B"] = b
-		data["SuggestSlug"] = core.SuggestSlug(l.Slug + " copia " + b.StartedAt.In(s.A.Cfg.Location).Format("0102"))
-		data["SuggestName"] = l.DisplayName + " (copia del " + b.StartedAt.In(s.A.Cfg.Location).Format("2006-01-02") + ")"
+		data["SuggestSlug"] = core.SuggestSlug(l.Slug + " copy " + b.StartedAt.In(s.A.Cfg.Location).Format("0102"))
+		data["SuggestName"] = l.DisplayName + " (copy of " + b.StartedAt.In(s.A.Cfg.Location).Format("2006-01-02") + ")"
 		data["CanReplace"] = l.State == core.StateActive || l.State == core.StateMaintenance
 		data["SchemaDiffers"] = l.Fingerprint != "" && b.Fingerprint != "" && l.Fingerprint != b.Fingerprint
 	}
-	s.render(w, r, "restore", "Restaurar respaldo", "respaldos", data)
+	s.render(w, r, "restore", "Restore backup", "backups", data)
 }
 
 func (s *Server) restoreSubmit(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	id := r.PathValue("id")
-	back := "/respaldos/" + id + "/restaurar"
-	if r.FormValue("mode") == "reemplazar" {
+	back := "/backups/" + id + "/restore"
+	if r.FormValue("mode") == "replace" {
 		if !p.Can("restore.replace") {
-			s.renderError(w, r, p, http.StatusForbidden, "SQS-A030 Tu rol no permite reemplazar una biblioteca.")
+			s.renderError(w, r, p, http.StatusForbidden, "SQS-A030 Your role does not allow replacing a library.")
 			return
 		}
 		j, err := s.A.Svc.RestoreReplace(r.Context(), p.Actor(), id, strings.TrimSpace(r.FormValue("confirm")), r.FormValue("terminate") == "on")
 		if err != nil {
-			s.fail(w, r, back+"?modo=reemplazar", err)
+			s.fail(w, r, back+"?mode=replace", err)
 			return
 		}
-		s.ok(w, r, "/tareas/"+j.ID, "")
+		s.ok(w, r, "/jobs/"+j.ID, "")
 		return
 	}
 	_, j, err := s.A.Svc.RestoreAsNew(r.Context(), p.Actor(), id, strings.TrimSpace(r.FormValue("slug")), r.FormValue("name"))
@@ -185,22 +185,22 @@ func (s *Server) restoreSubmit(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, back, err)
 		return
 	}
-	s.ok(w, r, "/tareas/"+j.ID, "")
+	s.ok(w, r, "/jobs/"+j.ID, "")
 }
 
 func (s *Server) importForm(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	files, err := s.A.Svc.ImportCandidates()
 	libs, _ := s.A.Svc.Libraries(ctx, core.ListOptions{})
-	s.render(w, r, "import", "Importar respaldo", "respaldos", map[string]any{
+	s.render(w, r, "import", "Import backup", "backups", map[string]any{
 		"Files": files, "Err": err, "Libraries": libs, "Dir": s.A.Svc.ImportDir(), "MaxMB": s.A.Svc.Settings(ctx).ImportMaxMB,
-		"Selected": r.URL.Query().Get("biblioteca"),
+		"Selected": r.URL.Query().Get("library"),
 	})
 }
 
 func (s *Server) importSubmit(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
-	back := "/respaldos/importar"
+	back := "/backups/import"
 	mr := multipartOf(r)
 	if mr == nil {
 		j, err := s.A.Svc.Import(r.Context(), p.Actor(), r.FormValue("library"), r.FormValue("file"), r.FormValue("delete") == "on")
@@ -208,7 +208,7 @@ func (s *Server) importSubmit(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, r, back, err)
 			return
 		}
-		s.ok(w, r, "/tareas/"+j.ID, "")
+		s.ok(w, r, "/jobs/"+j.ID, "")
 		return
 	}
 	// A multi-gigabyte upload over a slow link outlives the server's
@@ -225,7 +225,7 @@ func (s *Server) importSubmit(w http.ResponseWriter, r *http.Request) {
 			if uploaded != "" {
 				os.Remove(filepath.Join(s.A.Svc.ImportDir(), uploaded))
 			}
-			s.fail(w, r, back, fmt.Errorf("SQS-B052 la subida se interrumpió: %w", err))
+			s.fail(w, r, back, fmt.Errorf("SQS-B052 the upload was interrupted: %w", err))
 			return
 		}
 		if part.FormName() == "upload" {
@@ -250,7 +250,7 @@ func (s *Server) importSubmit(w http.ResponseWriter, r *http.Request) {
 		name, deleteSource = uploaded, true
 	}
 	if name == "" {
-		s.fail(w, r, back, errors.New("SQS-B050 elige un archivo de la carpeta de importación o súbelo"))
+		s.fail(w, r, back, errors.New("SQS-B050 choose a file from the import folder or upload one"))
 		return
 	}
 	j, err := s.A.Svc.Import(r.Context(), p.Actor(), fields["library"], name, deleteSource)
@@ -261,7 +261,7 @@ func (s *Server) importSubmit(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, back, err)
 		return
 	}
-	s.ok(w, r, "/tareas/"+j.ID, "")
+	s.ok(w, r, "/jobs/"+j.ID, "")
 }
 
 // saveUpload streams a file part into the import folder of the backups
@@ -269,7 +269,7 @@ func (s *Server) importSubmit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) saveUpload(part *multipart.Part) (string, error) {
 	base := filepath.Base(strings.ReplaceAll(part.FileName(), "\\", "/"))
 	if base == "." || base == "/" || base == ".." || strings.HasPrefix(base, ".") || strings.HasSuffix(base, ".partial") {
-		return "", errors.New("SQS-B050 nombre de archivo inválido")
+		return "", errors.New("SQS-B050 invalid file name")
 	}
 	dir := s.A.Svc.ImportDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -277,16 +277,16 @@ func (s *Server) saveUpload(part *multipart.Part) (string, error) {
 	}
 	dst := filepath.Join(dir, base)
 	if _, err := os.Lstat(dst); err == nil {
-		return "", fmt.Errorf("SQS-B054 ya hay un archivo llamado %s en la carpeta de importación; impórtalo desde la lista o cámbiale el nombre", base)
+		return "", fmt.Errorf("SQS-B054 there is already a file named %s in the import folder; import it from the list or rename it", base)
 	}
 	out, err := os.OpenFile(dst+".partial", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return "", fmt.Errorf("SQS-B052 no se pudo guardar la subida: %w", err)
+		return "", fmt.Errorf("SQS-B052 could not save the upload: %w", err)
 	}
 	if _, err := io.Copy(out, part); err != nil {
 		out.Close()
 		os.Remove(dst + ".partial")
-		return "", fmt.Errorf("SQS-B052 la subida se interrumpió: %s", humanError(err))
+		return "", fmt.Errorf("SQS-B052 the upload was interrupted: %s", humanError(err))
 	}
 	if err := out.Close(); err != nil {
 		os.Remove(dst + ".partial")

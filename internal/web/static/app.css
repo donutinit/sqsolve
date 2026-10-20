@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: AGPL-3.0-only
-   sqsolve. Dirección visual: el entorno de una sala de color.
-   - Grises estrictamente neutros (R = G = B): el panel puede estar abierto junto a un monitor
-     de referencia y no debe teñir la percepción.
-   - El color solo aparece cuando un estado significa algo: correcto, aviso, error, en curso.
-     Los dos colores de marca (ADR 0020) viven solo en los puertos del imagotipo y de los íconos
-     de navegación; la acción principal es un botón invertido.
-   - El tema sigue al sistema (claro u oscuro). Sin interruptor propio.
-   - El elemento distintivo es la línea de tiempo de protección (pistas con marcadores). */
+   sqsolve. Visual direction: the environment of a color grading suite.
+   - Strictly neutral grays (R = G = B): the panel may be open next to a reference monitor
+     and must not tint the perception.
+   - Color only appears when a state means something: ok, warning, error, running.
+     The two brand colors (ADR 0020) live only in the ports of the logotype and of the
+     navigation icons; the primary action is an inverted button.
+   - The theme follows the system (light or dark). No switch of its own.
+   - The distinctive element is the protection timeline (tracks with markers). */
 
 :root {
   --bg: #f0f0f0;
@@ -100,8 +100,8 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 .nav .count { background: var(--run); color: var(--on-run); border-radius: 10px; font-size: 0.78rem; padding: 0 7px; font-weight: 600; }
 .who { margin-top: auto; display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--line); padding: 12px 10px 0; }
 .who a { text-decoration: none; font-weight: 600; }
-/* Marca (ADR 0020): el imagotipo "Nodo" en trazos. Nodo y palabra toman el color del texto; los
-   puertos llevan los dos colores de marca, que no aparecen en ningún otro lugar del panel. */
+/* Brand (ADR 0020): the "Node" logotype in strokes. Node and word take the text color; the
+   ports carry the two brand colors, which appear nowhere else in the panel. */
 .brand { display: flex; align-items: center; color: var(--text); text-decoration: none; padding: 0 10px; }
 .brand svg { height: 24px; width: auto; flex: none; display: block; }
 .brand .node { fill: none; stroke: currentColor; }
@@ -111,7 +111,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 .brand .word { fill: currentColor; }
 .brand.big { justify-content: center; margin: 56px 0 28px; }
 .brand.big svg { height: 40px; }
-/* Íconos de navegación: trazo en retícula de 24 con un puerto de color (docs/identidad/iconos). */
+/* Navigation icons: stroke on a 24 grid with one colored port (docs/brand/icons). */
 .navlabel { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
 .ni { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .ni .port { fill: var(--brand-in); stroke: none; }

@@ -37,7 +37,7 @@ func (s *Service) Trash(ctx context.Context, by audit.Actor, id, confirm string)
 		return nil, err
 	}
 	if confirm != l.Slug {
-		return nil, errors.New("SQS-L040 escribe el identificador de la biblioteca para confirmar")
+		return nil, errors.New("SQS-L040 type the library identifier to confirm")
 	}
 	switch l.State {
 	case StateActive, StateMaintenance, StateAwaitingInit, StateInitExpired:
@@ -45,7 +45,7 @@ func (s *Service) Trash(ctx context.Context, by audit.Actor, id, confirm string)
 		// After recovering an installation, a library nobody wants back has no
 		// database to back up: it goes to the trash as a catalog entry only.
 	default:
-		return nil, fmt.Errorf("SQS-L041 no se puede eliminar una biblioteca en estado %s", l.State.Label())
+		return nil, fmt.Errorf("SQS-L041 cannot delete a library in state %s", l.State.Label())
 	}
 	s.Audit.Record(ctx, by, "library.delete", "library", id, audit.OK, map[string]any{"slug": l.Slug})
 	return s.Jobs.Enqueue(ctx, JobLibraryDelete, id, nil, by, jobs.Priority(90))
@@ -58,19 +58,19 @@ func (s *Service) runTrash(ctx context.Context, r *jobs.Run) error {
 	}
 	hasDB := l.Live()
 	if hasDB {
-		if err := r.Step("respaldo_final", func() error {
+		if err := r.Step("final_backup", func() error {
 			b, err := s.createBackup(ctx, nil, l, KindPreDelete, "")
 			if err != nil {
 				return err
 			}
-			r.Infof("Respaldo final %s verificado", HumanBytes(b.SizeBytes))
+			r.Infof("Final backup %s verified", HumanBytes(b.SizeBytes))
 			return nil
 		}); err != nil {
 			return err
 		}
 	}
 	r.Progress(50)
-	if err := r.Step("bloquear", func() error {
+	if err := r.Step("lock", func() error {
 		roles, err := s.activeRoles(ctx, l.ID)
 		if err != nil {
 			return err
@@ -99,7 +99,7 @@ func (s *Service) runTrash(ctx context.Context, r *jobs.Run) error {
 	trash := ""
 	if hasDB {
 		trash = pg.TrashDB(l.Slug, s.now())
-		if err := r.Step("mover", func() error {
+		if err := r.Step("move", func() error {
 			r.Journal(map[string]string{"from": l.DBName, "to": trash})
 			return s.PG.RenameDatabase(ctx, l.DBName, trash)
 		}); err != nil {
@@ -126,7 +126,7 @@ func (s *Service) runTrash(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	s.Events.Emit(ctx, events.Event{Type: events.LibraryTrashed, Severity: events.Warning, LibraryID: l.ID, JobID: r.Job.ID,
-		Message: fmt.Sprintf("%q se movió a la papelera; se borrará definitivamente el %s", l.DisplayName, purge.In(s.Cfg.Location).Format("2006-01-02"))})
+		Message: fmt.Sprintf("%q was moved to the trash; it will be permanently deleted on %s", l.DisplayName, purge.In(s.Cfg.Location).Format("2006-01-02"))})
 	return nil
 }
 
@@ -137,10 +137,10 @@ func (s *Service) RestoreFromTrash(ctx context.Context, by audit.Actor, id strin
 		return nil, err
 	}
 	if l.State != StateTrashed {
-		return nil, errors.New("SQS-L042 la biblioteca no está en la papelera")
+		return nil, errors.New("SQS-L042 the library is not in the trash")
 	}
 	if other, err := s.LibraryBySlug(ctx, l.Slug); err == nil && other.ID != l.ID {
-		return nil, fmt.Errorf("SQS-L043 ya existe otra biblioteca con el identificador %q", l.Slug)
+		return nil, fmt.Errorf("SQS-L043 another library with identifier %q already exists", l.Slug)
 	}
 	s.Audit.Record(ctx, by, "library.untrash", "library", id, audit.OK, nil)
 	return s.Jobs.Enqueue(ctx, JobLibraryUntrash, id, nil, by, jobs.Priority(90))
@@ -152,9 +152,9 @@ func (s *Service) runUntrash(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	if l.TrashDB != "" {
-		if err := r.Step("mover", func() error {
+		if err := r.Step("move", func() error {
 			if db, _ := s.PG.Database(ctx, l.DBName); db != nil {
-				return fmt.Errorf("SQS-L005 ya existe una base %q", l.DBName)
+				return fmt.Errorf("SQS-L005 a database %q already exists", l.DBName)
 			}
 			if err := s.PG.RenameDatabase(ctx, l.TrashDB, l.DBName); err != nil {
 				return err
@@ -168,7 +168,7 @@ func (s *Service) runUntrash(ctx context.Context, r *jobs.Run) error {
 	if l.TrashDB == "" {
 		state = StateInitExpired
 	}
-	if err := r.Step("reactivar", func() error {
+	if err := r.Step("reactivate", func() error {
 		roles, err := s.activeRoles(ctx, l.ID)
 		if err != nil {
 			return err
@@ -193,7 +193,7 @@ func (s *Service) runUntrash(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	s.Events.Emit(ctx, events.Event{Type: events.LibraryRestoredFromTrash, LibraryID: l.ID, JobID: r.Job.ID,
-		Message: fmt.Sprintf("%q volvió de la papelera", l.DisplayName)})
+		Message: fmt.Sprintf("%q was restored from the trash", l.DisplayName)})
 	return nil
 }
 
@@ -204,10 +204,10 @@ func (s *Service) Purge(ctx context.Context, by audit.Actor, id, confirm string)
 		return nil, err
 	}
 	if l.State != StateTrashed {
-		return nil, errors.New("SQS-L044 solo se purgan bibliotecas de la papelera")
+		return nil, errors.New("SQS-L044 only libraries in the trash can be purged")
 	}
 	if confirm != l.Slug {
-		return nil, errors.New("SQS-L040 escribe el identificador de la biblioteca para confirmar")
+		return nil, errors.New("SQS-L040 type the library identifier to confirm")
 	}
 	s.Audit.Record(ctx, by, "library.purge", "library", id, audit.OK, nil)
 	return s.Jobs.Enqueue(ctx, JobLibraryPurge, id, nil, by)
@@ -219,10 +219,10 @@ func (s *Service) runPurge(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	if l.State != StateTrashed {
-		return errors.New("SQS-L044 solo se purgan bibliotecas de la papelera")
+		return errors.New("SQS-L044 only libraries in the trash can be purged")
 	}
 	if l.TrashDB != "" {
-		if err := r.Step("comprobar_respaldo", func() error {
+		if err := r.Step("check_backup", func() error {
 			bs, err := s.Backups(ctx, BackupFilter{LibraryID: l.ID, Statuses: []string{BackupOK}})
 			if err != nil {
 				return err
@@ -232,17 +232,17 @@ func (s *Service) runPurge(ctx context.Context, r *jobs.Run) error {
 					return nil
 				}
 			}
-			return errors.New("SQS-L045 no hay un respaldo final verificado; no se purga")
+			return errors.New("SQS-L045 there is no verified final backup; not purging")
 		}); err != nil {
 			return err
 		}
-		if err := r.Step("borrar_base", func() error { return s.PG.DropDatabase(ctx, l.TrashDB) }); err != nil {
+		if err := r.Step("drop_database", func() error { return s.PG.DropDatabase(ctx, l.TrashDB) }); err != nil {
 			return err
 		}
 	}
 	if l.PrevDB != "" {
 		// The state kept before the last restore is covered by its pre_restore backup.
-		if err := r.Step("borrar_estado_previo", func() error { return s.PG.DropDatabase(ctx, l.PrevDB) }); err != nil {
+		if err := r.Step("drop_previous_state", func() error { return s.PG.DropDatabase(ctx, l.PrevDB) }); err != nil {
 			return err
 		}
 		s.DB.ExecContext(ctx, `UPDATE libraries SET prev_db_name = '', prev_expires_at = NULL WHERE id = ?`, l.ID)
@@ -250,9 +250,9 @@ func (s *Service) runPurge(ctx context.Context, r *jobs.Run) error {
 	// Any other database owned by the library roles (for example created during
 	// an init window) is reported and kept: dropping it is a manual decision.
 	if owned, err := s.PG.DatabasesOwnedBy(ctx, l.OwnerRole); err == nil && len(owned) > 0 {
-		return fmt.Errorf("SQS-L046 el rol %s todavía es dueño de: %s; revísalas antes de purgar", l.OwnerRole, strings.Join(owned, ", "))
+		return fmt.Errorf("SQS-L046 role %s still owns: %s; review them before purging", l.OwnerRole, strings.Join(owned, ", "))
 	}
-	if err := r.Step("borrar_roles", func() error {
+	if err := r.Step("drop_roles", func() error {
 		creds, err := s.Credentials(ctx, l.ID)
 		if err != nil {
 			return err
@@ -274,7 +274,7 @@ func (s *Service) runPurge(ctx context.Context, r *jobs.Run) error {
 	s.Sched.Delete(ctx, ScheduleBackup, l.ID)
 	s.Sched.Delete(ctx, ScheduleVerify, l.ID)
 	s.Events.Emit(ctx, events.Event{Type: events.LibraryPurged, Severity: events.Warning, LibraryID: l.ID, JobID: r.Job.ID,
-		Message: fmt.Sprintf("%q se borró definitivamente del servidor; sus respaldos se conservan según la retención", l.DisplayName)})
+		Message: fmt.Sprintf("%q was permanently deleted from the server; its backups are kept according to retention", l.DisplayName)})
 	return nil
 }
 
@@ -288,7 +288,7 @@ func (s *Service) PurgeExpired(ctx context.Context, r *jobs.Run) error {
 	for _, l := range libs {
 		if l.State == StateTrashed && l.PurgeAfter != nil && now.After(*l.PurgeAfter) {
 			if _, err := s.Jobs.Enqueue(ctx, JobLibraryPurge, l.ID, nil, audit.System, jobs.Unique()); err != nil {
-				r.Warnf("No se pudo encolar la purga de %s: %v", l.Slug, err)
+				r.Warnf("Could not queue the purge of %s: %v", l.Slug, err)
 			}
 		}
 		if l.PrevDB != "" && l.PrevExpiresAt != nil && now.After(*l.PrevExpiresAt) {
@@ -297,15 +297,15 @@ func (s *Service) PurgeExpired(ctx context.Context, r *jobs.Run) error {
 				ok = true
 			}
 			if !ok {
-				r.Warnf("Se conserva %s: no hay respaldo verificado del estado anterior", l.PrevDB)
+				r.Warnf("Keeping %s: there is no verified backup of the previous state", l.PrevDB)
 				continue
 			}
 			if err := s.PG.DropDatabase(ctx, l.PrevDB); err != nil {
-				r.Warnf("No se pudo borrar %s: %v", l.PrevDB, err)
+				r.Warnf("Could not delete %s: %v", l.PrevDB, err)
 				continue
 			}
 			s.DB.ExecContext(ctx, `UPDATE libraries SET prev_db_name = '', prev_expires_at = NULL, prev_backup_id = '' WHERE id = ?`, l.ID)
-			r.Infof("Se borró el estado anterior %s", l.PrevDB)
+			r.Infof("Deleted previous state %s", l.PrevDB)
 		}
 		s.sweepOrphanPrev(ctx, r, l, now)
 	}
@@ -334,9 +334,9 @@ func (s *Service) sweepOrphanPrev(ctx context.Context, r *jobs.Run, l *Library, 
 			continue
 		}
 		if err := s.PG.DropDatabase(ctx, name); err != nil {
-			r.Warnf("No se pudo borrar %s: %v", name, err)
+			r.Warnf("Could not delete %s: %v", name, err)
 			continue
 		}
-		r.Infof("Se borró %s, un estado anterior que ya nadie usaba", name)
+		r.Infof("Deleted %s, a previous state nobody was using anymore", name)
 	}
 }

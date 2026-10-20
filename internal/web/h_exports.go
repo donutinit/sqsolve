@@ -55,13 +55,13 @@ func (s *Server) libraryExport(w http.ResponseWriter, r *http.Request) {
 	if l == nil {
 		return
 	}
-	data := map[string]any{"L": l, "Tab": "exportar", "Enabled": true, "CanExport": principalOf(r).Can(auth.ActLibraryExport)}
+	data := map[string]any{"L": l, "Tab": "export", "Enabled": true, "CanExport": principalOf(r).Can(auth.ActLibraryExport)}
 	data["Running"], _ = s.A.Jobs.List(ctx, jobs.Filter{LibraryID: l.ID, States: []jobs.State{jobs.Queued, jobs.Running}, Limit: 10})
 	sess, err := s.A.Svc.OpenExport(ctx, l)
 	if err != nil {
 		data["Err"] = humanError(err)
 		data["Enabled"] = !errors.Is(err, core.ErrExportsDisabled)
-		s.render(w, r, "library_export", l.DisplayName, "bibliotecas", data)
+		s.render(w, r, "library_export", l.DisplayName, "libraries", data)
 		return
 	}
 	defer sess.Close(ctx)
@@ -77,7 +77,7 @@ func (s *Server) libraryExport(w http.ResponseWriter, r *http.Request) {
 		data["Err"] = humanError(err)
 	}
 	data["Projects"] = projects
-	s.render(w, r, "library_export", l.DisplayName, "bibliotecas", data)
+	s.render(w, r, "library_export", l.DisplayName, "libraries", data)
 }
 
 func (s *Server) libraryExportProject(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +121,7 @@ func buildExport(ctx context.Context, sess *drp.Session, slug, kind, id string) 
 	switch kind {
 	case "project":
 		if info, err = sess.ExportProject(ctx, id, &buf); err == nil {
-			name = slug + "_" + drp.SafeName(info.Name, "proyecto") + ".drp"
+			name = slug + "_" + drp.SafeName(info.Name, "project") + ".drp"
 		}
 	case "still":
 		if info, err = sess.ExportStill(ctx, id, &buf); err == nil {
@@ -157,7 +157,7 @@ func (s *Server) backupExport(w http.ResponseWriter, r *http.Request) {
 			data["Err"] = humanError(err)
 			data["Enabled"] = !errors.Is(err, core.ErrExportsDisabled)
 		}
-		s.render(w, r, "backup_export", "Exportar desde respaldo", "respaldos", data)
+		s.render(w, r, "backup_export", "Export from backup", "backups", data)
 		return
 	}
 	defer sess.Close(ctx)
@@ -176,7 +176,7 @@ func (s *Server) backupExport(w http.ResponseWriter, r *http.Request) {
 	if projects != nil {
 		data["Projects"] = projects
 	}
-	s.render(w, r, "backup_export", "Exportar desde respaldo", "respaldos", data)
+	s.render(w, r, "backup_export", "Export from backup", "backups", data)
 }
 
 func (s *Server) backupExportPrepare(w http.ResponseWriter, r *http.Request) {
@@ -184,14 +184,14 @@ func (s *Server) backupExportPrepare(w http.ResponseWriter, r *http.Request) {
 	if b == nil {
 		return
 	}
-	back := "/respaldos/" + b.ID + "/exportar"
+	back := "/backups/" + b.ID + "/export"
 	_, j, err := s.A.Svc.PrepareBackupExport(r.Context(), principalOf(r).Actor(), b.ID)
 	if err != nil {
 		s.fail(w, r, back, err)
 		return
 	}
 	if j != nil && !j.State.Finished() {
-		s.ok(w, r, "/tareas/"+j.ID, "Preparando el respaldo para exportar; vuelve a esta página cuando termine.")
+		s.ok(w, r, "/jobs/"+j.ID, "Preparing the backup for export; come back to this page when it finishes.")
 		return
 	}
 	s.ok(w, r, back, "")
@@ -203,10 +203,10 @@ func (s *Server) backupExportClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.A.Svc.CloseBackupExport(r.Context(), principalOf(r).Actor(), b.ID); err != nil {
-		s.fail(w, r, "/respaldos/"+b.ID+"/exportar", err)
+		s.fail(w, r, "/backups/"+b.ID+"/export", err)
 		return
 	}
-	s.ok(w, r, "/respaldos/"+b.ID, "Se cerró la exportación y se borró la base temporal.")
+	s.ok(w, r, "/backups/"+b.ID, "The export was closed and the temporary database was deleted.")
 }
 
 func (s *Server) backupExportProject(w http.ResponseWriter, r *http.Request) {
@@ -234,7 +234,7 @@ func (s *Server) backupExportDownload(w http.ResponseWriter, r *http.Request, ki
 		return
 	}
 	defer sess.Close(ctx)
-	slug := "respaldo"
+	slug := "backup"
 	if l != nil {
 		slug = l.Slug
 	}

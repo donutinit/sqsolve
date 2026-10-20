@@ -128,49 +128,49 @@ func TestPanelEndToEnd(t *testing.T) {
 
 	// Security headers.
 	st, _, _ := b.do("GET", "/healthz", nil)
-	resp, _ := b.c.Get(srv.URL + "/entrar")
+	resp, _ := b.c.Get(srv.URL + "/login")
 	if st != 200 || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "script-src 'self'") || resp.Header.Get("X-Frame-Options") != "DENY" {
 		t.Fatalf("security headers missing: %v", resp.Header)
 	}
 	resp.Body.Close()
 
 	// Setup refuses a wrong code, then works.
-	setup := b.page("/instalar")
+	setup := b.page("/setup")
 	pre := csrf(t, setup)
-	form := url.Values{"csrf": {pre}, "code": {"WRONG-CODE"}, "username": {"diego"}, "password": {"luz de tungsteno 3200K"},
-		"password2": {"luz de tungsteno 3200K"}, "host": {"192.168.1.10"}, "name": {"Estudio"}, "preset": {"diario"}}
-	if _, loc, _ := b.do("POST", "/instalar", form); !strings.HasPrefix(loc, "/instalar") || strings.Contains(loc, "error") {
+	form := url.Values{"csrf": {pre}, "code": {"WRONG-CODE"}, "username": {"diego"}, "password": {"tungsten light 3200K"},
+		"password2": {"tungsten light 3200K"}, "host": {"192.168.1.10"}, "name": {"Studio"}, "preset": {"daily"}}
+	if _, loc, _ := b.do("POST", "/setup", form); !strings.HasPrefix(loc, "/setup") || strings.Contains(loc, "error") {
 		t.Fatalf("wrong code accepted or error in URL: %s", loc)
 	}
-	if !strings.Contains(b.page("/instalar"), `class="flash error"`) {
+	if !strings.Contains(b.page("/setup"), `class="flash error"`) {
 		t.Fatal("wrong code error not shown")
 	}
 	form.Set("code", code)
-	if _, loc, _ := b.do("POST", "/instalar", form); loc != "/instalar/kit" {
+	if _, loc, _ := b.do("POST", "/setup", form); loc != "/setup/kit" {
 		t.Fatalf("setup failed: %s", loc)
 	}
-	b.page("/instalar/kit")
-	if _, loc, _ := b.do("GET", "/instalar", nil); loc != "/entrar" {
+	b.page("/setup/kit")
+	if _, loc, _ := b.do("GET", "/setup", nil); loc != "/login" {
 		t.Fatal("setup reachable after admin exists")
 	}
 	dash := b.page("/")
-	if !strings.Contains(dash, "Protección de los últimos 14 días") {
+	if !strings.Contains(dash, "Protection over the last 14 days") {
 		t.Fatal("dashboard without the protection timeline")
 	}
 	tok := csrf(t, dash)
 
 	// A POST without CSRF is refused.
-	if st, _, _ := b.do("POST", "/bibliotecas/nueva", url.Values{"name": {"x"}}); st != http.StatusForbidden {
+	if st, _, _ := b.do("POST", "/libraries/new", url.Values{"name": {"x"}}); st != http.StatusForbidden {
 		t.Fatalf("POST without csrf: %d", st)
 	}
 
 	// Create a library and initialize it like Resolve would.
-	_, loc, _ := b.do("POST", "/bibliotecas/nueva", url.Values{"csrf": {tok}, "name": {"Boda Ana y Luis"}, "strategy": {"resolve"}})
-	if !strings.HasPrefix(loc, "/bibliotecas/") {
+	_, loc, _ := b.do("POST", "/libraries/new", url.Values{"csrf": {tok}, "name": {"Wedding Ana and Luis"}, "strategy": {"resolve"}})
+	if !strings.HasPrefix(loc, "/libraries/") {
 		t.Fatalf("create library: %s", loc)
 	}
 	libPath := loc
-	libID := strings.TrimPrefix(libPath, "/bibliotecas/")
+	libID := strings.TrimPrefix(libPath, "/libraries/")
 	var l *core.Library
 	for i := 0; i < 50; i++ {
 		l, _ = a.Svc.Library(ctx, libID)
@@ -179,10 +179,10 @@ func TestPanelEndToEnd(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if !strings.Contains(b.page(libPath), "Inicializa la biblioteca desde Resolve") {
+	if !strings.Contains(b.page(libPath), "Initialize the library from Resolve") {
 		t.Fatal("awaiting page without instructions")
 	}
-	_, _, reveal := b.do("POST", libPath+"/contrasena/ver", url.Values{"csrf": {tok}})
+	_, _, reveal := b.do("POST", libPath+"/password/reveal", url.Values{"csrf": {tok}})
 	pw := regexp.MustCompile(`id="r-pass">([^<]+)<`).FindStringSubmatch(reveal)
 	if pw == nil {
 		t.Fatalf("password not revealed:\n%s", reveal)
@@ -207,27 +207,27 @@ func TestPanelEndToEnd(t *testing.T) {
 	}
 
 	// Backup from the panel and wait for the job.
-	_, jobLoc, _ := b.do("POST", libPath+"/respaldar", url.Values{"csrf": {tok}})
-	waitJob(t, a, strings.TrimPrefix(jobLoc, "/tareas/"))
+	_, jobLoc, _ := b.do("POST", libPath+"/backup", url.Values{"csrf": {tok}})
+	waitJob(t, a, strings.TrimPrefix(jobLoc, "/jobs/"))
 	b.page(jobLoc)
 
 	// Every page renders.
-	for _, p := range []string{"/", "/bibliotecas", "/bibliotecas?ver=papelera", "/bibliotecas/nueva", "/respaldos", "/respaldos/importar",
-		"/tareas", "/tareas?estado=failed", "/actividad", "/actividad?tab=auditoria", "/salud", "/ajustes", "/ajustes?tab=usuarios",
-		"/ajustes?tab=notificaciones", "/ajustes?tab=notificaciones&nuevo=smtp", "/ajustes?tab=mantenimiento", "/ajustes?tab=acerca",
-		"/cuenta", libPath + "/instrucciones", libPath + "/eliminar"} {
+	for _, p := range []string{"/", "/libraries", "/libraries?view=trash", "/libraries/new", "/backups", "/backups/import",
+		"/jobs", "/jobs?state=failed", "/activity", "/activity?tab=audit", "/health", "/settings", "/settings?tab=users",
+		"/settings?tab=notifications", "/settings?tab=notifications&new=smtp", "/settings?tab=maintenance", "/settings?tab=about",
+		"/account", libPath + "/instructions", libPath + "/delete"} {
 		b.page(p)
 	}
-	for _, tab := range []string{"conexion", "respaldos", "programacion", "accesos", "actividad", "ajustes", "peligro"} {
+	for _, tab := range []string{"connection", "backups", "schedule", "access", "activity", "settings", "danger"} {
 		b.page(libPath + "?tab=" + tab)
 	}
 
 	// Experimental export: off by default; on, it refuses a library whose
 	// tables are not Resolve's, and every error carries its code.
-	if pg := b.page(libPath + "/exportar"); !strings.Contains(pg, "SQS-E002") || !strings.Contains(pg, "Experimental") {
+	if pg := b.page(libPath + "/export"); !strings.Contains(pg, "SQS-E002") || !strings.Contains(pg, "Experimental") {
 		t.Fatalf("export tab with the feature off:\n%s", pg[:min(len(pg), 600)])
 	}
-	if st, _, _ := b.do("GET", libPath+"/exportar/proyectos/00000000-0000-0000-0000-000000000000", nil); st != http.StatusConflict {
+	if st, _, _ := b.do("GET", libPath+"/export/projects/00000000-0000-0000-0000-000000000000", nil); st != http.StatusConflict {
 		t.Fatalf("download with the feature off: %d", st)
 	}
 	expSettings := a.Svc.Settings(ctx)
@@ -235,58 +235,58 @@ func TestPanelEndToEnd(t *testing.T) {
 	if err := a.Svc.SaveSettings(ctx, audit.System, expSettings); err != nil {
 		t.Fatal(err)
 	}
-	if pg := b.page(libPath + "/exportar"); !strings.Contains(pg, "SQS-E001") || !strings.Contains(pg, "SM_Project.ClipInfoSeed") {
+	if pg := b.page(libPath + "/export"); !strings.Contains(pg, "SQS-E001") || !strings.Contains(pg, "SM_Project.ClipInfoSeed") {
 		i := strings.Index(pg, "SQS-E")
 		t.Fatalf("export tab without Resolve's schema: %s", pg[max(0, i-100):min(len(pg), i+400)])
 	}
-	if st, _, body := b.do("GET", libPath+"/exportar/stills/zzz", nil); st != http.StatusUnprocessableEntity || !strings.Contains(body, "SQS-E001") {
+	if st, _, body := b.do("GET", libPath+"/export/stills/zzz", nil); st != http.StatusUnprocessableEntity || !strings.Contains(body, "SQS-E001") {
 		t.Fatalf("download without Resolve's schema: %d", st)
 	}
-	if !strings.Contains(b.page("/ajustes"), `name="experimental_exports" checked`) {
+	if !strings.Contains(b.page("/settings"), `name="experimental_exports" checked`) {
 		t.Fatal("experimental export setting not shown as enabled")
 	}
-	backupsPage := b.page("/respaldos")
-	bid := regexp.MustCompile(`href="/respaldos/([0-9A-Z]{26})"`).FindStringSubmatch(backupsPage)
+	backupsPage := b.page("/backups")
+	bid := regexp.MustCompile(`href="/backups/([0-9A-Z]{26})"`).FindStringSubmatch(backupsPage)
 	if bid == nil {
 		t.Fatal("no backup listed")
 	}
-	b.page("/respaldos/" + bid[1])
-	b.page("/respaldos/" + bid[1] + "/restaurar")
+	b.page("/backups/" + bid[1])
+	b.page("/backups/" + bid[1] + "/restore")
 	// Export from a backup: prepare restores into a temporary database, the
 	// page then shows the exporter's verdict (its schema check here), and
 	// closing drops the database.
-	if pg := b.page("/respaldos/" + bid[1] + "/exportar"); !strings.Contains(pg, "Preparar la exportación") {
+	if pg := b.page("/backups/" + bid[1] + "/export"); !strings.Contains(pg, "Prepare the export") {
 		t.Fatalf("backup export page before preparing:\n%s", pg[:min(len(pg), 800)])
 	}
-	if st, _, body := b.do("GET", "/respaldos/"+bid[1]+"/exportar/proyectos/x", nil); st != http.StatusConflict || !strings.Contains(body, "SQS-E007") {
+	if st, _, body := b.do("GET", "/backups/"+bid[1]+"/export/projects/x", nil); st != http.StatusConflict || !strings.Contains(body, "SQS-E007") {
 		t.Fatalf("download before preparing: %d", st)
 	}
-	_, ploc, _ := b.do("POST", "/respaldos/"+bid[1]+"/exportar/preparar", url.Values{"csrf": {tok}})
-	if !strings.HasPrefix(ploc, "/tareas/") {
+	_, ploc, _ := b.do("POST", "/backups/"+bid[1]+"/export/prepare", url.Values{"csrf": {tok}})
+	if !strings.HasPrefix(ploc, "/jobs/") {
 		t.Fatalf("prepare redirect: %s", ploc)
 	}
-	waitJob(t, a, strings.TrimPrefix(ploc, "/tareas/"))
-	if pg := b.page("/respaldos/" + bid[1] + "/exportar"); !strings.Contains(pg, "SQS-E001") || !strings.Contains(pg, "Cerrar y borrar") {
+	waitJob(t, a, strings.TrimPrefix(ploc, "/jobs/"))
+	if pg := b.page("/backups/" + bid[1] + "/export"); !strings.Contains(pg, "SQS-E001") || !strings.Contains(pg, "Close and delete") {
 		i := strings.Index(pg, "SQS-E")
 		t.Fatalf("backup export page after preparing: %s", pg[max(0, i-200):min(len(pg), i+300)])
 	}
-	if st, _, _ := b.do("GET", "/respaldos/"+bid[1]+"/exportar/stills/zzz", nil); st != http.StatusUnprocessableEntity {
+	if st, _, _ := b.do("GET", "/backups/"+bid[1]+"/export/stills/zzz", nil); st != http.StatusUnprocessableEntity {
 		t.Fatalf("download from workspace without Resolve's schema: %d", st)
 	}
-	if _, cloc, _ := b.do("POST", "/respaldos/"+bid[1]+"/exportar/cerrar", url.Values{"csrf": {tok}}); cloc != "/respaldos/"+bid[1] {
+	if _, cloc, _ := b.do("POST", "/backups/"+bid[1]+"/export/close", url.Values{"csrf": {tok}}); cloc != "/backups/"+bid[1] {
 		t.Fatalf("close redirect: %s", cloc)
 	}
 
 	// Restore as a new library through the panel.
-	_, rj, _ := b.do("POST", "/respaldos/"+bid[1]+"/restaurar", url.Values{"csrf": {tok}, "mode": {"nueva"}, "slug": {"boda_copia"}, "name": {"Copia"}})
-	waitJob(t, a, strings.TrimPrefix(rj, "/tareas/"))
-	if cp, err := a.Svc.LibraryBySlug(ctx, "boda_copia"); err != nil || cp.State != core.StateActive {
+	_, rj, _ := b.do("POST", "/backups/"+bid[1]+"/restore", url.Values{"csrf": {tok}, "mode": {"new"}, "slug": {"wedding_copy"}, "name": {"Copy"}})
+	waitJob(t, a, strings.TrimPrefix(rj, "/jobs/"))
+	if cp, err := a.Svc.LibraryBySlug(ctx, "wedding_copy"); err != nil || cp.State != core.StateActive {
 		t.Fatalf("restored copy: %v %+v", err, cp)
 	}
 
 	// Import by upload: the CSRF part comes first and the file is streamed
 	// into the import folder, then moved into the catalog.
-	_, _, archive := b.do("GET", "/respaldos/"+bid[1]+"/descargar", nil)
+	_, _, archive := b.do("GET", "/backups/"+bid[1]+"/download", nil)
 	if !strings.HasPrefix(archive, "PGDMP") {
 		t.Fatal("download is not a pg_dump archive")
 	}
@@ -302,7 +302,7 @@ func TestPanelEndToEnd(t *testing.T) {
 			mw.WriteField(f[0], f[1])
 		}
 		mw.Close()
-		req, _ := http.NewRequest("POST", srv.URL+"/respaldos/importar", &body)
+		req, _ := http.NewRequest("POST", srv.URL+"/backups/import", &body)
 		req.Header.Set("Content-Type", mw.FormDataContentType())
 		resp, err := b.c.Do(req)
 		if err != nil {
@@ -314,31 +314,31 @@ func TestPanelEndToEnd(t *testing.T) {
 	if st, _ := upload([][2]string{{"library", libID}, {"csrf", tok}, {"upload", "x.backup"}}); st != http.StatusForbidden {
 		t.Fatalf("multipart with the CSRF part after others: %d", st)
 	}
-	st, loc = upload([][2]string{{"csrf", tok}, {"library", libID}, {"upload", "subido.backup"}})
-	if st != http.StatusSeeOther || !strings.HasPrefix(loc, "/tareas/") {
+	st, loc = upload([][2]string{{"csrf", tok}, {"library", libID}, {"upload", "uploaded.backup"}})
+	if st != http.StatusSeeOther || !strings.HasPrefix(loc, "/jobs/") {
 		t.Fatalf("upload import: %d %s", st, loc)
 	}
-	waitJob(t, a, strings.TrimPrefix(loc, "/tareas/"))
+	waitJob(t, a, strings.TrimPrefix(loc, "/jobs/"))
 	if left, _ := os.ReadDir(a.Svc.ImportDir()); len(left) != 0 {
 		t.Fatalf("upload left %d files in the import folder", len(left))
 	}
 
 	// A database created in Resolve with another name is pointed out.
-	_, loc2, _ := b.do("POST", "/bibliotecas/nueva", url.Values{"csrf": {tok}, "name": {"Comercial"}, "slug": {"comercial"}, "strategy": {"resolve"}})
-	lib2 := strings.TrimPrefix(loc2, "/bibliotecas/")
+	_, loc2, _ := b.do("POST", "/libraries/new", url.Values{"csrf": {tok}, "name": {"Commercial"}, "slug": {"commercial"}, "strategy": {"resolve"}})
+	lib2 := strings.TrimPrefix(loc2, "/libraries/")
 	for i := 0; i < 50; i++ {
 		if l2, _ := a.Svc.Library(ctx, lib2); l2 != nil && l2.State == core.StateAwaitingInit {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	_, _, reveal2 := b.do("POST", loc2+"/contrasena/ver", url.Values{"csrf": {tok}})
+	_, _, reveal2 := b.do("POST", loc2+"/password/reveal", url.Values{"csrf": {tok}})
 	pw2 := regexp.MustCompile(`id="r-pass">([^<]+)<`).FindStringSubmatch(reveal2)
 	// pg_hba.conf was just reloaded for the new role; the postmaster applies
 	// the reload asynchronously, so give it a moment under load.
 	var conn2 *pgx.Conn
 	for i := 0; i < 30; i++ {
-		if conn2, err = c.ConnectTCP(ctx, "comercial", secrets.New(pw2[1]), "postgres"); err == nil {
+		if conn2, err = c.ConnectTCP(ctx, "commercial", secrets.New(pw2[1]), "postgres"); err == nil {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -346,16 +346,16 @@ func TestPanelEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn2.Exec(ctx, `CREATE DATABASE "Comercial"`)
+	conn2.Exec(ctx, `CREATE DATABASE "Commercial"`)
 	conn2.Close(ctx)
 	a.Svc.WatchInit(ctx)
-	if !strings.Contains(b.page(loc2), "<code>Comercial</code>, pero la biblioteca debe llamarse exactamente") {
+	if !strings.Contains(b.page(loc2), "<code>Commercial</code>, but the library must be named exactly") {
 		t.Fatal("misnamed database not pointed out")
 	}
 
 	// Policy form round trip.
-	if _, loc, _ := b.do("POST", libPath+"/politica", url.Values{"csrf": {tok}, "enabled": {"on"}, "preset": {"cadahora"},
-		"keep_last": {"5"}, "keep_daily": {"7"}, "keep_weekly": {"4"}, "keep_monthly": {"3"}, "min_verified": {"1"}}); !strings.Contains(loc, "programacion") {
+	if _, loc, _ := b.do("POST", libPath+"/policy", url.Values{"csrf": {tok}, "enabled": {"on"}, "preset": {"hourly"},
+		"keep_last": {"5"}, "keep_daily": {"7"}, "keep_weekly": {"4"}, "keep_monthly": {"3"}, "min_verified": {"1"}}); !strings.Contains(loc, "schedule") {
 		t.Fatalf("policy: %s", loc)
 	}
 	if p, _ := a.Svc.Policy(ctx, libID); p.Cron != "0 * * * *" || p.KeepLast != 5 {
@@ -363,7 +363,7 @@ func TestPanelEndToEnd(t *testing.T) {
 	}
 
 	// API: a read-only token can list but not create.
-	_, _, tokPage := b.do("POST", "/cuenta/tokens", url.Values{"csrf": {tok}, "name": {"ci"}, "scope": {"read"}, "days": {"30"}})
+	_, _, tokPage := b.do("POST", "/account/tokens", url.Values{"csrf": {tok}, "name": {"ci"}, "scope": {"read"}, "days": {"30"}})
 	token := regexp.MustCompile(`id="tok">([^<]+)<`).FindStringSubmatch(tokPage)
 	if token == nil {
 		t.Fatal("token not shown")
@@ -407,8 +407,8 @@ func TestPanelEndToEnd(t *testing.T) {
 	}
 
 	// Logout ends the session.
-	b.do("POST", "/salir", url.Values{"csrf": {tok}})
-	if _, loc, _ := b.do("GET", "/", nil); !strings.HasPrefix(loc, "/entrar") {
+	b.do("POST", "/logout", url.Values{"csrf": {tok}})
+	if _, loc, _ := b.do("GET", "/", nil); !strings.HasPrefix(loc, "/login") {
 		t.Fatalf("still logged in after logout: %s", loc)
 	}
 }

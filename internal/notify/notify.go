@@ -94,7 +94,7 @@ func (n *Notifier) Handle(e events.Event) {
 	select {
 	case n.queue <- e:
 	default:
-		n.log.Warn("cola de notificaciones llena; se descarta un evento", "type", e.Type)
+		n.log.Warn("notification queue full; dropping an event", "type", e.Type)
 	}
 }
 
@@ -160,7 +160,7 @@ func (n *Notifier) deliver(ctx context.Context, ch *Channel, e events.Event, ext
 		}
 		time.Sleep(n.retries[attempt])
 	}
-	n.log.Warn("no se pudo notificar", "channel", ch.Name, "err", err)
+	n.log.Warn("could not notify", "channel", ch.Name, "err", err)
 	n.db.ExecContext(ctx, `UPDATE notification_channels SET last_error = ? WHERE id = ?`, store.NowT()+" "+err.Error(), ch.ID)
 }
 
@@ -185,10 +185,10 @@ func (n *Notifier) payload(e events.Event, extra int) Payload {
 	if base := n.BaseURL(); base != "" {
 		p.Links = map[string]string{}
 		if e.JobID != "" {
-			p.Links["job"] = base + "/tareas/" + e.JobID
+			p.Links["job"] = base + "/jobs/" + e.JobID
 		}
 		if e.LibraryID != "" {
-			p.Links["library"] = base + "/bibliotecas/" + e.LibraryID
+			p.Links["library"] = base + "/libraries/" + e.LibraryID
 		}
 	}
 	return p
@@ -208,7 +208,7 @@ func (n *Notifier) send(ctx context.Context, ch *Channel, e events.Event, extra 
 	defer cancel()
 	msg := e.Message
 	if extra > 0 {
-		msg += fmt.Sprintf(" (y %d avisos iguales más)", extra)
+		msg += fmt.Sprintf(" (and %d more identical notifications)", extra)
 	}
 	switch ch.Kind {
 	case Webhook:
@@ -240,13 +240,13 @@ func (n *Notifier) send(ctx context.Context, ch *Channel, e events.Event, extra 
 			req.Header.Set("Authorization", "Bearer "+t)
 		}
 		if base := n.BaseURL(); base != "" && e.JobID != "" {
-			req.Header.Set("Click", base+"/tareas/"+e.JobID)
+			req.Header.Set("Click", base+"/jobs/"+e.JobID)
 		}
 		return n.do(req)
 	case SMTP:
 		return sendMail(ctx, ch.Config, fmt.Sprintf("[%s] %s: %s", n.Instance(), e.Severity.Label(), truncate(e.Message, 120)), msg+"\n\n"+e.TS.Format(time.RFC1123Z)+"\n")
 	}
-	return fmt.Errorf("SQS-N001 tipo de canal desconocido: %s", ch.Kind)
+	return fmt.Errorf("SQS-N001 unknown channel kind: %s", ch.Kind)
 }
 
 func (n *Notifier) do(req *http.Request) error {
@@ -256,7 +256,7 @@ func (n *Notifier) do(req *http.Request) error {
 	}
 	resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("SQS-N002 el destino respondió %s", resp.Status)
+		return fmt.Errorf("SQS-N002 the destination responded %s", resp.Status)
 	}
 	return nil
 }
@@ -276,20 +276,20 @@ func sendMail(ctx context.Context, c map[string]string, subject, body string) er
 	}
 	from, err := mail.ParseAddress(c["from"])
 	if err != nil {
-		return fmt.Errorf("SQS-N010 remitente inválido: %w", err)
+		return fmt.Errorf("SQS-N010 invalid sender: %w", err)
 	}
 	var to []string
 	for _, a := range strings.Split(c["to"], ",") {
 		if a = strings.TrimSpace(a); a != "" {
 			addr, err := mail.ParseAddress(a)
 			if err != nil {
-				return fmt.Errorf("SQS-N011 destinatario inválido: %s", a)
+				return fmt.Errorf("SQS-N011 invalid recipient: %s", a)
 			}
 			to = append(to, addr.Address)
 		}
 	}
 	if len(to) == 0 {
-		return errors.New("SQS-N011 sin destinatarios")
+		return errors.New("SQS-N011 no recipients")
 	}
 	addr := net.JoinHostPort(host, port)
 	d := net.Dialer{Timeout: 10 * time.Second}
@@ -387,18 +387,18 @@ func (n *Notifier) Channel(ctx context.Context, id string) (*Channel, error) {
 			return c, nil
 		}
 	}
-	return nil, errors.New("SQS-N020 canal no encontrado")
+	return nil, errors.New("SQS-N020 channel not found")
 }
 
 // Validate checks a channel's configuration.
 func Validate(c *Channel) error {
 	if strings.TrimSpace(c.Name) == "" || len(c.Name) > 80 {
-		return errors.New("SQS-N021 el canal necesita un nombre")
+		return errors.New("SQS-N021 the channel needs a name")
 	}
 	switch c.MinSeverity {
 	case events.Info, events.Warning, events.Error, events.Critical:
 	default:
-		return errors.New("SQS-N022 severidad inválida")
+		return errors.New("SQS-N022 invalid severity")
 	}
 	if c.Pattern == "" {
 		c.Pattern = "*"
@@ -407,24 +407,24 @@ func Validate(c *Channel) error {
 	case Webhook, Ntfy:
 		u, err := url.Parse(c.Config["url"])
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return errors.New("SQS-N023 URL inválida (usa http:// o https://)")
+			return errors.New("SQS-N023 invalid URL (use http:// or https://)")
 		}
 	case SMTP:
 		if c.Config["host"] == "" || c.Config["from"] == "" || c.Config["to"] == "" {
-			return errors.New("SQS-N024 el correo necesita servidor, remitente y destinatarios")
+			return errors.New("SQS-N024 email needs a server, sender and recipients")
 		}
 		if p := c.Config["port"]; p != "" {
 			if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {
-				return errors.New("SQS-N025 puerto inválido")
+				return errors.New("SQS-N025 invalid port")
 			}
 		}
 		switch c.Config["security"] {
 		case "", "starttls", "tls", "none":
 		default:
-			return errors.New("SQS-N026 seguridad inválida")
+			return errors.New("SQS-N026 invalid security setting")
 		}
 	default:
-		return errors.New("SQS-N001 tipo de canal desconocido")
+		return errors.New("SQS-N001 unknown channel kind")
 	}
 	return nil
 }
@@ -479,7 +479,7 @@ func (n *Notifier) Test(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	e := events.Event{ID: ulid.New(), TS: time.Now(), Type: "system.test", Severity: events.Info, Message: "Prueba de notificación de sqsolve"}
+	e := events.Event{ID: ulid.New(), TS: time.Now(), Type: "system.test", Severity: events.Info, Message: "sqsolve test notification"}
 	err = n.send(ctx, c, e, 0)
 	if err == nil {
 		n.db.ExecContext(ctx, `UPDATE notification_channels SET last_ok_at = ?, last_error = '' WHERE id = ?`, store.NowT(), id)

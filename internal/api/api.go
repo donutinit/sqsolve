@@ -105,7 +105,7 @@ func (a *API) principal(r *http.Request) (*auth.Principal, error) {
 		return nil, err
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead && !a.A.Auth.CheckCSRF(c.Value, r.Header.Get("X-CSRF-Token")) {
-		return nil, errors.New("SQS-A031 falta la cabecera X-CSRF-Token")
+		return nil, errors.New("SQS-A031 missing X-CSRF-Token header")
 	}
 	return p, nil
 }
@@ -121,7 +121,7 @@ func (a *API) guard(action auth.Action, h handler) http.HandlerFunc {
 			return
 		}
 		if !p.Can(action) {
-			problem(w, r, http.StatusForbidden, errors.New("SQS-A030 el rol o los alcances del token no permiten esta acción"))
+			problem(w, r, http.StatusForbidden, errors.New("SQS-A030 the role or the token scopes do not allow this action"))
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -133,7 +133,7 @@ func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("SQS-C061 cuerpo JSON inválido: %w", err)
+		return fmt.Errorf("SQS-C061 invalid JSON body: %w", err)
 	}
 	return nil
 }
@@ -179,7 +179,7 @@ func (a *API) Register(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/events", a.guard(auth.ActView, a.eventsList))
 	m.HandleFunc("GET /api/v1/audit", a.guard(auth.ActAuditView, a.auditList))
 	m.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
-		problem(w, r, http.StatusNotFound, errors.New("SQS-C062 ruta de la API desconocida"))
+		problem(w, r, http.StatusNotFound, errors.New("SQS-C062 unknown API route"))
 	})
 }
 
@@ -547,7 +547,7 @@ func (a *API) restore(w http.ResponseWriter, r *http.Request, p *auth.Principal)
 	switch in.Mode {
 	case "replace":
 		if !p.Can(auth.ActRestoreReplace) {
-			problem(w, r, 403, errors.New("SQS-A030 reemplazar requiere el alcance restore o admin"))
+			problem(w, r, 403, errors.New("SQS-A030 replacing requires the restore or admin scope"))
 			return
 		}
 		j, err := a.A.Svc.RestoreReplace(r.Context(), p.Actor(), id, in.Confirm, in.TerminateSessions)
@@ -564,7 +564,7 @@ func (a *API) restore(w http.ResponseWriter, r *http.Request, p *auth.Principal)
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"library": libDTO(l), "job": j})
 	default:
-		problem(w, r, 400, errors.New("SQS-C063 mode debe ser new o replace"))
+		problem(w, r, 400, errors.New("SQS-C063 mode must be new or replace"))
 	}
 }
 

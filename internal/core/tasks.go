@@ -55,42 +55,42 @@ const (
 // Register adds every job type and schedule kind.
 func (s *Service) Register() {
 	j := s.Jobs
-	j.Register(jobs.Spec{Type: JobLibraryCreate, Title: "Crear biblioteca", Priority: 90, Lock: jobs.LockWrite, Run: s.runLibraryCreate})
-	j.Register(jobs.Spec{Type: JobLibraryDelete, Title: "Mover a la papelera", Priority: 90, Lock: jobs.LockWrite, Heavy: true, Run: s.runTrash})
-	j.Register(jobs.Spec{Type: JobLibraryUntrash, Title: "Recuperar de la papelera", Priority: 90, Lock: jobs.LockWrite, Run: s.runUntrash})
-	j.Register(jobs.Spec{Type: JobLibraryPurge, Title: "Purgar biblioteca", Priority: 40, Lock: jobs.LockWrite, Run: s.runPurge})
-	j.Register(jobs.Spec{Type: JobBackupCreate, Title: "Respaldar", Priority: 50, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runBackupCreate})
-	j.Register(jobs.Spec{Type: JobBackupVerify, Title: "Verificar respaldo", Priority: 30, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runVerify})
-	j.Register(jobs.Spec{Type: JobBackupExport, Title: "Preparar exportación desde respaldo", Priority: 40, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runBackupExport})
-	j.Register(jobs.Spec{Type: JobBackupImport, Title: "Importar respaldo", Priority: 60, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runImport})
-	j.Register(jobs.Spec{Type: JobRestoreNew, Title: "Restaurar como biblioteca nueva", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Cancellable: true, Run: s.runRestoreNew})
-	j.Register(jobs.Spec{Type: JobRestoreReplace, Title: "Restaurar reemplazando", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRestoreReplace})
-	j.Register(jobs.Spec{Type: JobRestoreRevert, Title: "Revertir restauración", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRevert})
-	j.Register(jobs.Spec{Type: JobRestoreRecreate, Title: "Recrear desde respaldo", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRecreate})
-	j.Register(jobs.Spec{Type: JobRetention, Title: "Aplicar retención", Priority: 20, Run: s.runRetentionAll})
-	j.Register(jobs.Spec{Type: JobVerifyAll, Title: "Verificar últimos respaldos", Priority: 30, Run: s.runVerifyAll})
-	j.Register(jobs.Spec{Type: JobVacuum, Title: "Optimizar bibliotecas", Priority: 10, Heavy: true, Cancellable: true, Run: s.runVacuum})
-	j.Register(jobs.Spec{Type: JobControlBackup, Title: "Respaldar el plano de control", Priority: 20, Run: s.runControlBackup})
-	j.Register(jobs.Spec{Type: JobCatalogCheck, Title: "Revisar catálogo", Priority: 10, Run: s.runCatalogCheck})
-	j.Register(jobs.Spec{Type: JobCatalogRebuild, Title: "Reconstruir catálogo", Priority: 60, Run: s.runCatalogRebuild})
-	j.Register(jobs.Spec{Type: JobPurgeExpired, Title: "Purgar vencidos", Priority: 10, Run: func(ctx context.Context, r *jobs.Run) error { return s.PurgeExpired(ctx, r) }})
-	j.Register(jobs.Spec{Type: JobHousekeeping, Title: "Limpieza", Priority: 5, Run: s.runHousekeeping})
-	j.Register(jobs.Spec{Type: JobUpgradeWindow, Title: "Ventana de actualización de Resolve", Priority: 95, Run: s.runUpgradeWindow})
+	j.Register(jobs.Spec{Type: JobLibraryCreate, Title: "Create library", Priority: 90, Lock: jobs.LockWrite, Run: s.runLibraryCreate})
+	j.Register(jobs.Spec{Type: JobLibraryDelete, Title: "Move to trash", Priority: 90, Lock: jobs.LockWrite, Heavy: true, Run: s.runTrash})
+	j.Register(jobs.Spec{Type: JobLibraryUntrash, Title: "Restore from trash", Priority: 90, Lock: jobs.LockWrite, Run: s.runUntrash})
+	j.Register(jobs.Spec{Type: JobLibraryPurge, Title: "Purge library", Priority: 40, Lock: jobs.LockWrite, Run: s.runPurge})
+	j.Register(jobs.Spec{Type: JobBackupCreate, Title: "Back up", Priority: 50, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runBackupCreate})
+	j.Register(jobs.Spec{Type: JobBackupVerify, Title: "Verify backup", Priority: 30, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runVerify})
+	j.Register(jobs.Spec{Type: JobBackupExport, Title: "Prepare export from backup", Priority: 40, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runBackupExport})
+	j.Register(jobs.Spec{Type: JobBackupImport, Title: "Import backup", Priority: 60, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runImport})
+	j.Register(jobs.Spec{Type: JobRestoreNew, Title: "Restore as a new library", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Cancellable: true, Run: s.runRestoreNew})
+	j.Register(jobs.Spec{Type: JobRestoreReplace, Title: "Restore by replacing", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRestoreReplace})
+	j.Register(jobs.Spec{Type: JobRestoreRevert, Title: "Revert restore", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRevert})
+	j.Register(jobs.Spec{Type: JobRestoreRecreate, Title: "Recreate from backup", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRecreate})
+	j.Register(jobs.Spec{Type: JobRetention, Title: "Apply retention", Priority: 20, Run: s.runRetentionAll})
+	j.Register(jobs.Spec{Type: JobVerifyAll, Title: "Verify latest backups", Priority: 30, Run: s.runVerifyAll})
+	j.Register(jobs.Spec{Type: JobVacuum, Title: "Optimize libraries", Priority: 10, Heavy: true, Cancellable: true, Run: s.runVacuum})
+	j.Register(jobs.Spec{Type: JobControlBackup, Title: "Back up the control plane", Priority: 20, Run: s.runControlBackup})
+	j.Register(jobs.Spec{Type: JobCatalogCheck, Title: "Check catalog", Priority: 10, Run: s.runCatalogCheck})
+	j.Register(jobs.Spec{Type: JobCatalogRebuild, Title: "Rebuild catalog", Priority: 60, Run: s.runCatalogRebuild})
+	j.Register(jobs.Spec{Type: JobPurgeExpired, Title: "Purge expired", Priority: 10, Run: func(ctx context.Context, r *jobs.Run) error { return s.PurgeExpired(ctx, r) }})
+	j.Register(jobs.Spec{Type: JobHousekeeping, Title: "Housekeeping", Priority: 5, Run: s.runHousekeeping})
+	j.Register(jobs.Spec{Type: JobUpgradeWindow, Title: "Resolve upgrade window", Priority: 95, Run: s.runUpgradeWindow})
 
 	sc := s.Sched
-	sc.RegisterKind(ScheduleBackup, scheduler.Kind{JobType: JobBackupCreate, Jitter: true, Title: "respaldo", Gate: s.BackupGate})
-	sc.RegisterKind(ScheduleVerify, scheduler.Kind{JobType: JobBackupVerify, Jitter: true, Title: "verificación"})
+	sc.RegisterKind(ScheduleBackup, scheduler.Kind{JobType: JobBackupCreate, Jitter: true, Title: "backup", Gate: s.BackupGate})
+	sc.RegisterKind(ScheduleVerify, scheduler.Kind{JobType: JobBackupVerify, Jitter: true, Title: "verification"})
 	for kind, jt := range systemSchedules {
 		sc.RegisterKind(kind, scheduler.Kind{JobType: jt.job, Title: jt.title})
 	}
 }
 
 var systemSchedules = map[string]struct{ job, cron, title string }{
-	"system.retention":      {JobRetention, "0 4 * * *", "retención"},
-	"system.verify_all":     {JobVerifyAll, "0 5 * * 0", "verificación semanal"},
-	"system.vacuum":         {JobVacuum, "0 3 * * 0", "optimización"},
-	"system.control_backup": {JobControlBackup, "15 4 * * *", "respaldo del plano de control"},
-	"system.catalog_check":  {JobCatalogCheck, "30 4 * * *", "revisión del catálogo"},
+	"system.retention":      {JobRetention, "0 4 * * *", "retention"},
+	"system.verify_all":     {JobVerifyAll, "0 5 * * 0", "weekly verification"},
+	"system.vacuum":         {JobVacuum, "0 3 * * 0", "optimization"},
+	"system.control_backup": {JobControlBackup, "15 4 * * *", "control plane backup"},
+	"system.catalog_check":  {JobCatalogCheck, "30 4 * * *", "catalog check"},
 	"system.purge":          {JobPurgeExpired, "20 4 * * *", "purga"},
 	"system.housekeeping":   {JobHousekeeping, "45 4 * * *", "limpieza"},
 }
@@ -127,7 +127,7 @@ func (s *Service) runRetentionAll(ctx context.Context, r *jobs.Run) error {
 		}
 		total += n
 	}
-	r.Infof("Retención aplicada a %d bibliotecas; %d respaldos borrados", len(libs), total)
+	r.Infof("Retention applied to %d libraries; %d backups deleted", len(libs), total)
 	return nil
 }
 
@@ -161,7 +161,7 @@ func (s *Service) runVacuum(ctx context.Context, r *jobs.Run) error {
 		if _, err := s.Exec.Run(ctx, execxCmd("vacuumdb", args, s)); err != nil {
 			r.Warnf("%s: %v", l.Slug, err)
 		} else {
-			r.Infof("%s optimizada", l.Slug)
+			r.Infof("%s optimized", l.Slug)
 		}
 		r.Progress((i + 1) * 100 / max(1, len(libs)))
 	}
@@ -193,7 +193,7 @@ func (s *Service) runControlBackup(ctx context.Context, r *jobs.Run) error {
 	for i := 0; i < len(matches)-30; i++ {
 		os.Remove(matches[i])
 	}
-	r.Infof("Copia del plano de control en %s", filepath.Base(dst))
+	r.Infof("Control plane copy at %s", filepath.Base(dst))
 	return nil
 }
 
@@ -212,8 +212,8 @@ func (s *Service) runCatalogCheck(ctx context.Context, r *jobs.Run) error {
 		known[b.FilePath] = true
 		if _, err := os.Stat(s.AbsPath(b)); errors.Is(err, os.ErrNotExist) {
 			missing++
-			s.DB.ExecContext(ctx, `UPDATE backups SET verify_status = 'failed', verify_detail = 'El archivo no existe en el volumen' WHERE id = ?`, b.ID)
-			r.Warnf("Falta el archivo de %s", b.FilePath)
+			s.DB.ExecContext(ctx, `UPDATE backups SET verify_status = 'failed', verify_detail = 'The file does not exist on the volume' WHERE id = ?`, b.ID)
+			r.Warnf("Missing file for %s", b.FilePath)
 		}
 	}
 	orphans := 0
@@ -230,9 +230,9 @@ func (s *Service) runCatalogCheck(ctx context.Context, r *jobs.Run) error {
 	})
 	if missing > 0 || orphans > 0 {
 		s.Events.Emit(ctx, events.Event{Type: "backup.catalog_mismatch", Severity: events.Warning,
-			Message: fmt.Sprintf("Catálogo y archivos no coinciden: %d archivos faltan y %d archivos no están en el catálogo", missing, orphans)})
+			Message: fmt.Sprintf("Catalog and files do not match: %d files are missing and %d files are not in the catalog", missing, orphans)})
 	}
-	r.Infof("%d respaldos revisados; %d faltan; %d huérfanos", len(bs), missing, orphans)
+	r.Infof("%d backups checked; %d missing; %d orphaned", len(bs), missing, orphans)
 	return nil
 }
 
@@ -257,7 +257,7 @@ func (s *Service) runCatalogRebuild(ctx context.Context, r *jobs.Run) error {
 		}
 		backupFile := filepath.Join(filepath.Dir(p), m.File)
 		if _, err := os.Stat(backupFile); err != nil {
-			r.Warnf("Manifiesto sin archivo: %s", p)
+			r.Warnf("Manifest without file: %s", p)
 			return nil
 		}
 		libID := m.Library.ID
@@ -265,16 +265,16 @@ func (s *Service) runCatalogRebuild(ctx context.Context, r *jobs.Run) error {
 			now := store.NowT()
 			_, err := s.DB.ExecContext(ctx, `INSERT INTO libraries(id, slug, display_name, state, db_name, owner_role, creation_strategy, notes, created_at, updated_at, purged_at)
 				VALUES (?, ?, ?, 'purged', ?, ?, 'restore', ?, ?, ?, ?)`, libID, m.Library.Slug, m.Library.DisplayName, m.Library.Slug, m.Library.Slug,
-				"Reconstruida desde los manifiestos del volumen de respaldos", now, now, now)
+				"Rebuilt from the manifests on the backups volume", now, now, now)
 			if err != nil {
-				r.Warnf("No se pudo registrar la biblioteca %s: %v", m.Library.Slug, err)
+				r.Warnf("Could not register library %s: %v", m.Library.Slug, err)
 				return nil
 			}
 		}
 		rel, _ := filepath.Rel(s.Cfg.BackupDir, backupFile)
 		_, err = s.DB.ExecContext(ctx, `INSERT INTO backups(id, library_id, kind, status, file_path, size_bytes, sha256, pg_server_version, pg_dump_version, archive_version,
 			compression, schema_fingerprint, table_count, counts_exact, resolve_version, started_at, finished_at, verify_status, verify_detail)
-			VALUES (?, ?, ?, 'ok', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none', 'Recuperado del volumen; verifícalo antes de usarlo')`,
+			VALUES (?, ?, ?, 'ok', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none', 'Recovered from the volume; verify it before using it')`,
 			m.BackupID, libID, m.Kind, rel, m.Size, m.SHA256, m.Server.PostgresVersion, m.Format.ToolVersion, m.Format.ArchiveVersion,
 			m.Format.Compression, m.Schema.Fingerprint, m.Schema.Tables, m.CountsExact, m.ResolveVersion, store.T(m.StartedAt), store.T(m.FinishedAt))
 		if err != nil {
@@ -282,7 +282,7 @@ func (s *Service) runCatalogRebuild(ctx context.Context, r *jobs.Run) error {
 			return nil
 		}
 		if err := s.verifyL1(ctx, m.BackupID); err != nil {
-			r.Warnf("%s no pasó la verificación: %v", rel, err)
+			r.Warnf("%s failed verification: %v", rel, err)
 		}
 		added++
 		return nil
@@ -290,27 +290,27 @@ func (s *Service) runCatalogRebuild(ctx context.Context, r *jobs.Run) error {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	r.Infof("Se agregaron %d respaldos al catálogo", added)
+	r.Infof("Added %d backups to the catalog", added)
 	r.SetResult(map[string]int{"added": added})
 	return nil
 }
 
 func (s *Service) runHousekeeping(ctx context.Context, r *jobs.Run) error {
 	if n, err := s.Jobs.Purge(ctx, s.now().Add(-90*24*time.Hour)); err == nil && n > 0 {
-		r.Infof("Se borraron %d tareas antiguas", n)
+		r.Infof("Deleted %d old jobs", n)
 	}
 	if n, err := s.Events.Purge(ctx, s.now().Add(-180*24*time.Hour)); err == nil && n > 0 {
-		r.Infof("Se borraron %d eventos antiguos", n)
+		r.Infof("Deleted %d old events", n)
 	}
 	if n := s.PurgeExportWorkspaces(ctx); n > 0 {
-		r.Infof("Se cerraron %d exportaciones desde respaldo vencidas", n)
+		r.Infof("Closed %d expired exports from backups", n)
 	}
 	if broken, n, err := s.Audit.Verify(ctx); err == nil {
 		if broken != 0 {
 			s.Events.Emit(ctx, events.Event{Type: events.AuditChainBroken, Severity: events.Critical,
-				Message: fmt.Sprintf("La cadena de auditoría está rota en la entrada %d: alguien modificó la base de sqsolve", broken)})
+				Message: fmt.Sprintf("The audit chain is broken at entry %d: someone modified the sqsolve database", broken)})
 		} else {
-			r.Infof("Auditoría íntegra (%d entradas)", n)
+			r.Infof("Audit log intact (%d entries)", n)
 		}
 	}
 	if err := s.DB.IntegrityCheck(ctx); err != nil {
@@ -337,7 +337,7 @@ func (s *Service) CheckStale(ctx context.Context) error {
 		}
 		if b == nil || s.now().Sub(b.StartedAt) > time.Duration(hours)*time.Hour {
 			s.Events.Emit(ctx, events.Event{Type: events.BackupStale, Severity: events.Warning, LibraryID: l.ID,
-				Message: fmt.Sprintf("%q no tiene un respaldo verificado en las últimas %d horas", l.DisplayName, hours)})
+				Message: fmt.Sprintf("%q has no verified backup in the last %d hours", l.DisplayName, hours)})
 		}
 	}
 	return nil
@@ -347,7 +347,7 @@ func (s *Service) CheckStale(ctx context.Context) error {
 func (s *Service) UpgradeWindow(ctx context.Context, by audit.Actor, target string) (*jobs.Job, error) {
 	target = strings.TrimSpace(target)
 	if target == "" || len(target) > 20 {
-		return nil, errors.New("SQS-C040 escribe la versión de Resolve de destino")
+		return nil, errors.New("SQS-C040 type the target Resolve version")
 	}
 	s.Audit.Record(ctx, by, "system.upgrade_window", "system", "", audit.OK, map[string]any{"target": target})
 	return s.Jobs.Enqueue(ctx, JobUpgradeWindow, "", map[string]string{"target": target}, by)
@@ -368,7 +368,7 @@ func (s *Service) runUpgradeWindow(ctx context.Context, r *jobs.Run) error {
 	var out []res
 	for i, l := range libs {
 		var b *Backup
-		err := r.Step("respaldo_"+l.Slug, func() error {
+		err := r.Step("backup_"+l.Slug, func() error {
 			var err error
 			b, err = s.createBackup(ctx, nil, l, KindPreUpgrade, "")
 			if err != nil {
@@ -377,12 +377,12 @@ func (s *Service) runUpgradeWindow(ctx context.Context, r *jobs.Run) error {
 			return s.verifyL2(ctx, r, b.ID)
 		})
 		if err != nil {
-			return fmt.Errorf("SQS-B060 la ventana se detiene: %s no quedó respaldada y verificada: %w", l.Slug, err)
+			return fmt.Errorf("SQS-B060 the window stops: %s was not backed up and verified: %w", l.Slug, err)
 		}
 		out = append(out, res{l.Slug, b.ID, l.Fingerprint})
 		r.Progress((i + 1) * 100 / len(libs))
 	}
 	r.SetResult(map[string]any{"target": p.Target, "libraries": out})
-	r.Infof("Todas las bibliotecas tienen un respaldo verificado previo a Resolve %s. Ya pueden actualizar las estaciones", p.Target)
+	r.Infof("All libraries have a verified backup taken before Resolve %s. Workstations can now be upgraded", p.Target)
 	return nil
 }

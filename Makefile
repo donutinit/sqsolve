@@ -1,20 +1,20 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo desconocido)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 STATICCHECK = honnef.co/go/tools/cmd/staticcheck@v0.8.1
 GOVULNCHECK = golang.org/x/vuln/cmd/govulncheck@v1.9.0
 LDFLAGS = -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 
-.PHONY: build check fmt vet lint vuln test test-integration scenarios image clean errores
+.PHONY: build check fmt vet lint vuln test test-integration scenarios image clean errors
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o sqsolve ./cmd/sqsolve
 
-## check: formato, vet, staticcheck, pruebas unitarias y govulncheck
+## check: format, vet, staticcheck, unit tests and govulncheck
 check: fmt vet lint test vuln
 
 fmt:
-	@out=$$(gofmt -l cmd internal); if [ -n "$$out" ]; then echo "sin formato:"; echo "$$out"; exit 1; fi
+	@out=$$(gofmt -l cmd internal); if [ -n "$$out" ]; then echo "not formatted:"; echo "$$out"; exit 1; fi
 
 vet:
 	go vet ./...
@@ -25,15 +25,15 @@ lint:
 vuln:
 	go run $(GOVULNCHECK) ./...
 
-## test: pruebas; las de integración se saltan si no hay PostgreSQL instalado
+## test: tests; integration tests are skipped when PostgreSQL is not installed
 test:
 	go test -race -count=1 ./...
 
-## test-integration: exige PostgreSQL (define SQSOLVE_TEST_PG_BIN si no está en el PATH)
+## test-integration: requires PostgreSQL (set SQSOLVE_TEST_PG_BIN if it is not in PATH)
 test-integration:
 	SQSOLVE_REQUIRE_PG=1 go test -count=1 ./...
 
-## scenarios: fallas provocadas contra PostgreSQL 18 y el servidor reales (unos 7 minutos)
+## scenarios: induced failures against real PostgreSQL 18 and the real server (about 7 minutes)
 scenarios:
 	python3 test/scenarios.py
 
@@ -43,10 +43,10 @@ image:
 clean:
 	rm -f sqsolve coverage.out
 
-## errores: regenera docs/manual/errores.md con todos los códigos SQS- del código
-errores:
-	@{ printf '# Códigos de error\n\nGenerado con `make errores` a partir del código; no se edita a mano. Cada código\nsale con el texto con que aparece en el panel, la API, la consola o el registro.\n\n| Código | Mensaje |\n|---|---|\n'; \
+## errors: regenerate docs/manual/errors.md with every SQS- code in the source
+errors:
+	@{ printf '# Error codes\n\nGenerated with `make errors` from the source code; do not edit by hand. Each code\nis listed with the text shown in the panel, the API, the console or the log.\n\n| Code | Message |\n|---|---|\n'; \
 	grep -rhoE 'SQS-[A-Z][0-9]{3}[^"`]*' cmd internal --include='*.go' --exclude='*_test.go' \
 	| sed -E 's/%[-+ 0-9.]*[a-zA-Z]/.../g; s/[[:space:]]+$$//; s/[|]/\\|/g' \
-	| sort -u | sort -t' ' -k1,1 -s | awk -F' ' '!seen[$$1]++ { code=$$1; $$1=""; sub(/^ */, ""); printf "| `%s` | %s |\n", code, $$0 }'; } > docs/manual/errores.md
-	@echo "docs/manual/errores.md: $$(grep -c '^| `SQS' docs/manual/errores.md) códigos"
+	| sort -u | sort -t' ' -k1,1 -s | awk -F' ' '!seen[$$1]++ { code=$$1; $$1=""; sub(/^ */, ""); printf "| `%s` | %s |\n", code, $$0 }'; } > docs/manual/errors.md
+	@echo "docs/manual/errors.md: $$(grep -c '^| `SQS' docs/manual/errors.md) codes"

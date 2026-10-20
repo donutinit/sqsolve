@@ -7,7 +7,7 @@
 {{define "copy"}}<div class="copyfield">
   <span class="label">{{.label}}</span>
   <code id="{{.id}}">{{.value}}</code>
-  <button type="button" class="ghost small" data-copy="#{{.id}}">Copiar</button>
+  <button type="button" class="ghost small" data-copy="#{{.id}}">Copy</button>
 </div>{{end}}
 
 {{define "empty"}}<div class="empty"><p>{{.text}}</p>{{if .href}}<a class="button" href="{{.href}}">{{.action}}</a>{{end}}</div>{{end}}
@@ -18,11 +18,11 @@
 
 {{define "jobtable"}}
 <table class="table">
-  <thead><tr><th>Tarea</th><th>Estado</th><th>Inicio</th><th>Duración</th><th>Origen</th></tr></thead>
+  <thead><tr><th>Job</th><th>State</th><th>Started</th><th>Duration</th><th>Source</th></tr></thead>
   <tbody>
   {{range .}}
     <tr>
-      <td><a href="/tareas/{{.ID}}">{{.Title}}</a>{{if .ErrorCode}} <span class="muted small mono">{{.ErrorCode}}</span>{{end}}</td>
+      <td><a href="/jobs/{{.ID}}">{{.Title}}</a>{{if .ErrorCode}} <span class="muted small mono">{{.ErrorCode}}</span>{{end}}</td>
       <td>{{template "jobstate" .}}{{if eq .State "running"}} <span class="muted small">{{.Progress}} %</span>{{end}}</td>
       <td><time datetime="{{iso .CreatedAt}}" title="{{dt .CreatedAt}}">{{ago .CreatedAt}}</time></td>
       <td>{{dur .Duration}}</td>
@@ -37,28 +37,28 @@
   <title>{{.t.Summary}}</title>
   <rect class="lane" x="0" y="0" width="1000" height="30" rx="3" vector-effect="non-scaling-stroke"/>
   {{range .t.Ticks}}<line class="tick" x1="{{.}}" x2="{{.}}" y1="2" y2="28" vector-effect="non-scaling-stroke"/>{{end}}
-  {{range .t.Gaps}}<rect class="gap" x="{{.X}}" y="1" width="{{.W}}" height="28"><title>Sin respaldo verificado reciente</title></rect>{{end}}
+  {{range .t.Gaps}}<rect class="gap" x="{{.X}}" y="1" width="{{.W}}" height="28"><title>No recent verified backup</title></rect>{{end}}
   <line class="now" x1="997" x2="997" y1="0" y2="30" vector-effect="non-scaling-stroke"/>
   {{range .t.Marks}}{{if eq .Kind "failed"}}<g class="mk failed"><title>{{.Title}}</title><line x1="{{subf .X 6}}" y1="8" x2="{{addf .X 6}}" y2="22" vector-effect="non-scaling-stroke"/><line x1="{{subf .X 6}}" y1="22" x2="{{addf .X 6}}" y2="8" vector-effect="non-scaling-stroke"/></g>{{else if eq .Kind "l2"}}<line class="mk l2" x1="{{.X}}" x2="{{.X}}" y1="4" y2="26" vector-effect="non-scaling-stroke"><title>{{.Title}}</title></line>{{else if eq .Kind "l1"}}<line class="mk l1" x1="{{.X}}" x2="{{.X}}" y1="8" y2="22" vector-effect="non-scaling-stroke"><title>{{.Title}}</title></line>{{else}}<line class="mk unverified" x1="{{.X}}" x2="{{.X}}" y1="8" y2="22" vector-effect="non-scaling-stroke"><title>{{.Title}}</title></line>{{end}}{{end}}
 </svg>{{end}}
 
 {{define "tracklegend"}}<p class="legend" aria-hidden="true">
-  <span><svg viewBox="0 0 14 16"><line x1="7" x2="7" y1="1" y2="15" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>Restauración de prueba correcta</span>
-  <span><svg viewBox="0 0 14 16"><line x1="7" x2="7" y1="4" y2="12" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity="0.7"/></svg>Suma e índice correctos</span>
-  <span><svg viewBox="0 0 14 16"><line x1="7" x2="7" y1="4" y2="12" stroke="currentColor" stroke-width="2" stroke-dasharray="2 3"/></svg>Sin verificar</span>
-  <span class="bad"><svg viewBox="0 0 14 16"><path d="M3 4 L11 12 M3 12 L11 4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>Fallido</span>
-  <span><svg viewBox="0 0 14 16"><rect x="1" y="2" width="12" height="12" rx="2" class="legendgap"/></svg>Sin respaldo verificado reciente</span>
+  <span><svg viewBox="0 0 14 16"><line x1="7" x2="7" y1="1" y2="15" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>Test restore OK</span>
+  <span><svg viewBox="0 0 14 16"><line x1="7" x2="7" y1="4" y2="12" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity="0.7"/></svg>Checksum and index OK</span>
+  <span><svg viewBox="0 0 14 16"><line x1="7" x2="7" y1="4" y2="12" stroke="currentColor" stroke-width="2" stroke-dasharray="2 3"/></svg>Unverified</span>
+  <span class="bad"><svg viewBox="0 0 14 16"><path d="M3 4 L11 12 M3 12 L11 4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>Failed</span>
+  <span><svg viewBox="0 0 14 16"><rect x="1" y="2" width="12" height="12" rx="2" class="legendgap"/></svg>No recent verified backup</span>
 </p>{{end}}
 
 {{define "trackrow"}}<div class="trackrow">
-  <a class="head" href="/bibliotecas/{{.t.LibraryID}}?tab=respaldos" title="{{.name}}">{{.t.Label}}</a>
+  <a class="head" href="/libraries/{{.t.LibraryID}}?tab=backups" title="{{.name}}">{{.t.Label}}</a>
   {{template "track" (dict "t" .t "big" false)}}
   <span class="tail">{{template "badge" (dict "tone" .t.Tone "label" .t.LastAgo)}}</span>
 </div>{{end}}
 
 {{define "joblist"}}<ul class="joblist">
   {{range .}}<li>
-    <a href="/tareas/{{.ID}}">{{.Title}}</a>
+    <a href="/jobs/{{.ID}}">{{.Title}}</a>
     {{template "jobstate" .}}
     <span class="muted small"><time datetime="{{iso .CreatedAt}}" title="{{dt .CreatedAt}}">{{ago .CreatedAt}}</time>{{if dur .Duration}} · {{dur .Duration}}{{end}} · {{.CreatedBy.Label}}</span>
   </li>{{end}}
@@ -71,39 +71,39 @@
   </div>
   <div class="actions">
     {{if and (.P.Can "backup.create") (or (eq .Data.L.State "active") (eq .Data.L.State "maintenance"))}}
-    <form method="post" action="/bibliotecas/{{.Data.L.ID}}/respaldar">{{template "csrf" .CSRF}}<button type="submit">Respaldar ahora</button></form>
+    <form method="post" action="/libraries/{{.Data.L.ID}}/backup">{{template "csrf" .CSRF}}<button type="submit">Back up now</button></form>
     {{end}}
   </div>
 </div>
-{{range .Data.Running}}<div class="flash info" role="status">En curso: <a href="/tareas/{{.ID}}">{{.Title}}</a> ({{.State.Label}}{{if eq .State "running"}}, {{.Progress}} %{{end}})</div>{{end}}{{end}}
+{{range .Data.Running}}<div class="flash info" role="status">Running: <a href="/jobs/{{.ID}}">{{.Title}}</a> ({{.State.Label}}{{if eq .State "running"}}, {{.Progress}} %{{end}})</div>{{end}}{{end}}
 
-{{define "libtabs"}}<nav class="tabs" aria-label="Secciones de la biblioteca">
-  <a href="/bibliotecas/{{.Data.L.ID}}?tab=conexion" {{if eq .Data.Tab "conexion"}}aria-current="page"{{end}}>Conexión</a>
-  <a href="/bibliotecas/{{.Data.L.ID}}?tab=respaldos" {{if eq .Data.Tab "respaldos"}}aria-current="page"{{end}}>Respaldos</a>
-  <a href="/bibliotecas/{{.Data.L.ID}}?tab=programacion" {{if eq .Data.Tab "programacion"}}aria-current="page"{{end}}>Programación</a>
-  <a href="/bibliotecas/{{.Data.L.ID}}?tab=accesos" {{if eq .Data.Tab "accesos"}}aria-current="page"{{end}}>Accesos</a>
-  <a href="/bibliotecas/{{.Data.L.ID}}?tab=actividad" {{if eq .Data.Tab "actividad"}}aria-current="page"{{end}}>Actividad</a>
-  <a href="/bibliotecas/{{.Data.L.ID}}/exportar" {{if eq .Data.Tab "exportar"}}aria-current="page"{{end}}>Exportar</a>
-  <a href="/bibliotecas/{{.Data.L.ID}}?tab=ajustes" {{if eq .Data.Tab "ajustes"}}aria-current="page"{{end}}>Ajustes</a>
-  <a href="/bibliotecas/{{.Data.L.ID}}?tab=peligro" {{if eq .Data.Tab "peligro"}}aria-current="page"{{end}} class="dangertab">Zona de peligro</a>
+{{define "libtabs"}}<nav class="tabs" aria-label="Library sections">
+  <a href="/libraries/{{.Data.L.ID}}?tab=connection" {{if eq .Data.Tab "connection"}}aria-current="page"{{end}}>Connection</a>
+  <a href="/libraries/{{.Data.L.ID}}?tab=backups" {{if eq .Data.Tab "backups"}}aria-current="page"{{end}}>Backups</a>
+  <a href="/libraries/{{.Data.L.ID}}?tab=schedule" {{if eq .Data.Tab "schedule"}}aria-current="page"{{end}}>Schedule</a>
+  <a href="/libraries/{{.Data.L.ID}}?tab=access" {{if eq .Data.Tab "access"}}aria-current="page"{{end}}>Access</a>
+  <a href="/libraries/{{.Data.L.ID}}?tab=activity" {{if eq .Data.Tab "activity"}}aria-current="page"{{end}}>Activity</a>
+  <a href="/libraries/{{.Data.L.ID}}/export" {{if eq .Data.Tab "export"}}aria-current="page"{{end}}>Export</a>
+  <a href="/libraries/{{.Data.L.ID}}?tab=settings" {{if eq .Data.Tab "settings"}}aria-current="page"{{end}}>Settings</a>
+  <a href="/libraries/{{.Data.L.ID}}?tab=danger" {{if eq .Data.Tab "danger"}}aria-current="page"{{end}} class="dangertab">Danger zone</a>
 </nav>{{end}}
 
 {{define "exportcatalog"}}
 <section class="card flush">
-  <div class="cardhead pad"><h2>Proyectos</h2><span class="muted small">{{len .projects}} en la biblioteca</span></div>
+  <div class="cardhead pad"><h2>Projects</h2><span class="muted small">{{len .projects}} in the library</span></div>
   <table class="table cards-on-mobile">
-    <thead><tr><th>Miniatura</th><th>Proyecto</th><th>Carpeta</th><th>Modificado</th><th></th></tr></thead>
+    <thead><tr><th>Thumbnail</th><th>Project</th><th>Folder</th><th>Modified</th><th></th></tr></thead>
     <tbody>
     {{range .projects}}
       <tr>
-        <td data-label="Miniatura">{{if .Thumb}}<img class="thumb" src="{{jpeg .Thumb}}" alt="" width="96" height="54">{{else}}<span class="muted small">Sin miniatura</span>{{end}}</td>
-        <td data-label="Proyecto">{{.Name}}</td>
-        <td data-label="Carpeta" class="mono small">{{if .Path}}{{.Path}}{{else}}<span class="muted">raíz</span>{{end}}</td>
-        <td data-label="Modificado">{{if .Modified.IsZero}}<span class="muted">Por confirmar</span>{{else}}<time datetime="{{iso .Modified}}" title="{{dt .Modified}}">{{ago .Modified}}</time>{{end}}</td>
-        <td data-label="" class="actions">{{if $.can}}<a class="button ghost small" href="{{$.base}}/proyectos/{{.ID}}">Descargar .drp</a>{{end}}</td>
+        <td data-label="Thumbnail">{{if .Thumb}}<img class="thumb" src="{{jpeg .Thumb}}" alt="" width="96" height="54">{{else}}<span class="muted small">No thumbnail</span>{{end}}</td>
+        <td data-label="Project">{{.Name}}</td>
+        <td data-label="Folder" class="mono small">{{if .Path}}{{.Path}}{{else}}<span class="muted">root</span>{{end}}</td>
+        <td data-label="Modified">{{if .Modified.IsZero}}<span class="muted">To be confirmed</span>{{else}}<time datetime="{{iso .Modified}}" title="{{dt .Modified}}">{{ago .Modified}}</time>{{end}}</td>
+        <td data-label="" class="actions">{{if $.can}}<a class="button ghost small" href="{{$.base}}/projects/{{.ID}}">Download .drp</a>{{end}}</td>
       </tr>
     {{else}}
-      <tr><td colspan="5" class="muted">Sin proyectos.</td></tr>
+      <tr><td colspan="5" class="muted">No projects.</td></tr>
     {{end}}
     </tbody>
   </table>
@@ -112,35 +112,35 @@
 <section class="card">
   <h2>PowerGrades</h2>
   {{range .power}}
-  <div class="albumhead"><h3>{{if .Name}}{{.Name}}{{else}}<span class="muted">Álbum sin nombre</span>{{end}} <span class="muted small">{{len .Stills}} grados</span></h3>
-    {{if $.can}}<a class="button ghost small" href="{{$.base}}/albumes/{{.ViewID}}">Descargar álbum (.zip)</a>{{end}}</div>
+  <div class="albumhead"><h3>{{if .Name}}{{.Name}}{{else}}<span class="muted">Unnamed album</span>{{end}} <span class="muted small">{{len .Stills}} grades</span></h3>
+    {{if $.can}}<a class="button ghost small" href="{{$.base}}/albums/{{.ViewID}}">Download album (.zip)</a>{{end}}</div>
   {{template "stillgrid" (dict "stills" .Stills "base" $.base "can" $.can)}}
   {{else}}
-  <p class="muted">Sin álbumes de PowerGrades.</p>
+  <p class="muted">No PowerGrade albums.</p>
   {{end}}
 </section>
 
 <section class="card">
-  <h2>Stills por proyecto</h2>
+  <h2>Stills by project</h2>
   {{range .albums}}
   <details class="more">
     <summary>{{.ProjectName}}{{if .Name}} · {{.Name}}{{end}} <span class="muted small">{{len .Stills}} stills</span></summary>
-    {{if $.can}}<p><a class="button ghost small" href="{{$.base}}/albumes/{{.ViewID}}">Descargar álbum (.zip)</a></p>{{end}}
+    {{if $.can}}<p><a class="button ghost small" href="{{$.base}}/albums/{{.ViewID}}">Download album (.zip)</a></p>{{end}}
     {{template "stillgrid" (dict "stills" .Stills "base" $.base "can" $.can)}}
   </details>
   {{else}}
-  <p class="muted">Sin stills en los proyectos.</p>
+  <p class="muted">No stills in the projects.</p>
   {{end}}
 </section>
 {{end}}
 
 {{define "stillgrid"}}<ul class="stills">
   {{range .stills}}<li class="still">
-    {{if .Thumb}}<img src="{{jpeg .Thumb}}" alt="" width="288" height="162">{{else}}<div class="nothumb muted small">Sin miniatura</div>{{end}}
+    {{if .Thumb}}<img src="{{jpeg .Thumb}}" alt="" width="288" height="162">{{else}}<div class="nothumb muted small">No thumbnail</div>{{end}}
     <div class="stillmeta"><span class="mono">{{.Label}}</span>{{if .RecTC}} <span class="muted small">{{.RecTC}}</span>{{end}}
       {{if not .Created.IsZero}}<time class="muted small" datetime="{{iso .Created}}">{{dt .Created}}</time>{{end}}
       {{if $.can}}<a class="small" href="{{$.base}}/stills/{{.ID}}">.drx</a>{{end}}</div>
-  </li>{{else}}<li class="muted">Sin stills.</li>{{end}}
+  </li>{{else}}<li class="muted">No stills.</li>{{end}}
 </ul>{{end}}
 
-{{define "sslbadge"}}{{if .SSL}}{{template "badge" (dict "tone" "ok" "label" (or .TLSVersion "TLS"))}}{{else if eq .ClientAddr "local"}}{{template "badge" (dict "tone" "info" "label" "Socket local")}}{{else}}{{template "badge" (dict "tone" "warn" "label" "Sin cifrar")}}{{end}}{{end}}
+{{define "sslbadge"}}{{if .SSL}}{{template "badge" (dict "tone" "ok" "label" (or .TLSVersion "TLS"))}}{{else if eq .ClientAddr "local"}}{{template "badge" (dict "tone" "info" "label" "Local socket")}}{{else}}{{template "badge" (dict "tone" "warn" "label" "Unencrypted")}}{{end}}{{end}}

@@ -1,19 +1,19 @@
 {{define "content"}}
-<div class="pagehead"><h1>Nueva biblioteca</h1></div>
+<div class="pagehead"><h1>New library</h1></div>
 <section class="card narrow">
-  <form method="post" action="/bibliotecas/nueva" class="form">
+  <form method="post" action="/libraries/new" class="form">
     {{template "csrf" .CSRF}}
-    <label>Nombre visible<input name="name" required maxlength="80" value="{{.Data.Name}}" data-slug-source="#slug" autofocus></label>
-    <label>Identificador<input id="slug" name="slug" value="{{.Data.Slug}}" class="mono" pattern="[a-z][a-z0-9_]{2,39}" maxlength="40" placeholder="se genera del nombre"></label>
-    <p class="hint">Es el nombre de la base de datos y el usuario que se escribirá en Resolve. Minúsculas, números y guion bajo; de 3 a 40 caracteres. No se puede cambiar después.</p>
+    <label>Display name<input name="name" required maxlength="80" value="{{.Data.Name}}" data-slug-source="#slug" autofocus></label>
+    <label>Identifier<input id="slug" name="slug" value="{{.Data.Slug}}" class="mono" pattern="[a-z][a-z0-9_]{2,39}" maxlength="40" placeholder="generated from the name"></label>
+    <p class="hint">It is the name of the database and the username to type in Resolve. Lowercase letters, digits and underscore; 3 to 40 characters. It cannot be changed later.</p>
     <fieldset>
-      <legend>Cómo se inicializa</legend>
-      <label class="radio"><input type="radio" name="strategy" value="resolve" {{if ne .Data.Strategy "precreate"}}checked{{end}}> <span><strong>Desde Resolve</strong> (recomendado). sqsolve prepara el usuario y abre una ventana de una hora; en una estación eliges "Create" y Resolve crea la base con su propia estructura.</span></label>
-      <label class="radio"><input type="radio" name="strategy" value="precreate" {{if eq .Data.Strategy "precreate"}}checked{{end}}> <span><strong>Base vacía</strong> (no funciona con Resolve 21.1: al conectar la marca "incompatible" en vez de inicializarla, PoC-01 del 2026-10-19). Solo para pruebas.</span></label>
+      <legend>How it is initialized</legend>
+      <label class="radio"><input type="radio" name="strategy" value="resolve" {{if ne .Data.Strategy "precreate"}}checked{{end}}> <span><strong>From Resolve</strong> (recommended). sqsolve prepares the user and opens a one-hour window; on a workstation you choose "Create" and Resolve creates the database with its own structure.</span></label>
+      <label class="radio"><input type="radio" name="strategy" value="precreate" {{if eq .Data.Strategy "precreate"}}checked{{end}}> <span><strong>Empty database</strong> (does not work with Resolve 21.1: on connecting it marks it "incompatible" instead of initializing it, PoC-01 of 2026-10-19). For testing only.</span></label>
     </fieldset>
-    <label>Notas <span class="muted">(opcional: cliente, rutas de medios, convenciones)</span><textarea name="notes" rows="3">{{.Data.Notes}}</textarea></label>
-    {{if not .Data.Host}}<div class="flash info" role="status">Falta la dirección que usan las estaciones. <a href="/ajustes">Defínela en Ajustes</a> para que las instrucciones salgan completas.</div>{{end}}
-    <div class="actions"><button type="submit">Crear biblioteca</button><a href="/bibliotecas">Cancelar</a></div>
+    <label>Notes <span class="muted">(optional: client, media paths, conventions)</span><textarea name="notes" rows="3">{{.Data.Notes}}</textarea></label>
+    {{if not .Data.Host}}<div class="flash info" role="status">The address workstations use is missing. <a href="/settings">Set it in Settings</a> so the instructions come out complete.</div>{{end}}
+    <div class="actions"><button type="submit">Create library</button><a href="/libraries">Cancel</a></div>
   </form>
 </section>
 {{end}}

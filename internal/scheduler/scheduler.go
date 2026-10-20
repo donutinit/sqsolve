@@ -49,12 +49,12 @@ type Kind struct {
 }
 
 // ErrInvalidCron is returned for bad expressions.
-var ErrInvalidCron = errors.New("SQS-J020 expresión de programación inválida")
+var ErrInvalidCron = errors.New("SQS-J020 invalid schedule expression")
 
 // Validate checks a 5-field cron expression and a time zone.
 func Validate(cron, tz string) (*time.Location, error) {
 	if len(strings.Fields(cron)) != 5 || !gronx.IsValid(cron) {
-		return nil, fmt.Errorf("%w: %q (usa 5 campos: minuto hora día mes día-de-semana)", ErrInvalidCron, cron)
+		return nil, fmt.Errorf("%w: %q (use 5 fields: minute hour day month day-of-week)", ErrInvalidCron, cron)
 	}
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
@@ -122,7 +122,7 @@ func (s *Scheduler) RegisterKind(kind string, k Kind) { s.kinds[kind] = k }
 func (s *Scheduler) Upsert(ctx context.Context, kind, target, cron, tz string, enabled bool, misfire time.Duration) error {
 	k, ok := s.kinds[kind]
 	if !ok {
-		return fmt.Errorf("SQS-J021 tipo de programación desconocido: %s", kind)
+		return fmt.Errorf("SQS-J021 unknown schedule kind: %s", kind)
 	}
 	loc, err := Validate(cron, tz)
 	if err != nil {
@@ -240,7 +240,7 @@ func (s *Scheduler) fire(ctx context.Context, sc *Schedule, now time.Time) {
 	k, ok := s.kinds[sc.Kind]
 	loc, err := time.LoadLocation(sc.Timezone)
 	if !ok || err != nil {
-		s.log.Error("programación inválida", "id", sc.ID, "kind", sc.Kind)
+		s.log.Error("invalid schedule", "id", sc.ID, "kind", sc.Kind)
 		return
 	}
 	var jitter time.Duration
@@ -249,7 +249,7 @@ func (s *Scheduler) fire(ctx context.Context, sc *Schedule, now time.Time) {
 	}
 	next, err := Next(sc.Cron, loc, now, jitter)
 	if err != nil {
-		s.log.Error("programación", "id", sc.ID, "err", err)
+		s.log.Error("schedule", "id", sc.ID, "err", err)
 		return
 	}
 	jobID := sc.LastJobID
@@ -259,19 +259,19 @@ func (s *Scheduler) fire(ctx context.Context, sc *Schedule, now time.Time) {
 	}
 	if sc.NextRunAt != nil && now.Sub(*sc.NextRunAt) > sc.MisfireWindow {
 		s.ev.Emit(ctx, events.Event{Type: events.BackupMissed, Severity: events.Error, LibraryID: sc.TargetID,
-			Message: fmt.Sprintf("Se perdió la ejecución programada de %s del %s (el servidor estaba detenido)", k.Title, sc.NextRunAt.In(loc).Format("2006-01-02 15:04")),
+			Message: fmt.Sprintf("Missed the scheduled %s run from %s (the server was down)", k.Title, sc.NextRunAt.In(loc).Format("2006-01-02 15:04")),
 			Data:    map[string]any{"kind": sc.Kind, "due": sc.NextRunAt}})
 	} else if !run {
-		s.log.Debug("programación omitida", "kind", sc.Kind, "target", sc.TargetID, "reason", why)
+		s.log.Debug("schedule skipped", "kind", sc.Kind, "target", sc.TargetID, "reason", why)
 	} else {
 		lib := ""
 		if k.Jitter {
 			lib = sc.TargetID
 		}
-		actor := audit.Actor{Type: "schedule", ID: sc.ID, Name: "programación"}
+		actor := audit.Actor{Type: "schedule", ID: sc.ID, Name: "schedule"}
 		j, err := s.jobs.Enqueue(ctx, k.JobType, lib, map[string]string{"target": sc.TargetID, "kind": "scheduled"}, actor, jobs.FromSchedule(sc.ID), jobs.Unique())
 		if err != nil {
-			s.log.Error("no se pudo encolar", "schedule", sc.ID, "err", err)
+			s.log.Error("could not enqueue", "schedule", sc.ID, "err", err)
 			return
 		}
 		jobID = j.ID

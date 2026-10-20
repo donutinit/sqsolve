@@ -1,99 +1,99 @@
-# 10. API y contratos
+# 10. API and contracts
 
-## 1. Convenciones de la API REST
+## 1. REST API conventions
 
-- Base: `https://<servidor>:9432/api/v1`. JSON UTF-8. Contrato en `api/openapi.yaml`
-  (OpenAPI 3.1), que se escribe antes que los handlers y se valida en pruebas (SQS-410).
-- Autenticación: `Authorization: Bearer sqs_...` (tokens con alcance `read`, `backup`,
-  `restore`, `export` o `admin`) o cookie de sesión más cabecera `X-CSRF-Token` (uso desde el
-  navegador).
-- Errores: RFC 9457 `application/problem+json`:
+- Base: `https://<server>:9432/api/v1`. JSON UTF-8. Contract in `api/openapi.yaml`
+  (OpenAPI 3.1), which is written before the handlers and validated in tests (SQS-410).
+- Authentication: `Authorization: Bearer sqs_...` (tokens with scope `read`, `backup`,
+  `restore`, `export` or `admin`) or a session cookie plus the `X-CSRF-Token` header (browser
+  use).
+- Errors: RFC 9457 `application/problem+json`:
 
 ```json
 {
-  "type": "https://sqsolve.example/errores/SQS-B012",
-  "title": "Espacio insuficiente en el volumen de respaldos",
+  "type": "https://sqsolve.example/errors/SQS-B012",
+  "title": "Insufficient space on the backups volume",
   "status": 507,
-  "detail": "Se necesitan 3.1 GB y hay 1.2 GB libres en /backups.",
+  "detail": "3.1 GB are needed and 1.2 GB are free on /backups.",
   "code": "SQS-B012",
   "instance": "/api/v1/libraries/01JB.../backups"
 }
 ```
 
-  El dominio de `type` es Por confirmar; mientras tanto se usa la ruta relativa
-  `/docs/errores/SQS-B012`.
-- Operaciones largas: `202 Accepted` con `Location: /api/v1/jobs/{id}` y el objeto tarea.
-- Idempotencia: los `POST` que crean o lanzan aceptan `Idempotency-Key`; la misma clave en 24 h
-  devuelve la misma respuesta.
-- Concurrencia optimista: recursos editables devuelven `ETag`; `PATCH` exige `If-Match`.
-- Paginación por cursor: `?limit=50&cursor=...`, respuesta con `next_cursor`.
-- Fechas RFC 3339 en UTC. Tamaños en bytes. Identificadores ULID.
-- Operaciones peligrosas exigen en el cuerpo `"confirm": "<slug>"` y, con token, el alcance
-  `admin` o `restore`. No hay reautenticación (ADR 0021).
+  The `type` domain is to be confirmed; meanwhile the relative path
+  `/docs/errors/SQS-B012` is used.
+- Long operations: `202 Accepted` with `Location: /api/v1/jobs/{id}` and the job object.
+- Idempotency: `POST`s that create or launch accept `Idempotency-Key`; the same key within 24 h
+  returns the same response.
+- Optimistic concurrency: editable resources return `ETag`; `PATCH` requires `If-Match`.
+- Cursor pagination: `?limit=50&cursor=...`, response with `next_cursor`.
+- Dates RFC 3339 in UTC. Sizes in bytes. Identifiers are ULIDs.
+- Dangerous operations require `"confirm": "<slug>"` in the body and, with a token, the scope
+  `admin` or `restore`. There is no reauthentication (ADR 0021).
 
-## 2. Recursos
+## 2. Resources
 
-| Método y ruta | Alcance mínimo | Descripción |
+| Method and path | Minimum scope | Description |
 |---|---|---|
-| `GET /system/status` | `read` | Estado resumido (lo que muestra el panel) |
-| `GET /system/health` | sin autenticación | `200` o `503` con detalle mínimo (para monitores) |
-| `GET /system/version` | `read` | Versiones de sqsolve, PostgreSQL, matriz de compatibilidad |
-| `GET /libraries` | `read` | Lista con filtros `state` |
-| `POST /libraries` | `admin` | Crear; devuelve tarea |
-| `GET /libraries/{id}` | `read` | Detalle |
-| `PATCH /libraries/{id}` | `admin` | Nombre visible, notas, límite, versión declarada |
-| `POST /libraries/{id}/init-window` | `admin` | Reabrir ventana de inicialización |
+| `GET /system/status` | `read` | Summary status (what the dashboard shows) |
+| `GET /system/health` | no authentication | `200` or `503` with minimal detail (for monitors) |
+| `GET /system/version` | `read` | sqsolve and PostgreSQL versions, compatibility matrix |
+| `GET /libraries` | `read` | List with `state` filters |
+| `POST /libraries` | `admin` | Create; returns a job |
+| `GET /libraries/{id}` | `read` | Detail |
+| `PATCH /libraries/{id}` | `admin` | Display name, notes, limit, declared version |
+| `POST /libraries/{id}/init-window` | `admin` | Reopen the initialization window |
 | `POST /libraries/{id}/maintenance` | `admin` | `{ "enabled": true, "terminate_sessions": false }` |
-| `DELETE /libraries/{id}` | `admin` + confirmación | A la papelera; devuelve tarea |
-| `POST /libraries/{id}/restore-from-trash` | `admin` | Recuperar de la papelera |
-| `GET /libraries/{id}/connection` | `read` | Ubicación, base, usuario; sin contraseña |
-| `POST /libraries/{id}/connection/reveal` | `admin` | Contraseña; auditado |
-| `GET` y `PUT /libraries/{id}/backup-policy` | `read` y `admin` | Política: `mode` (`cron` o `activity`), `check_minutes` (5, 10, 15, 30, 60), `cron`, retención; `last_check_at` y `last_check_same` solo de lectura (ADR 0022) |
-| `GET /libraries/{id}/resolvedbkey` | `admin` | Archivo de llave (si el módulo está activo) |
-| `GET /libraries/{id}/credentials` | `admin` | Lista sin contraseñas |
-| `POST /libraries/{id}/credentials` | `admin` | Crear credencial de persona (1.1) |
-| `POST /libraries/{id}/credentials/{cid}/rotate` | `admin` | Rotar |
-| `POST /libraries/{id}/credentials/{cid}/revoke` | `admin` | Revocar (1.1) |
-| `GET/PUT /libraries/{id}/network-rules` | `admin` | Reglas CIDR (1.1) |
-| `GET /libraries/{id}/sessions` | `read` | Sesiones activas |
-| `DELETE /libraries/{id}/sessions/{pid}` | `admin` | Cerrar sesión |
-| `GET/PUT /libraries/{id}/backup-policy` | `read` / `admin` | Programación y retención |
-| `GET /libraries/{id}/backup-policy/preview` | `read` | Próximas ejecuciones y efecto de la retención |
-| `GET /libraries/{id}/backups` | `read` | Catálogo de la biblioteca |
-| `GET /libraries/{id}/projects` | `read` | Proyectos con carpeta y fecha (experimental, `22`) |
-| `GET /libraries/{id}/projects/{pid}/export` | `export` | Descarga del `.drp` (experimental) |
-| `GET /libraries/{id}/grades` | `read` | Álbumes de la galería con sus stills (experimental) |
-| `GET /libraries/{id}/grades/{sid}/export` | `export` | Descarga del `.drx` de un still (experimental) |
-| `GET /libraries/{id}/grades/albums/{vid}/export` | `export` | Zip con los `.drx` de un álbum (experimental) |
-| `POST /libraries/{id}/backups` | `backup` | Respaldar ahora; devuelve tarea |
-| `GET /backups` | `read` | Catálogo global |
-| `GET /backups/{id}` | `read` | Detalle con manifiesto |
-| `GET /backups/{id}/download` | `restore` | Descarga del archivo (`Content-Disposition`) |
-| `POST /backups/{id}/verify` | `backup` | `{ "level": 2 }`; devuelve tarea |
-| `POST /backups/{id}/pin` / `unpin` | `admin` | Fijar o soltar |
-| `POST /backups/{id}/restore` | `restore` o `admin` | `{ "mode": "new", "slug": "...", "display_name": "..." }` o `{ "mode": "replace", "confirm": "<slug>", "terminate_sessions": false }` |
-| `POST /backups/import` | `admin` | Subida `multipart/form-data` o `{ "path": "_import/archivo.backup", "library_slug": "..." }` |
-| `POST /libraries/{id}/revert` | `admin` + confirmación | Revertir el último intercambio dentro del plazo |
-| `GET /jobs` | `read` | Filtros `state`, `type`, `library_id` |
-| `GET /jobs/{id}` | `read` | Detalle con pasos |
-| `GET /jobs/{id}/logs` | `read` | Registro paginado |
-| `GET /jobs/{id}/events` | `read` | SSE de progreso |
-| `POST /jobs/{id}/cancel` | según tipo | Cancelar |
-| `GET /events` | `read` | Eventos con filtros |
-| `GET /audit` | `admin` | Auditoría; `?format=jsonl` para exportar |
-| `GET /audit/verify` | `admin` | Verificar la cadena |
-| `GET/POST/PATCH/DELETE /users[...]` | `admin` | Usuarios del panel |
-| `GET/POST/DELETE /tokens[...]` | propio o `admin` | Tokens |
-| `GET/POST/PATCH/DELETE /notifications/channels[...]` | `admin` | Canales |
-| `POST /notifications/channels/{id}/test` | `admin` | Envío de prueba |
-| `GET/PUT /notifications/rules` | `admin` | Reglas |
-| `GET/PATCH /settings` | `admin` | Ajustes de ejecución |
-| `POST /maintenance/upgrade-window` | `admin` | Abrir ventana de actualización de Resolve |
-| `POST /maintenance/catalog/rebuild` | `admin` | Reconstruir catálogo desde manifiestos |
-| `POST /maintenance/diagnostics` | `admin` | Generar paquete de diagnóstico; devuelve tarea |
-| `GET /metrics` | token de métricas | Formato de exposición de Prometheus (1.2) |
+| `DELETE /libraries/{id}` | `admin` + confirmation | To the trash; returns a job |
+| `POST /libraries/{id}/restore-from-trash` | `admin` | Untrash |
+| `GET /libraries/{id}/connection` | `read` | Location, database, user; no password |
+| `POST /libraries/{id}/connection/reveal` | `admin` | Password; audited |
+| `GET` and `PUT /libraries/{id}/backup-policy` | `read` and `admin` | Policy: `mode` (`cron` or `activity`), `check_minutes` (5, 10, 15, 30, 60), `cron`, retention; `last_check_at` and `last_check_same` read-only (ADR 0022) |
+| `GET /libraries/{id}/resolvedbkey` | `admin` | Key file (if the module is active) |
+| `GET /libraries/{id}/credentials` | `admin` | List without passwords |
+| `POST /libraries/{id}/credentials` | `admin` | Create a per-person credential (1.1) |
+| `POST /libraries/{id}/credentials/{cid}/rotate` | `admin` | Rotate |
+| `POST /libraries/{id}/credentials/{cid}/revoke` | `admin` | Revoke (1.1) |
+| `GET/PUT /libraries/{id}/network-rules` | `admin` | CIDR rules (1.1) |
+| `GET /libraries/{id}/sessions` | `read` | Active sessions |
+| `DELETE /libraries/{id}/sessions/{pid}` | `admin` | Terminate a session |
+| `GET/PUT /libraries/{id}/backup-policy` | `read` / `admin` | Schedule and retention |
+| `GET /libraries/{id}/backup-policy/preview` | `read` | Next runs and effect of retention |
+| `GET /libraries/{id}/backups` | `read` | The library's catalog |
+| `GET /libraries/{id}/projects` | `read` | Projects with folder and date (experimental, `22`) |
+| `GET /libraries/{id}/projects/{pid}/export` | `export` | Download of the `.drp` (experimental) |
+| `GET /libraries/{id}/grades` | `read` | Gallery albums with their stills (experimental) |
+| `GET /libraries/{id}/grades/{sid}/export` | `export` | Download of a still's `.drx` (experimental) |
+| `GET /libraries/{id}/grades/albums/{vid}/export` | `export` | Zip with an album's `.drx` files (experimental) |
+| `POST /libraries/{id}/backups` | `backup` | Back up now; returns a job |
+| `GET /backups` | `read` | Global catalog |
+| `GET /backups/{id}` | `read` | Detail with manifest |
+| `GET /backups/{id}/download` | `restore` | Download of the file (`Content-Disposition`) |
+| `POST /backups/{id}/verify` | `backup` | `{ "level": 2 }`; returns a job |
+| `POST /backups/{id}/pin` / `unpin` | `admin` | Pin or unpin |
+| `POST /backups/{id}/restore` | `restore` or `admin` | `{ "mode": "new", "slug": "...", "display_name": "..." }` or `{ "mode": "replace", "confirm": "<slug>", "terminate_sessions": false }` |
+| `POST /backups/import` | `admin` | `multipart/form-data` upload or `{ "path": "_import/file.backup", "library_slug": "..." }` |
+| `POST /libraries/{id}/revert` | `admin` + confirmation | Revert the last swap within the grace period |
+| `GET /jobs` | `read` | Filters `state`, `type`, `library_id` |
+| `GET /jobs/{id}` | `read` | Detail with steps |
+| `GET /jobs/{id}/logs` | `read` | Paginated log |
+| `GET /jobs/{id}/events` | `read` | Progress SSE |
+| `POST /jobs/{id}/cancel` | by type | Cancel |
+| `GET /events` | `read` | Events with filters |
+| `GET /audit` | `admin` | Audit log; `?format=jsonl` to export |
+| `GET /audit/verify` | `admin` | Verify the chain |
+| `GET/POST/PATCH/DELETE /users[...]` | `admin` | Panel users |
+| `GET/POST/DELETE /tokens[...]` | own or `admin` | Tokens |
+| `GET/POST/PATCH/DELETE /notifications/channels[...]` | `admin` | Channels |
+| `POST /notifications/channels/{id}/test` | `admin` | Test send |
+| `GET/PUT /notifications/rules` | `admin` | Rules |
+| `GET/PATCH /settings` | `admin` | Runtime settings |
+| `POST /maintenance/upgrade-window` | `admin` | Open a Resolve upgrade window |
+| `POST /maintenance/catalog/rebuild` | `admin` | Rebuild the catalog from manifests |
+| `POST /maintenance/diagnostics` | `admin` | Generate a diagnostic bundle; returns a job |
+| `GET /metrics` | metrics token | Prometheus exposition format (1.2) |
 
-## 3. Objeto tarea
+## 3. Job object
 
 ```json
 {
@@ -113,42 +113,42 @@
 }
 ```
 
-Tipos de tarea: `library.create`, `library.init_watch`, `library.delete`, `library.purge`,
+Job types: `library.create`, `library.init_watch`, `library.delete`, `library.purge`,
 `library.maintenance`, `library.fingerprint`, `backup.create`, `backup.verify`,
 `backup.retention`, `backup.import`, `backup.offsite_sync` (1.1), `restore.new`,
 `restore.replace`, `restore.revert`, `system.vacuum`, `system.control_backup`,
 `system.catalog_check`, `system.diagnostics`, `system.upgrade_window`.
 
-## 4. Catálogo de eventos
+## 4. Event catalog
 
-| Tipo | Severidad | Cuándo |
+| Type | Severity | When |
 |---|---|---|
-| `library.created`, `library.activated`, `library.trashed`, `library.purged`, `library.restored_from_trash` | info | Ciclo de vida |
-| `library.init_expired` | warning | Venció la ventana |
-| `library.schema_changed` | warning | Cambió la huella |
-| `library.maintenance_on`, `library.maintenance_off` | info | Bloqueos |
-| `library.credential_rotated`, `library.credential_revealed` | info | Credenciales |
-| `backup.started`, `backup.succeeded` | info | Respaldos |
-| `backup.failed`, `backup.verify_failed`, `backup.missed` | error | Problemas de respaldo |
-| `backup.stale` | warning | Biblioteca sin respaldo verificado en más del umbral (48 h) |
-| `backup.expired` | info | La retención borró un respaldo |
-| `restore.started`, `restore.succeeded`, `restore.reverted` | info | Restauración |
-| `restore.failed` | error | Restauración fallida (la biblioteca activa no se tocó o se revirtió) |
-| `storage.low` | warning a 80 %, error a 90 % | Espacio |
-| `storage.volume_missing` | critical | Marcador de volumen ausente |
-| `postgres.down`, `postgres.up` | critical, info | Disponibilidad |
-| `auth.login_failed_burst` | warning | Fuerza bruta probable |
-| `audit.chain_broken` | critical | Integridad de la auditoría |
-| `tls.expiring` | warning | Certificado a menos de 30 días |
-| `job.interrupted` | warning | Tarea cortada por reinicio |
+| `library.created`, `library.activated`, `library.trashed`, `library.purged`, `library.restored_from_trash` | info | Lifecycle |
+| `library.init_expired` | warning | The window expired |
+| `library.schema_changed` | warning | The fingerprint changed |
+| `library.maintenance_on`, `library.maintenance_off` | info | Locks |
+| `library.credential_rotated`, `library.credential_revealed` | info | Credentials |
+| `backup.started`, `backup.succeeded` | info | Backups |
+| `backup.failed`, `backup.verify_failed`, `backup.missed` | error | Backup problems |
+| `backup.stale` | warning | Library without a verified backup for more than the threshold (48 h) |
+| `backup.expired` | info | Retention deleted a backup |
+| `restore.started`, `restore.succeeded`, `restore.reverted` | info | Restore |
+| `restore.failed` | error | Failed restore (the active library was not touched or was reverted) |
+| `storage.low` | warning at 80 %, error at 90 % | Space |
+| `storage.volume_missing` | critical | Volume marker missing |
+| `postgres.down`, `postgres.up` | critical, info | Availability |
+| `auth.login_failed_burst` | warning | Probable brute force |
+| `audit.chain_broken` | critical | Audit log integrity |
+| `tls.expiring` | warning | Certificate expires in less than 30 days |
+| `job.interrupted` | warning | Job cut off by a restart |
 
-## 5. Webhooks salientes
+## 5. Outgoing webhooks
 
-- `POST` a la URL del canal con `Content-Type: application/json`.
-- Cabeceras: `X-Sqsolve-Event` (tipo), `X-Sqsolve-Delivery` (ULID), `X-Sqsolve-Timestamp`
-  (segundos Unix), `X-Sqsolve-Signature: sha256=<hex>` con HMAC-SHA256 sobre
-  `timestamp + "." + cuerpo` y la clave del canal.
-- Cuerpo:
+- `POST` to the channel URL with `Content-Type: application/json`.
+- Headers: `X-Sqsolve-Event` (type), `X-Sqsolve-Delivery` (ULID), `X-Sqsolve-Timestamp`
+  (Unix seconds), `X-Sqsolve-Signature: sha256=<hex>` with HMAC-SHA256 over
+  `timestamp + "." + body` and the channel key.
+- Body:
 
 ```json
 {
@@ -156,41 +156,41 @@ Tipos de tarea: `library.create`, `library.init_watch`, `library.delete`, `libra
   "type": "backup.failed",
   "severity": "error",
   "occurred_at": "2026-10-18T07:00:12Z",
-  "instance": "estudio-principal",
-  "library": { "id": "01JB...", "slug": "cliente_x", "display_name": "Cliente X" },
+  "instance": "main-studio",
+  "library": { "id": "01JB...", "slug": "client_x", "display_name": "Client X" },
   "job": { "id": "01JB...", "type": "backup.create" },
-  "message": "Espacio insuficiente en el volumen de respaldos",
+  "message": "Insufficient space on the backups volume",
   "code": "SQS-B012",
-  "links": { "job": "https://nas.local:9432/tareas/01JB..." }
+  "links": { "job": "https://nas.local:9432/jobs/01JB..." }
 }
 ```
 
-- Reintentos a los 10 s, 1 min, 10 min y 1 h; luego se marca el canal con error. Tiempo máximo
-  por envío 10 s. Sin seguir redirecciones.
-- Los eventos "antes de" (`backup.started`, `restore.started`) se envían pero no bloquean la
-  operación. El bloqueo previo es de los hooks (1.1).
+- Retries after 10 s, 1 min, 10 min and 1 h; then the channel is marked as failing. Maximum time
+  per delivery 10 s. Redirects are not followed.
+- "Before" events (`backup.started`, `restore.started`) are sent but do not block the
+  operation. Prior blocking belongs to hooks (1.1).
 
-## 6. Contrato de hooks (1.1)
+## 6. Hook contract (1.1)
 
-- El administrador coloca ejecutables en el volumen `hooks`: `hooks/<evento>.d/<orden>-<nombre>`
-  (por ejemplo `hooks/backup.succeeded.d/10-subir`).
-- sqsolve deja una solicitud JSON en el volumen compartido `hookspool` y el contenedor
-  `sqsolve-hooks` la ejecuta: el JSON del evento llega por la entrada estándar; variables de
-  entorno solo `SQSOLVE_EVENT`, `SQSOLVE_DELIVERY` y `SQSOLVE_BACKUP_PATH` (ruta de solo lectura
-  dentro del contenedor de hooks) cuando aplica.
-- Tiempo máximo 300 s configurable; salida estándar y de error guardadas en el registro de la
-  tarea (truncadas a 64 KiB).
-- Hooks `pre` (`backup.pre.d`, `restore.pre.d`) pueden marcarse como bloqueantes: un código de
-  salida distinto de 0 cancela la operación antes de tocar nada.
+- The administrator places executables in the `hooks` volume: `hooks/<event>.d/<order>-<name>`
+  (for example `hooks/backup.succeeded.d/10-upload`).
+- sqsolve leaves a JSON request in the shared `hookspool` volume and the `sqsolve-hooks`
+  container runs it: the event JSON arrives on standard input; environment variables are only
+  `SQSOLVE_EVENT`, `SQSOLVE_DELIVERY` and `SQSOLVE_BACKUP_PATH` (read-only path inside the hooks
+  container) when applicable.
+- Maximum time 300 s, configurable; standard output and error are saved in the job log
+  (truncated to 64 KiB).
+- `pre` hooks (`backup.pre.d`, `restore.pre.d`) can be marked as blocking: an exit code other
+  than 0 cancels the operation before touching anything.
 
 ## 7. CLI
 
-El mismo binario, para recuperación y automatización local:
+The same binary, for recovery and local automation:
 
 ```
 sqsolve serve
-sqsolve init                         # usado por sqsolve-init
-sqsolve doctor [--json]              # comprueba volúmenes, permisos, PostgreSQL, catálogo
+sqsolve init                         # used by sqsolve-init
+sqsolve doctor [--json]              # checks volumes, permissions, PostgreSQL, catalog
 sqsolve admin create --username U --role admin
 sqsolve admin reset-password U
 sqsolve admin disable-totp U
@@ -200,37 +200,37 @@ sqsolve library list [--json]
 sqsolve backup create <slug>
 sqsolve backup list <slug> [--json]
 sqsolve backup verify <id> [--level 2]
-sqsolve restore <id> --new <slug-nuevo>
+sqsolve restore <id> --new <new-slug>
 sqsolve restore <id> --replace --confirm <slug>
 sqsolve catalog rebuild
 sqsolve audit verify
 sqsolve version
 ```
 
-Las acciones de la CLI pasan por los mismos servicios, quedan en la auditoría con actor `cli` y
-respetan los bloqueos de tareas.
+CLI actions go through the same services, are recorded in the audit log with actor `cli` and
+respect job locks.
 
-## 8. Formatos internos
+## 8. Internal formats
 
-### 8.1 Manifiesto de respaldo
+### 8.1 Backup manifest
 
-Archivo `<nombre>.manifest.json` junto a cada respaldo. Esquema JSON en
+File `<name>.manifest.json` next to each backup. JSON schema in
 `api/schemas/manifest.v1.json`.
 
 ```json
 {
   "manifest_version": 1,
   "backup_id": "01JB...",
-  "library": { "id": "01JB...", "slug": "cliente_x", "display_name": "Cliente X" },
+  "library": { "id": "01JB...", "slug": "client_x", "display_name": "Client X" },
   "kind": "scheduled",
-  "file": "cliente_x_20261018T070000Z_01JB.backup",
+  "file": "client_x_20261018T070000Z_01JB.backup",
   "size_bytes": 184467221,
   "sha256": "9f2c...",
-  "format": { "tool": "pg_dump", "tool_version": "18.6", "format": "custom", "compression": "gzip:6", "archive_version": "<leída del encabezado>" },
+  "format": { "tool": "pg_dump", "tool_version": "18.6", "format": "custom", "compression": "gzip:6", "archive_version": "<read from the header>" },
   "server": { "postgres_version": "18.6", "encoding": "UTF8", "locale_provider": "builtin", "locale": "C.UTF-8" },
   "schema": { "fingerprint": "sha256:51ab...", "tables": 214 },
   "resolve_version_declared": "21.1.1",
-  "row_counts": { "tabla_a": 120, "tabla_b": 98431 },
+  "row_counts": { "table_a": 120, "table_b": 98431 },
   "started_at": "2026-10-18T07:00:00Z",
   "finished_at": "2026-10-18T07:00:41Z",
   "sqsolve_version": "1.0.0",
@@ -238,18 +238,18 @@ Archivo `<nombre>.manifest.json` junto a cada respaldo. Esquema JSON en
 }
 ```
 
-`archive_version` se lee del encabezado del archivo con `pg_restore --list`. Los nombres de
-tablas en `row_counts` son metadatos de catálogo; no contienen datos de proyectos.
+`archive_version` is read from the file header with `pg_restore --list`. The table names in
+`row_counts` are catalog metadata; they contain no project data.
 
-### 8.2 Diario de pasos de restauración
+### 8.2 Restore step journal
 
-Cada fila de `job_steps` de `restore.replace` guarda en `data` el estado necesario para decidir
-al arrancar: nombres de base involucrados, si el renombre se emitió y si se confirmó. Ver
-`11-respaldos-y-automatizacion.md` §7.3.
+Each `job_steps` row of `restore.replace` stores in `data` the state needed to decide at
+startup: database names involved, whether the rename was issued and whether it was confirmed.
+See `11-backups-and-automation.md` §7.3.
 
-## 9. Versionado
+## 9. Versioning
 
-- La API `v1` solo cambia de forma compatible: campos nuevos opcionales, endpoints nuevos.
-  Un cambio incompatible crea `v2` y `v1` se mantiene al menos dos versiones menores de sqsolve.
-- El manifiesto lleva `manifest_version`; sqsolve lee todas las versiones anteriores.
-- Los eventos y webhooks agregan campos sin quitar ni renombrar.
+- The `v1` API only changes in compatible ways: new optional fields, new endpoints. An
+  incompatible change creates `v2` and `v1` is kept for at least two minor sqsolve versions.
+- The manifest carries `manifest_version`; sqsolve reads all earlier versions.
+- Events and webhooks add fields without removing or renaming any.

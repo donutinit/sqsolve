@@ -1,31 +1,31 @@
 {{define "content"}}
 <div class="pagehead">
-  <h1>Respaldos</h1>
-  {{if .P.Can "backup.import"}}<div class="actions"><a class="button ghost" href="/respaldos/importar">Importar{{if .Data.Imports}} ({{.Data.Imports}} esperando){{end}}</a></div>{{end}}
+  <h1>Backups</h1>
+  {{if .P.Can "backup.import"}}<div class="actions"><a class="button ghost" href="/backups/import">Import{{if .Data.Imports}} ({{.Data.Imports}} waiting){{end}}</a></div>{{end}}
 </div>
 <form method="get" class="filters">
-  <label>Biblioteca<select name="biblioteca"><option value="">Todas</option>{{range .Data.Libraries}}<option value="{{.ID}}" {{if eq .ID $.Data.Filter.LibraryID}}selected{{end}}>{{.DisplayName}}{{if eq .State "purged"}} (purgada){{end}}</option>{{end}}</select></label>
-  <label>Estado<select name="estado"><option value="">Disponibles y fallidos</option><option value="ok" {{if has .Data.Filter.Statuses "ok"}}selected{{end}}>Disponibles</option><option value="failed" {{if has .Data.Filter.Statuses "failed"}}selected{{end}}>Fallidos</option><option value="deleted" {{if has .Data.Filter.Statuses "deleted"}}selected{{end}}>Borrados</option></select></label>
-  <button type="submit" class="ghost">Filtrar</button>
+  <label>Library<select name="library"><option value="">All</option>{{range .Data.Libraries}}<option value="{{.ID}}" {{if eq .ID $.Data.Filter.LibraryID}}selected{{end}}>{{.DisplayName}}{{if eq .State "purged"}} (purged){{end}}</option>{{end}}</select></label>
+  <label>State<select name="state"><option value="">Available and failed</option><option value="ok" {{if has .Data.Filter.Statuses "ok"}}selected{{end}}>Available</option><option value="failed" {{if has .Data.Filter.Statuses "failed"}}selected{{end}}>Failed</option><option value="deleted" {{if has .Data.Filter.Statuses "deleted"}}selected{{end}}>Deleted</option></select></label>
+  <button type="submit" class="ghost">Filter</button>
 </form>
-<p class="muted">Espacio ocupado por los respaldos listados: {{bytes .Data.Total}}.</p>
+<p class="muted">Space used by the listed backups: {{bytes .Data.Total}}.</p>
 {{if .Data.Rows}}
 <section class="card flush">
 <table class="table cards-on-mobile">
-  <thead><tr><th>Fecha</th><th>Biblioteca</th><th>Tipo</th><th>Estado</th><th>Verificación</th><th>Tamaño</th></tr></thead>
+  <thead><tr><th>Date</th><th>Library</th><th>Type</th><th>State</th><th>Verification</th><th>Size</th></tr></thead>
   <tbody>
   {{range .Data.Rows}}
   <tr>
-    <td data-label="Fecha"><a href="/respaldos/{{.B.ID}}">{{dt .B.StartedAt}}</a>{{if .B.Pinned}} {{template "badge" (dict "tone" "info" "label" "Fijado")}}{{end}}</td>
-    <td data-label="Biblioteca">{{with .L}}<a href="/bibliotecas/{{.ID}}">{{.DisplayName}}</a>{{if eq .State "purged"}} <span class="muted small">(purgada)</span>{{end}}{{end}}</td>
-    <td data-label="Tipo">{{kind .B.Kind}}</td>
-    <td data-label="Estado">{{template "badge" (dict "tone" (backuptone .B.Status) "label" (backuplabel .B.Status))}}</td>
-    <td data-label="Verificación">{{if eq .B.Status "ok"}}{{template "badge" (dict "tone" (verifytone .B.VerifyStatus) "label" (verifylabel .B.VerifyStatus))}}{{end}}</td>
-    <td data-label="Tamaño">{{if .B.SizeBytes}}{{bytes .B.SizeBytes}}{{end}}</td>
+    <td data-label="Date"><a href="/backups/{{.B.ID}}">{{dt .B.StartedAt}}</a>{{if .B.Pinned}} {{template "badge" (dict "tone" "info" "label" "Pinned")}}{{end}}</td>
+    <td data-label="Library">{{with .L}}<a href="/libraries/{{.ID}}">{{.DisplayName}}</a>{{if eq .State "purged"}} <span class="muted small">(purged)</span>{{end}}{{end}}</td>
+    <td data-label="Type">{{kind .B.Kind}}</td>
+    <td data-label="State">{{template "badge" (dict "tone" (backuptone .B.Status) "label" (backuplabel .B.Status))}}</td>
+    <td data-label="Verification">{{if eq .B.Status "ok"}}{{template "badge" (dict "tone" (verifytone .B.VerifyStatus) "label" (verifylabel .B.VerifyStatus))}}{{end}}</td>
+    <td data-label="Size">{{if .B.SizeBytes}}{{bytes .B.SizeBytes}}{{end}}</td>
   </tr>
   {{end}}
   </tbody>
 </table>
 </section>
-{{else}}<p class="muted">No hay respaldos con este filtro.</p>{{end}}
+{{else}}<p class="muted">No backups match this filter.</p>{{end}}
 {{end}}

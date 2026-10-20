@@ -1,22 +1,23 @@
-# ADR 0008. Modelo de roles de PostgreSQL
+# ADR 0008. PostgreSQL role model
 
-**Estado:** Aceptado, pendiente de PoC-01.
+**Status:** Accepted, pending PoC-01.
 
-**Contexto.** La convención de Blackmagic usa el superusuario `postgres` con contraseña
-`DaVinci` para todo [01 §5]. Un superusuario expuesto en la red da control del servidor y, por
-`COPY ... PROGRAM`, del contenedor.
+**Context.** Blackmagic's convention uses the `postgres` superuser with password `DaVinci` for
+everything [01 §5]. A superuser exposed on the network gives control of the server and, through
+`COPY ... PROGRAM`, of the container.
 
-**Decisión.**
-- `postgres` y `sqsolve_admin` solo por socket local; rechazados por red en `pg_hba.conf`.
-- `sqsolve_admin` sin superusuario, con `CREATEDB`, `CREATEROLE`, `pg_monitor`,
-  `pg_signal_backend` y `pg_read_all_data`.
-- Un rol propietario por biblioteca, con el mismo nombre que la base, que solo puede conectarse a
-  ella. `CREATEDB` solo durante la ventana de inicialización.
-- En 1.1, roles por persona miembros del propietario con `SET role` por defecto.
+**Decision.**
+- `postgres` and `sqsolve_admin` only over the local socket; rejected over the network in
+  `pg_hba.conf`.
+- `sqsolve_admin` without superuser, with `CREATEDB`, `CREATEROLE`, `pg_monitor`,
+  `pg_signal_backend` and `pg_read_all_data`.
+- One owner role per library, with the same name as the database, that can only connect to it.
+  `CREATEDB` only during the initialization window.
+- In 1.1, per-person roles that are members of the owner with `SET role` by default.
 
-**Alternativas.** Superusuario compartido (inseguro); un rol por estación sin propietario común
-(los objetos quedarían repartidos entre dueños).
+**Alternatives.** Shared superuser (insecure); one role per workstation without a common owner
+(objects would end up spread across owners).
 
-**Consecuencias.** Requiere PostgreSQL 16+ (semántica de `CREATEROLE`). Si PoC-01 demuestra que
-Resolve necesita ser dueño de la base, el dueño será el rol de la biblioteca y los renombres del
-intercambio usarán el superusuario por socket, auditados.
+**Consequences.** Requires PostgreSQL 16+ (`CREATEROLE` semantics). If PoC-01 shows that Resolve
+needs to own the database, the owner will be the library role and the swap renames will use the
+superuser over the socket, audited.

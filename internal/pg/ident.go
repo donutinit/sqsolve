@@ -22,19 +22,19 @@ var (
 var reservedPrefixes = []string{"pg_", "sqsolve", "template", "postgres"}
 
 // ErrInvalidSlug is returned for slugs that do not follow the rules.
-var ErrInvalidSlug = errors.New("SQS-L001 identificador inválido")
+var ErrInvalidSlug = errors.New("SQS-L001 invalid identifier")
 
 // ValidateSlug checks a library slug.
 func ValidateSlug(s string) error {
 	if !slugRe.MatchString(s) {
-		return fmt.Errorf("%w: usa de 3 a 40 caracteres, minúsculas, números y guion bajo, empezando con letra", ErrInvalidSlug)
+		return fmt.Errorf("%w: use 3 to 40 characters: lowercase letters, digits and underscore, starting with a letter", ErrInvalidSlug)
 	}
 	if strings.Contains(s, "__") {
-		return fmt.Errorf("%w: no puede contener dos guiones bajos seguidos", ErrInvalidSlug)
+		return fmt.Errorf("%w: cannot contain two consecutive underscores", ErrInvalidSlug)
 	}
 	for _, p := range reservedPrefixes {
 		if strings.HasPrefix(s, p) {
-			return fmt.Errorf("%w: no puede empezar con %q", ErrInvalidSlug, p)
+			return fmt.Errorf("%w: cannot start with %q", ErrInvalidSlug, p)
 		}
 	}
 	return nil
@@ -43,7 +43,7 @@ func ValidateSlug(s string) error {
 // ValidatePerson checks the person part of a member role name.
 func ValidatePerson(s string) error {
 	if !personRe.MatchString(s) {
-		return fmt.Errorf("%w: el nombre de persona usa de 2 a 20 minúsculas o números, empezando con letra", ErrInvalidSlug)
+		return fmt.Errorf("%w: a person name uses 2 to 20 lowercase letters or digits, starting with a letter", ErrInvalidSlug)
 	}
 	return nil
 }
@@ -77,7 +77,7 @@ func MustIdent(s string) string {
 // parameters. Values with backslashes or NUL bytes are rejected.
 func Literal(s string) (string, error) {
 	if strings.ContainsAny(s, "\\\x00") {
-		return "", errors.New("SQS-P010 literal con caracteres no permitidos")
+		return "", errors.New("SQS-P010 literal with disallowed characters")
 	}
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'", nil
 }

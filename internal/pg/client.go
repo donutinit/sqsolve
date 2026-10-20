@@ -29,7 +29,7 @@ const AdminRole = "sqsolve_admin"
 const Superuser = "postgres"
 
 // ErrUnavailable means PostgreSQL cannot be reached right now.
-var ErrUnavailable = errors.New("SQS-P001 PostgreSQL no está disponible")
+var ErrUnavailable = errors.New("SQS-P001 PostgreSQL is not available")
 
 // Client manages connections to the server.
 type Client struct {
@@ -95,7 +95,7 @@ func (c *Client) Bootstrap(ctx context.Context) error {
 	}
 	for _, s := range stmts {
 		if _, err := conn.Exec(ctx, s); err != nil {
-			return fmt.Errorf("SQS-P002 preparando %s: %w", AdminRole, redact(err, lit))
+			return fmt.Errorf("SQS-P002 preparing %s: %w", AdminRole, redact(err, lit))
 		}
 	}
 	return nil
@@ -105,7 +105,7 @@ func redact(err error, secret string) error {
 	if err == nil {
 		return nil
 	}
-	return errors.New(strings.ReplaceAll(err.Error(), secret, "[redactado]"))
+	return errors.New(strings.ReplaceAll(err.Error(), secret, "[redacted]"))
 }
 
 // Open creates the admin pool.

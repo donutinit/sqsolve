@@ -39,21 +39,21 @@ const (
 	KindImported   = "imported"
 )
 
-// KindLabel in Spanish.
+// KindLabel returns the display label of a backup kind.
 func KindLabel(k string) string {
 	switch k {
 	case KindManual:
 		return "Manual"
 	case KindScheduled:
-		return "Programado"
+		return "Scheduled"
 	case KindPreRestore:
-		return "Antes de restaurar"
+		return "Before restore"
 	case KindPreDelete:
-		return "Antes de eliminar"
+		return "Before delete"
 	case KindPreUpgrade:
-		return "Antes de actualizar Resolve"
+		return "Before Resolve upgrade"
 	case KindImported:
-		return "Importado"
+		return "Imported"
 	}
 	return k
 }
@@ -142,7 +142,7 @@ func scanBackup(row interface{ Scan(...any) error }) (*Backup, error) {
 }
 
 // ErrBackupNotFound is returned for unknown backups.
-var ErrBackupNotFound = errors.New("SQS-B001 respaldo no encontrado")
+var ErrBackupNotFound = errors.New("SQS-B001 backup not found")
 
 // Backup returns one backup.
 func (s *Service) Backup(ctx context.Context, id string) (*Backup, error) {
@@ -264,7 +264,7 @@ func ReadManifest(path string) (*Manifest, error) {
 	}
 	var m Manifest
 	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("SQS-B040 manifiesto ilegible: %w", err)
+		return nil, fmt.Errorf("SQS-B040 unreadable manifest: %w", err)
 	}
 	return &m, nil
 }
@@ -324,11 +324,11 @@ func ParseArchiveHeader(out string) ArchiveInfo {
 func (s *Service) listArchive(ctx context.Context, path string) (ArchiveInfo, error) {
 	res, err := s.Exec.Run(ctx, execx.Cmd{Name: "pg_restore", Args: []string{"--list", path}, MaxOutput: 1 << 20})
 	if err != nil {
-		return ArchiveInfo{}, fmt.Errorf("SQS-B041 pg_restore no puede leer el archivo: %w", err)
+		return ArchiveInfo{}, fmt.Errorf("SQS-B041 pg_restore cannot read the file: %w", err)
 	}
 	info := ParseArchiveHeader(res.Stdout)
 	if info.Format == "" {
-		return info, errors.New("SQS-B041 el archivo no parece un respaldo de pg_dump en formato custom")
+		return info, errors.New("SQS-B041 the file does not look like a pg_dump backup in custom format")
 	}
 	return info, nil
 }
@@ -354,7 +354,7 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 	}
 	if err := s.BackupVolumeOK(); err != nil {
 		s.Events.Emit(ctx, events.Event{Type: events.StorageVolumeMissing, Severity: events.Critical, LibraryID: l.ID,
-			Message: "El volumen de respaldos no está montado o no es de esta instalación: " + err.Error()})
+			Message: "The backups volume is not mounted or does not belong to this installation: " + err.Error()})
 		return nil, err
 	}
 	id := ulid.New()
@@ -378,7 +378,7 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 		os.Remove(manifestPath(abs))
 		s.DB.ExecContext(context.WithoutCancel(ctx), `UPDATE backups SET status = 'failed', finished_at = ?, error = ? WHERE id = ?`, store.NowT(), cause.Error(), b.ID)
 		s.Events.Emit(ctx, events.Event{Type: events.BackupFailed, Severity: events.Error, LibraryID: l.ID, JobID: b.JobID,
-			Message: fmt.Sprintf("Falló el respaldo de %q: %s", l.DisplayName, shortErr(cause))})
+			Message: fmt.Sprintf("Backup of %q failed: %s", l.DisplayName, shortErr(cause))})
 		return nil, cause
 	}
 	step := func(name string, fn func() error) error {
@@ -394,13 +394,13 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 	}
 
 	var dbSize int64
-	err = step("preparar", func() error {
+	err = step("prepare", func() error {
 		info, err := s.PG.Database(ctx, dbName)
 		if err != nil {
 			return err
 		}
 		if info == nil {
-			return fmt.Errorf("SQS-B002 no existe la base %s", dbName)
+			return fmt.Errorf("SQS-B002 database %s does not exist", dbName)
 		}
 		dbSize = info.SizeBytes
 		need := dbSize / 2
@@ -412,7 +412,7 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 			return err
 		}
 		if uint64(need) > sp.Free {
-			return fmt.Errorf("SQS-B012 espacio insuficiente en el volumen de respaldos: se estiman %s y hay %s libres", HumanBytes(need), HumanBytes(int64(sp.Free)))
+			return fmt.Errorf("SQS-B012 not enough space on the backups volume: %s estimated, %s free", HumanBytes(need), HumanBytes(int64(sp.Free)))
 		}
 		return os.MkdirAll(filepath.Dir(abs), 0o700)
 	})
@@ -427,7 +427,7 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 	var exact = true
 	var fp pg.Fingerprint
 	var serverVersion, mark string
-	err = step("volcar", func() error {
+	err = step("dump", func() error {
 		conn, err := s.PG.ConnectDB(ctx, dbName)
 		if err != nil {
 			return err
@@ -498,10 +498,10 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 		wg.Wait()
 		<-ticking
 		if dumpErr != nil {
-			return fmt.Errorf("SQS-B010 pg_dump falló: %w", dumpErr)
+			return fmt.Errorf("SQS-B010 pg_dump failed: %w", dumpErr)
 		}
 		if cerr != nil {
-			return fmt.Errorf("SQS-B011 conteo de filas: %w", cerr)
+			return fmt.Errorf("SQS-B011 row count: %w", cerr)
 		}
 		return tx.Commit(ctx)
 	})
@@ -513,7 +513,7 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 	}
 
 	var info ArchiveInfo
-	err = step("sellar", func() error {
+	err = step("seal", func() error {
 		if err := fsx.SealFile(partial, abs); err != nil {
 			return err
 		}
@@ -542,7 +542,7 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 		_, err = s.DB.ExecContext(ctx, `UPDATE backups SET status = 'ok', finished_at = ?, size_bytes = ?, sha256 = ?, pg_server_version = ?, pg_dump_version = ?,
 			archive_version = ?, compression = ?, schema_fingerprint = ?, table_count = ?, counts_exact = ?, activity_mark = ? WHERE id = ?`,
 			store.T(finished), size, sum, serverVersion, info.DumpedBy, info.ArchiveVersion, info.Compression, fp.Hash, fp.Tables, exact, mark, b.ID)
-		logf("Respaldo de %s escrito (%s)", dbName, HumanBytes(size))
+		logf("Backup of %s written (%s)", dbName, HumanBytes(size))
 		return err
 	})
 	if err != nil {
@@ -551,7 +551,7 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 	if r != nil {
 		r.Progress(90)
 	}
-	err = step("verificar_l1", func() error { return s.verifyL1(ctx, b.ID) })
+	err = step("verify_l1", func() error { return s.verifyL1(ctx, b.ID) })
 	if err != nil {
 		return fail(err)
 	}
@@ -559,7 +559,7 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 		s.recordFingerprint(ctx, l, fp, b.JobID)
 	}
 	s.Events.Emit(ctx, events.Event{Type: events.BackupSucceeded, LibraryID: l.ID, JobID: b.JobID,
-		Message: fmt.Sprintf("Respaldo de %q correcto (%s)", l.DisplayName, HumanBytes(b.SizeBytes)), Data: map[string]any{"backup_id": b.ID, "kind": kind}})
+		Message: fmt.Sprintf("Backup of %q succeeded (%s)", l.DisplayName, HumanBytes(b.SizeBytes)), Data: map[string]any{"backup_id": b.ID, "kind": kind}})
 	return s.Backup(ctx, b.ID)
 }
 
@@ -574,20 +574,20 @@ func (s *Service) verifyL1(ctx context.Context, id string) error {
 		s.DB.ExecContext(context.WithoutCancel(ctx), `UPDATE backups SET verify_status = ?, verify_level = CASE WHEN ? = 'failed' THEN verify_level ELSE MAX(verify_level, 1) END,
 			verified_at = ?, verify_detail = ? WHERE id = ?`, status, status, store.NowT(), detail, id)
 		if status == VerifyFailed {
-			return fmt.Errorf("SQS-B020 verificación fallida: %s", detail)
+			return fmt.Errorf("SQS-B020 verification failed: %s", detail)
 		}
 		return nil
 	}
 	m, err := ReadManifest(manifestPath(abs))
 	if err != nil {
-		return res(VerifyFailed, "manifiesto ausente o ilegible")
+		return res(VerifyFailed, "manifest missing or unreadable")
 	}
 	sum, size, err := fileSHA256(abs)
 	if err != nil {
-		return res(VerifyFailed, "no se pudo leer el archivo: "+err.Error())
+		return res(VerifyFailed, "could not read the file: "+err.Error())
 	}
 	if sum != m.SHA256 || sum != b.SHA256 || size != m.Size {
-		return res(VerifyFailed, "la suma SHA-256 no coincide con el manifiesto: el archivo cambió o está dañado")
+		return res(VerifyFailed, "the SHA-256 checksum does not match the manifest: the file changed or is damaged")
 	}
 	if _, err := s.listArchive(ctx, abs); err != nil {
 		return res(VerifyFailed, err.Error())
@@ -596,7 +596,7 @@ func (s *Service) verifyL1(ctx context.Context, id string) error {
 	if b.VerifyStatus == VerifyL2OK {
 		status = VerifyL2OK
 	}
-	return res(status, "Suma e índice correctos")
+	return res(status, "Checksum and index OK")
 }
 
 // HumanBytes formats a size.
@@ -632,15 +632,15 @@ func (s *Service) runBackupCreate(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	if l.State != StateActive && l.State != StateMaintenance {
-		return fmt.Errorf("SQS-B003 no se respalda una biblioteca en estado %s", l.State.Label())
+		return fmt.Errorf("SQS-B003 cannot back up a library in state %s", l.State.Label())
 	}
-	s.Events.Emit(ctx, events.Event{Type: events.BackupStarted, LibraryID: l.ID, JobID: r.Job.ID, Message: fmt.Sprintf("Respaldando %q", l.DisplayName)})
+	s.Events.Emit(ctx, events.Event{Type: events.BackupStarted, LibraryID: l.ID, JobID: r.Job.ID, Message: fmt.Sprintf("Backing up %q", l.DisplayName)})
 	b, err := s.createBackup(ctx, r, l, p.Kind, "")
 	if err != nil {
 		return err
 	}
 	r.SetResult(map[string]string{"backup_id": b.ID})
-	return r.Step("retencion", func() error {
+	return r.Step("retention", func() error {
 		_, err := s.applyRetention(ctx, l.ID)
 		return err
 	})
@@ -653,7 +653,7 @@ func (s *Service) BackupNow(ctx context.Context, by audit.Actor, libraryID strin
 		return nil, err
 	}
 	if l.State != StateActive && l.State != StateMaintenance {
-		return nil, fmt.Errorf("SQS-B003 no se respalda una biblioteca en estado %s", l.State.Label())
+		return nil, fmt.Errorf("SQS-B003 cannot back up a library in state %s", l.State.Label())
 	}
 	s.Audit.Record(ctx, by, "backup.create", "library", libraryID, audit.OK, nil)
 	return s.Jobs.Enqueue(ctx, JobBackupCreate, libraryID, BackupParams{Kind: KindManual}, by, jobs.Priority(80))
@@ -678,14 +678,14 @@ func (s *Service) DeleteBackup(ctx context.Context, by audit.Actor, id string) e
 		return nil
 	}
 	if b.Pinned {
-		return errors.New("SQS-B033 suelta el respaldo fijado antes de borrarlo")
+		return errors.New("SQS-B033 unpin the backup before deleting it")
 	}
 	if l, err := s.Library(ctx, b.LibraryID); err == nil && (l.Live() || l.State == StateTrashed) {
 		if latest, _ := s.LatestVerified(ctx, l.ID); latest != nil && latest.ID == b.ID {
-			return errors.New("SQS-B034 es el respaldo verificado más reciente de la biblioteca; no se borra a mano")
+			return errors.New("SQS-B034 it is the most recent verified backup of the library; it cannot be deleted manually")
 		}
 	}
-	if err := s.removeBackupFiles(ctx, b, "borrado a mano"); err != nil {
+	if err := s.removeBackupFiles(ctx, b, "deleted manually"); err != nil {
 		return err
 	}
 	return s.Audit.Record(ctx, by, "backup.delete", "backup", id, audit.OK, map[string]any{"library_id": b.LibraryID})

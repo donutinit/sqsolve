@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Publica la versión en GitHub con el compose de referencia y las notas del CHANGELOG (docs 17 §6).
+# Publishes the release on GitHub with the reference compose and the CHANGELOG notes (docs 17 §6).
 name: release
 
 on:
@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Notas de la versión desde CHANGELOG.md
+      - name: Release notes from CHANGELOG.md
         id: notes
         run: |
           v="${GITHUB_REF_NAME#v}"
@@ -22,13 +22,13 @@ jobs:
             $0 ~ "^## \\[" v "\\]" { on = 1; next }
             on && /^## \[/ { exit }
             on { print }
-          ' CHANGELOG.md > notas.md
-          if [ ! -s notas.md ]; then echo "Sin notas en CHANGELOG.md para $v" > notas.md; fi
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "No notes in CHANGELOG.md for $v" > notes.md; fi
           cp deploy/compose.yaml "sqsolve-$v-compose.yaml"
           echo "version=$v" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           name: sqsolve ${{ steps.notes.outputs.version }}
-          body_path: notas.md
+          body_path: notes.md
           files: sqsolve-${{ steps.notes.outputs.version }}-compose.yaml
           prerelease: ${{ startsWith(steps.notes.outputs.version, '0.') }}

@@ -40,7 +40,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	recent, _ := s.A.Jobs.List(ctx, jobs.Filter{Limit: 6})
 	evs, _ := s.A.Events.List(ctx, events.Filter{MinSeverity: events.Warning, Limit: 6})
-	s.render(w, r, "dashboard", "Panel", "panel", map[string]any{"S": st, "Tracks": tracks, "Stations": len(stations), "Jobs": recent, "Events": evs, "Host": s.A.Svc.AdvertisedHost(ctx)})
+	s.render(w, r, "dashboard", "Dashboard", "dashboard", map[string]any{"S": st, "Tracks": tracks, "Stations": len(stations), "Jobs": recent, "Events": evs, "Host": s.A.Svc.AdvertisedHost(ctx)})
 }
 
 func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
@@ -48,9 +48,9 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	tab := r.URL.Query().Get("tab")
 	data := map[string]any{"Tab": tab}
-	if tab == "auditoria" {
+	if tab == "audit" {
 		if !p.Can(auth.ActAuditView) {
-			s.renderError(w, r, p, http.StatusForbidden, "SQS-A030 Tu rol no permite ver la auditoría.")
+			s.renderError(w, r, p, http.StatusForbidden, "SQS-A030 Your role does not allow viewing the audit log.")
 			return
 		}
 		data["Audit"], _ = s.A.Audit.List(ctx, 0, 300, "")
@@ -59,14 +59,14 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 	} else {
 		sev := events.Severity(r.URL.Query().Get("sev"))
 		data["Sev"] = string(sev)
-		data["Events"], _ = s.A.Events.List(ctx, events.Filter{MinSeverity: sev, TypePrefix: r.URL.Query().Get("tipo"), Limit: 300})
+		data["Events"], _ = s.A.Events.List(ctx, events.Filter{MinSeverity: sev, TypePrefix: r.URL.Query().Get("type"), Limit: 300})
 	}
-	s.render(w, r, "activity", "Actividad", "actividad", data)
+	s.render(w, r, "activity", "Activity", "activity", data)
 }
 
 func (s *Server) auditExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.Header().Set("Content-Disposition", `attachment; filename="sqsolve-auditoria-`+time.Now().Format("20060102")+`.jsonl"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="sqsolve-audit-`+time.Now().Format("20060102")+`.jsonl"`)
 	s.A.Audit.Export(r.Context(), w, time.Time{}, time.Now().Add(time.Hour))
 }
 
@@ -74,7 +74,7 @@ func (s *Server) healthPage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	st := s.A.Monitor.Snapshot(ctx)
 	scheds, _ := s.A.Sched.List(ctx)
-	s.render(w, r, "health", "Salud", "salud", map[string]any{"S": st, "Schedules": scheds, "Checks": app.Doctor(ctx, s.A)})
+	s.render(w, r, "health", "Health", "health", map[string]any{"S": st, "Schedules": scheds, "Checks": app.Doctor(ctx, s.A)})
 }
 
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
@@ -86,22 +86,22 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	data := map[string]any{"Tab": tab, "Settings": s.A.Svc.Settings(ctx), "Cfg": s.A.Cfg, "InstanceID": s.A.InstanceID}
 	switch tab {
-	case "usuarios":
+	case "users":
 		if !p.Can(auth.ActUsersManage) {
-			s.renderError(w, r, p, http.StatusForbidden, "SQS-A030 Tu rol no permite administrar usuarios.")
+			s.renderError(w, r, p, http.StatusForbidden, "SQS-A030 Your role does not allow managing users.")
 			return
 		}
 		data["Users"], _ = s.A.Auth.Users(ctx)
 		data["Roles"] = []auth.Role{auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer}
-	case "notificaciones":
+	case "notifications":
 		chs, _ := s.A.Notify.Channels(ctx)
 		data["Channels"] = chs
-		data["Edit"] = r.URL.Query().Get("editar")
-		data["NewKind"] = r.URL.Query().Get("nuevo")
-	case "mantenimiento":
+		data["Edit"] = r.URL.Query().Get("edit")
+		data["NewKind"] = r.URL.Query().Get("new")
+	case "maintenance":
 		data["Copies"] = app.SystemCopies(s.A.Cfg)
 		data["Imports"], _ = s.A.Svc.ImportCandidates()
-	case "acerca":
+	case "about":
 		data["Version"], data["Commit"] = app.Version, app.Commit
 		if info, err := s.A.PG.Server(ctx); err == nil {
 			data["PG"] = info
@@ -110,7 +110,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	if info, err := s.A.PanelCertInfo(); err == nil {
 		data["Cert"] = info
 	}
-	s.render(w, r, "settings", "Ajustes", "ajustes", data)
+	s.render(w, r, "settings", "Settings", "settings", data)
 }
 
 func (s *Server) settingsGeneral(w http.ResponseWriter, r *http.Request) {
@@ -133,10 +133,10 @@ func (s *Server) settingsGeneral(w http.ResponseWriter, r *http.Request) {
 	st.DefaultPolicy.KeepWeekly = atoi(r.FormValue("keep_weekly"), st.DefaultPolicy.KeepWeekly)
 	st.DefaultPolicy.KeepMonthly = atoi(r.FormValue("keep_monthly"), st.DefaultPolicy.KeepMonthly)
 	if err := s.A.Svc.SaveSettings(ctx, principalOf(r).Actor(), st); err != nil {
-		s.fail(w, r, "/ajustes", err)
+		s.fail(w, r, "/settings", err)
 		return
 	}
-	s.ok(w, r, "/ajustes", "Ajustes guardados.")
+	s.ok(w, r, "/settings", "Settings saved.")
 }
 
 func readUpload(r *http.Request, field string) ([]byte, error) {
@@ -152,21 +152,21 @@ func (s *Server) settingsCert(w http.ResponseWriter, r *http.Request) {
 	cert, err1 := readUpload(r, "cert")
 	key, err2 := readUpload(r, "key")
 	if err1 != nil || err2 != nil {
-		s.fail(w, r, "/ajustes", errors.New("SQS-C021 sube el certificado y la llave en formato PEM"))
+		s.fail(w, r, "/settings", errors.New("SQS-C021 upload the certificate and the key in PEM format"))
 		return
 	}
 	if err := s.A.InstallPanelCert(cert, key); err != nil {
-		s.fail(w, r, "/ajustes", err)
+		s.fail(w, r, "/settings", err)
 		return
 	}
 	s.A.Audit.Record(r.Context(), principalOf(r).Actor(), "settings.certificate", "system", "", "ok", nil)
-	s.ok(w, r, "/ajustes", "Certificado instalado. Ya se está usando.")
+	s.ok(w, r, "/settings", "Certificate installed. It is already in use.")
 }
 
 func (s *Server) userCreate(w http.ResponseWriter, r *http.Request) {
-	back := "/ajustes?tab=usuarios"
+	back := "/settings?tab=users"
 	if r.FormValue("password") != r.FormValue("password2") {
-		s.fail(w, r, back, errors.New("SQS-A015 las contraseñas no coinciden"))
+		s.fail(w, r, back, errors.New("SQS-A015 the passwords do not match"))
 		return
 	}
 	_, err := s.A.Auth.CreateUser(r.Context(), principalOf(r).Actor(), r.FormValue("username"), r.FormValue("display"), r.FormValue("password"), auth.Role(r.FormValue("role")))
@@ -174,39 +174,39 @@ func (s *Server) userCreate(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, back, err)
 		return
 	}
-	s.ok(w, r, back, "Usuario creado.")
+	s.ok(w, r, back, "User created.")
 }
 
 func (s *Server) userUpdate(w http.ResponseWriter, r *http.Request) {
-	back := "/ajustes?tab=usuarios"
+	back := "/settings?tab=users"
 	err := s.A.Auth.UpdateUser(r.Context(), principalOf(r).Actor(), r.PathValue("id"), r.FormValue("display"), auth.Role(r.FormValue("role")), r.FormValue("disabled") == "on")
 	if err != nil {
 		s.fail(w, r, back, err)
 		return
 	}
-	s.ok(w, r, back, "Usuario actualizado.")
+	s.ok(w, r, back, "User updated.")
 }
 
 func (s *Server) userPassword(w http.ResponseWriter, r *http.Request) {
-	back := "/ajustes?tab=usuarios"
+	back := "/settings?tab=users"
 	if err := s.A.Auth.SetPassword(r.Context(), principalOf(r).Actor(), r.PathValue("id"), r.FormValue("password"), ""); err != nil {
 		s.fail(w, r, back, err)
 		return
 	}
-	s.ok(w, r, back, "Contraseña cambiada; se cerraron sus sesiones.")
+	s.ok(w, r, back, "Password changed; their sessions were closed.")
 }
 
 func (s *Server) userDisableTOTP(w http.ResponseWriter, r *http.Request) {
-	back := "/ajustes?tab=usuarios"
+	back := "/settings?tab=users"
 	if err := s.A.Auth.DisableTOTP(r.Context(), principalOf(r).Actor(), r.PathValue("id")); err != nil {
 		s.fail(w, r, back, err)
 		return
 	}
-	s.ok(w, r, back, "Segundo factor desactivado para ese usuario.")
+	s.ok(w, r, back, "Second factor disabled for that user.")
 }
 
 func (s *Server) notifySave(w http.ResponseWriter, r *http.Request) {
-	back := "/ajustes?tab=notificaciones"
+	back := "/settings?tab=notifications"
 	c := &notify.Channel{
 		ID: r.FormValue("id"), Kind: r.FormValue("kind"), Name: r.FormValue("name"), Enabled: r.FormValue("enabled") == "on",
 		MinSeverity: events.Severity(r.FormValue("severity")), Pattern: strings.TrimSpace(r.FormValue("pattern")), Config: map[string]string{},
@@ -220,73 +220,73 @@ func (s *Server) notifySave(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, back, err)
 		return
 	}
-	s.ok(w, r, back, "Canal guardado. Usa Probar para confirmar que llega.")
+	s.ok(w, r, back, "Channel saved. Use Test to confirm it arrives.")
 }
 
 func (s *Server) notifyTest(w http.ResponseWriter, r *http.Request) {
-	back := "/ajustes?tab=notificaciones"
+	back := "/settings?tab=notifications"
 	if err := s.A.Notify.Test(r.Context(), r.PathValue("id")); err != nil {
-		s.fail(w, r, back, fmt.Errorf("SQS-N030 la prueba falló: %w", err))
+		s.fail(w, r, back, fmt.Errorf("SQS-N030 the test failed: %w", err))
 		return
 	}
-	s.ok(w, r, back, "Prueba enviada correctamente.")
+	s.ok(w, r, back, "Test sent successfully.")
 }
 
 func (s *Server) notifyDelete(w http.ResponseWriter, r *http.Request) {
 	if err := s.A.Notify.Delete(r.Context(), principalOf(r).Actor(), r.PathValue("id")); err != nil {
-		s.fail(w, r, "/ajustes?tab=notificaciones", err)
+		s.fail(w, r, "/settings?tab=notifications", err)
 		return
 	}
-	s.ok(w, r, "/ajustes?tab=notificaciones", "Canal borrado.")
+	s.ok(w, r, "/settings?tab=notifications", "Channel deleted.")
 }
 
 func (s *Server) maintenanceAction(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	p := principalOf(r)
-	back := "/ajustes?tab=mantenimiento"
+	back := "/settings?tab=maintenance"
 	var j *jobs.Job
 	var err error
-	switch r.PathValue("accion") {
-	case "catalogo":
+	switch r.PathValue("action") {
+	case "catalog":
 		j, err = s.A.Jobs.Enqueue(ctx, core.JobCatalogRebuild, "", nil, p.Actor())
-	case "revisar":
+	case "check":
 		j, err = s.A.Jobs.Enqueue(ctx, core.JobCatalogCheck, "", nil, p.Actor())
-	case "verificar":
+	case "verify":
 		j, err = s.A.Jobs.Enqueue(ctx, core.JobVerifyAll, "", nil, p.Actor())
-	case "retencion":
+	case "retention":
 		j, err = s.A.Jobs.Enqueue(ctx, core.JobRetention, "", nil, p.Actor())
-	case "optimizar":
+	case "optimize":
 		j, err = s.A.Jobs.Enqueue(ctx, core.JobVacuum, "", nil, p.Actor())
 	case "control":
 		j, err = s.A.Jobs.Enqueue(ctx, core.JobControlBackup, "", nil, p.Actor())
 	case "hba":
 		err = s.A.Svc.SyncHBA(ctx)
 		if err == nil {
-			s.ok(w, r, back, "pg_hba.conf regenerado y PostgreSQL recargado.")
+			s.ok(w, r, back, "pg_hba.conf regenerated and PostgreSQL reloaded.")
 			return
 		}
-	case "actualizacion":
+	case "upgrade":
 		j, err = s.A.Svc.UpgradeWindow(ctx, p.Actor(), r.FormValue("target"))
 	default:
-		err = errors.New("acción desconocida")
+		err = errors.New("unknown action")
 	}
 	if err != nil {
 		s.fail(w, r, back, err)
 		return
 	}
-	s.A.Audit.Record(ctx, p.Actor(), "maintenance."+r.PathValue("accion"), "system", "", "ok", nil)
-	s.ok(w, r, "/tareas/"+j.ID, "")
+	s.A.Audit.Record(ctx, p.Actor(), "maintenance."+r.PathValue("action"), "system", "", "ok", nil)
+	s.ok(w, r, "/jobs/"+j.ID, "")
 }
 
 func (s *Server) recoveryKit(w http.ResponseWriter, r *http.Request) {
 	kit, err := s.A.RecoveryKit(r.Context())
 	if err != nil {
-		s.fail(w, r, "/ajustes?tab=mantenimiento", err)
+		s.fail(w, r, "/settings?tab=maintenance", err)
 		return
 	}
 	s.A.Audit.Record(r.Context(), principalOf(r).Actor(), "settings.recovery_kit", "system", "", "ok", nil)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="sqsolve-recuperacion-`+strings.ToLower(s.A.InstanceID[len(s.A.InstanceID)-6:])+`.txt"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="sqsolve-recovery-`+strings.ToLower(s.A.InstanceID[len(s.A.InstanceID)-6:])+`.txt"`)
 	w.Header().Set("Cache-Control", "no-store")
 	io.WriteString(w, kit)
 }

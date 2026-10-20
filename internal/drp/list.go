@@ -49,7 +49,7 @@ func (s *Session) Projects(ctx context.Context) ([]Project, error) {
 	folders := map[string]pf{}
 	rows, err := s.tx.Query(ctx, `SELECT "SM_ProjectFolder_id"::text, COALESCE("Name", ''), COALESCE("ParentFolder"::text, '') FROM "SM_ProjectFolder"`)
 	if err != nil {
-		return nil, fmt.Errorf("SQS-E005 lectura de SM_ProjectFolder: %w", err)
+		return nil, fmt.Errorf("SQS-E005 reading SM_ProjectFolder: %w", err)
 	}
 	for rows.Next() {
 		var id, name, parent string
@@ -81,7 +81,7 @@ func (s *Session) Projects(ctx context.Context) ([]Project, error) {
 			WHERE a."DbOwner" = p."SM_Project_id" AND a."DbPropertyName" = 'Thumbnails' ORDER BY a."DbIndex" LIMIT 1) t ON true
 		ORDER BY p."ProjectName", p."SM_Project_id"`)
 	if err != nil {
-		return nil, fmt.Errorf("SQS-E005 lectura de SM_Project: %w", err)
+		return nil, fmt.Errorf("SQS-E005 reading SM_Project: %w", err)
 	}
 	defer rows.Close()
 	var out []Project
@@ -131,7 +131,7 @@ func (s *Session) albums(ctx context.Context, viewID string) ([]Album, error) {
 		ORDER BY (g."SM_Project_id" IS NOT NULL), p."ProjectName", g."Gallery::GyGallery_id", gv."DbIndex", a."DbIndex", s."Gallery::GyStill_id"`
 	rows, err := s.tx.Query(ctx, q, viewID)
 	if err != nil {
-		return nil, fmt.Errorf("SQS-E005 lectura de la galería: %w", err)
+		return nil, fmt.Errorf("SQS-E005 reading the gallery: %w", err)
 	}
 	defer rows.Close()
 	var out []Album

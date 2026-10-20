@@ -1,11 +1,11 @@
 {{define "content"}}
 <section class="card narrow">
-  <h1>Segundo factor</h1>
-  <form method="post" action="/entrar/codigo" class="form">
+  <h1>Second factor</h1>
+  <form method="post" action="/login/code" class="form">
     <input type="hidden" name="csrf" value="{{.Data.CSRF}}">
     <input type="hidden" name="next" value="{{.Data.Next}}">
-    <label>Código de tu aplicación o código de recuperación<input name="code" required autocomplete="one-time-code" inputmode="numeric" class="mono" autofocus></label>
-    <div class="actions"><button type="submit">Confirmar</button></div>
+    <label>Code from your app or a recovery code<input name="code" required autocomplete="one-time-code" inputmode="numeric" class="mono" autofocus></label>
+    <div class="actions"><button type="submit">Confirm</button></div>
   </form>
 </section>
 {{end}}

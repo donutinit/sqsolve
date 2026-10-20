@@ -125,16 +125,16 @@ func (s *Service) Settings(ctx context.Context) Settings {
 func (s *Service) SaveSettings(ctx context.Context, by audit.Actor, st Settings) error {
 	st.AdvertisedHost = strings.TrimSpace(st.AdvertisedHost)
 	if strings.ContainsAny(st.AdvertisedHost, " /\\:\"'<>") {
-		return errors.New("SQS-C030 dirección anunciada inválida: escribe solo la IP o el nombre, sin puerto")
+		return errors.New("SQS-C030 invalid advertised address: type only the IP or the name, without a port")
 	}
 	if err := st.DefaultPolicy.Validate(); err != nil {
 		return err
 	}
 	if st.InitWindowMinutes < 5 || st.InitWindowMinutes > 24*60 {
-		return errors.New("SQS-C031 la ventana de inicialización va de 5 a 1440 minutos")
+		return errors.New("SQS-C031 the initialization window must be between 5 and 1440 minutes")
 	}
 	if st.TrashDays < 1 || st.PrevDays < 1 {
-		return errors.New("SQS-C032 los plazos deben ser de al menos un día")
+		return errors.New("SQS-C032 retention periods must be at least one day")
 	}
 	old := s.Settings(ctx)
 	if err := s.DB.SetSetting(ctx, settingsKey, st, by.Name); err != nil {
@@ -193,19 +193,19 @@ func (s *Service) SyncHBA(ctx context.Context) error {
 	}
 	changed, err := pgconf.WriteHBA(s.Cfg.PGConfDir(), content)
 	if err != nil {
-		return fmt.Errorf("SQS-P041 no se pudo escribir pg_hba.conf: %w", err)
+		return fmt.Errorf("SQS-P041 could not write pg_hba.conf: %w", err)
 	}
 	if !changed {
 		return nil
 	}
 	if errs, err := s.PG.HBAErrors(ctx); err == nil && len(errs) > 0 {
 		pgconf.RestorePreviousHBA(s.Cfg.PGConfDir())
-		return fmt.Errorf("SQS-P042 pg_hba.conf generado no es válido: %s", strings.Join(errs, "; "))
+		return fmt.Errorf("SQS-P042 generated pg_hba.conf is not valid: %s", strings.Join(errs, "; "))
 	} else if err != nil {
 		return err
 	}
 	if err := s.PG.ReloadConf(ctx); err != nil {
-		return fmt.Errorf("SQS-P043 no se pudo recargar PostgreSQL: %w", err)
+		return fmt.Errorf("SQS-P043 could not reload PostgreSQL: %w", err)
 	}
 	return nil
 }

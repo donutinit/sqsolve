@@ -29,7 +29,7 @@ func (s *Service) Reconcile(ctx context.Context, interrupted []*jobs.Job) []stri
 	note := func(format string, args ...any) {
 		msg := fmt.Sprintf(format, args...)
 		notes = append(notes, msg)
-		s.Log.Warn("reconciliación: " + msg)
+		s.Log.Warn("reconciliation: " + msg)
 	}
 
 	// 1. Swaps in progress, guided by the journal.
@@ -75,8 +75,8 @@ func (s *Service) Reconcile(ctx context.Context, interrupted []*jobs.Job) []stri
 		removeIfExists(abs + ".partial")
 		removeIfExists(abs)
 		removeIfExists(manifestPath(abs))
-		s.DB.ExecContext(ctx, `UPDATE backups SET status = 'interrupted', finished_at = ?, error = 'El proceso se detuvo durante el respaldo' WHERE id = ?`, store.NowT(), b.ID)
-		note("respaldo %s interrumpido; se borraron sus restos", b.ID)
+		s.DB.ExecContext(ctx, `UPDATE backups SET status = 'interrupted', finished_at = ?, error = 'The process stopped during the backup' WHERE id = ?`, store.NowT(), b.ID)
+		note("backup %s interrupted; its leftovers were deleted", b.ID)
 	}
 	filepath.WalkDir(filepath.Join(s.Cfg.BackupDir, "libraries"), func(p string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".partial") {
@@ -90,7 +90,7 @@ func (s *Service) Reconcile(ctx context.Context, interrupted []*jobs.Job) []stri
 		for _, d := range dbs {
 			if strings.HasPrefix(d.Name, "sqsolve_verify_") || strings.HasPrefix(d.Name, "sqsolve_export_") || strings.Contains(d.Name, "__restore_") {
 				if err := s.PG.DropDatabase(ctx, d.Name); err == nil {
-					note("se borró la base auxiliar %s", d.Name)
+					note("deleted auxiliary database %s", d.Name)
 				}
 			}
 		}
@@ -106,18 +106,18 @@ func (s *Service) Reconcile(ctx context.Context, interrupted []*jobs.Job) []stri
 			if db, _ := s.PG.Database(ctx, l.DBName); db == nil {
 				s.PG.DropRole(ctx, l.OwnerRole)
 				s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'purged', purged_at = ?, notes = notes || ? WHERE id = ?`, store.NowT(), "\n[creación interrumpida]", l.ID)
-				note("creación de %s interrumpida; se deshizo", l.Slug)
+				note("creation of %s interrupted; rolled back", l.Slug)
 			}
 		case StateRestoring:
 			s.setState(ctx, l.ID, StateActive)
 			s.PG.SetAllowConnections(ctx, l.DBName, true)
-			note("%s quedó en restauración; se reabrió", l.Slug)
+			note("%s was left restoring; reopened", l.Slug)
 		case StateActive, StateMaintenance:
 			if db, err := s.PG.Database(ctx, l.DBName); err == nil && db == nil {
 				s.setState(ctx, l.ID, StateMissing)
 				s.Events.Emit(ctx, events.Event{Type: "library.missing", Severity: events.Critical, LibraryID: l.ID,
-					Message: fmt.Sprintf("La base de %q no existe en el servidor. Recréala desde su último respaldo", l.DisplayName)})
-				note("%s no tiene base en el servidor", l.Slug)
+					Message: fmt.Sprintf("The database of %q does not exist on the server. Recreate it from its latest backup", l.DisplayName)})
+				note("%s has no database on the server", l.Slug)
 			}
 		case StateAwaitingInit:
 			if l.InitWindowExpiresAt != nil && s.now().After(*l.InitWindowExpiresAt) {
@@ -129,7 +129,7 @@ func (s *Service) Reconcile(ctx context.Context, interrupted []*jobs.Job) []stri
 
 	// 5. pg_hba.conf from the catalog.
 	if err := s.SyncHBA(ctx); err != nil {
-		note("no se pudo regenerar pg_hba.conf: %v", err)
+		note("could not regenerate pg_hba.conf: %v", err)
 	}
 	return notes
 }
@@ -154,25 +154,25 @@ func (s *Service) reconcileSwap(ctx context.Context, l *Library, j swapJournal, 
 		// No rename happened. A restore database left over is dropped later.
 		s.PG.SetAllowConnections(ctx, j.Live, before == StateActive)
 		s.setState(ctx, l.ID, before)
-		note("%s: el intercambio no empezó; la biblioteca sigue igual", l.Slug)
+		note("%s: the swap did not start; the library is unchanged", l.Slug)
 	case !live && prev && restored:
 		if err := s.PG.RenameDatabase(ctx, j.Restored, j.Live); err != nil {
-			note("%s: no se pudo completar el intercambio: %v", l.Slug, err)
+			note("%s: could not complete the swap: %v", l.Slug, err)
 			return
 		}
 		s.finishSwap(ctx, l, j, before)
-		note("%s: se completó el intercambio interrumpido", l.Slug)
+		note("%s: completed the interrupted swap", l.Slug)
 	case live && prev:
 		s.finishSwap(ctx, l, j, before)
-		note("%s: el intercambio ya estaba hecho; se reabrió", l.Slug)
+		note("%s: the swap was already done; reopened", l.Slug)
 	case !live && prev && !restored:
 		if err := s.PG.RenameDatabase(ctx, j.Prev, j.Live); err == nil {
 			s.PG.SetAllowConnections(ctx, j.Live, before == StateActive)
 			s.setState(ctx, l.ID, before)
 		}
-		note("%s: estado anómalo; se devolvió la base anterior a su nombre", l.Slug)
+		note("%s: anomalous state; the previous database was put back under its name", l.Slug)
 	default:
-		note("%s: no se encontró ninguna de las bases del intercambio (%s, %s, %s)", l.Slug, j.Live, j.Prev, j.Restored)
+		note("%s: none of the swap databases was found (%s, %s, %s)", l.Slug, j.Live, j.Prev, j.Restored)
 	}
 }
 
@@ -205,7 +205,7 @@ func (s *Service) reconcileTrash(ctx context.Context, l *Library, move map[strin
 		if l.Live() {
 			s.PG.SetAllowConnections(ctx, l.DBName, l.State != StateMaintenance)
 		}
-		note("%s: la eliminación se interrumpió antes de mover la base; se deshizo el bloqueo", l.Slug)
+		note("%s: the deletion was interrupted before moving the database; the lock was undone", l.Slug)
 		return
 	}
 	if d, _ := s.PG.Database(ctx, move["to"]); d != nil && l.State != StateTrashed {
@@ -214,6 +214,6 @@ func (s *Service) reconcileTrash(ctx context.Context, l *Library, move map[strin
 		s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'trashed', trash_db_name = ?, trashed_at = ?, purge_after = ?, updated_at = ? WHERE id = ?`,
 			move["to"], store.NowT(), store.T(purge), store.NowT(), l.ID)
 		s.Sched.SetEnabled(ctx, l.ID, false)
-		note("%s: se completó el paso a la papelera", l.Slug)
+		note("%s: completed the move to the trash", l.Slug)
 	}
 }

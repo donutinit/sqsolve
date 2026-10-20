@@ -1,13 +1,13 @@
 {{define "content"}}
 {{$l := .Data.L}}
 <section class="card narrow danger-zone">
-  <h1>Revertir {{$l.DisplayName}}</h1>
-  <p>La biblioteca vuelve al estado que tenía antes de la última restauración. El estado actual se respalda primero y se conserva para poder deshacer esto también.</p>
-  {{with .Data.Sessions}}<div class="flash error" role="alert">Hay {{len .}} conexiones abiertas; se cerrarán. Pide que cierren Resolve antes.</div>{{end}}
-  <form method="post" action="/bibliotecas/{{$l.ID}}/revertir" class="form">
+  <h1>Revert {{$l.DisplayName}}</h1>
+  <p>The library goes back to the state it had before the last restore. The current state is backed up first and kept so that this can be undone too.</p>
+  {{with .Data.Sessions}}<div class="flash error" role="alert">There are {{len .}} open connections; they will be closed. Ask people to close Resolve first.</div>{{end}}
+  <form method="post" action="/libraries/{{$l.ID}}/revert" class="form">
     {{template "csrf" .CSRF}}
-    <label>Escribe <code>{{$l.Slug}}</code> para confirmar<input name="confirm" required autocomplete="off" class="mono" data-confirm-match="{{$l.Slug}}"></label>
-    <div class="actions"><button type="submit" class="warn" data-needs-match>Revertir</button><a href="/bibliotecas/{{$l.ID}}">Cancelar</a></div>
+    <label>Type <code>{{$l.Slug}}</code> to confirm<input name="confirm" required autocomplete="off" class="mono" data-confirm-match="{{$l.Slug}}"></label>
+    <div class="actions"><button type="submit" class="warn" data-needs-match>Revert</button><a href="/libraries/{{$l.ID}}">Cancel</a></div>
   </form>
 </section>
 {{end}}

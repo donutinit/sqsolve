@@ -1,133 +1,132 @@
-# 06. Stack tecnológico
+# 06. Technology stack
 
-Criterios, en este orden: riesgo de pérdida de datos, simplicidad operativa, superficie de
-cadena de suministro, mantenibilidad a 5 años, rendimiento suficiente, comunidad.
+Criteria, in this order: risk of data loss, operational simplicity, supply chain surface,
+5-year maintainability, sufficient performance, community.
 
-## 1. Lenguaje del backend: **Go**
+## 1. Backend language: **Go**
 
-| Opción | A favor | En contra |
+| Option | Pros | Cons |
 |---|---|---|
-| **Go** | Binario estático único; arranque y memoria mínimos; excelente manejo de procesos, contextos y cancelación; compilación cruzada trivial a arm64; biblioteca estándar suficiente para HTTP, plantillas, TLS, criptografía y logs; ecosistema PostgreSQL maduro (pgx) | Menos expresivo para modelos de dominio ricos; manejo de errores verboso |
-| Python (FastAPI) | Rápido de escribir; muchos colaboradores potenciales | Intérprete y dependencias en la imagen; empaquetado y reproducibilidad más frágiles; más memoria |
-| TypeScript (Node) | Mismo lenguaje en interfaz y servidor | Cadena de suministro de npm amplia y riesgosa; el proyecto quiere evitar Node en la compilación |
-| Rust | Seguridad de memoria, binario único | Desarrollo más lento; menos gente que pueda mantenerlo; el problema no exige ese rendimiento |
+| **Go** | Single static binary; minimal startup and memory; excellent handling of processes, contexts and cancellation; trivial cross-compilation to arm64; standard library sufficient for HTTP, templates, TLS, cryptography and logs; mature PostgreSQL ecosystem (pgx) | Less expressive for rich domain models; verbose error handling |
+| Python (FastAPI) | Fast to write; many potential contributors | Interpreter and dependencies in the image; more fragile packaging and reproducibility; more memory |
+| TypeScript (Node) | Same language in UI and server | Wide and risky npm supply chain; the project wants to avoid Node in the build |
+| Rust | Memory safety, single binary | Slower development; fewer people able to maintain it; the problem does not demand that performance |
 
-Versión: `go.mod` declara `go 1.26` como mínimo (la del sistema en lizeth). CI compila con la
-última versión de parche de la rama estable vigente (1.27 al 2026-10-18).
+Version: `go.mod` declares `go 1.26` as the minimum (the system version on lizeth). CI builds
+with the latest patch version of the current stable branch (1.27 as of 2026-10-18).
 
-## 2. Interfaz: **plantillas en el servidor** (sin htmx, ver ADR 0004)
+## 2. UI: **server-side templates** (no htmx, see ADR 0004)
 
-| Opción | A favor | En contra |
+| Option | Pros | Cons |
 |---|---|---|
-| **`html/template` + htmx vendorizado + CSS propio** | Sin toolchain de Node; un solo binario con los recursos embebidos; escape automático contra XSS; progreso en vivo con SSE; poco JavaScript que auditar | Interacciones muy ricas cuestan más; plantillas sin tipado |
-| SPA (Svelte, React, Vue) | Interacción rica; separación limpia de API | Toolchain de npm, cientos de paquetes, dos aplicaciones que mantener |
-| `templ` (plantillas tipadas para Go) | Tipado | Herramienta de generación extra; no hace falta para el tamaño de esta interfaz |
+| **`html/template` + vendored htmx + own CSS** | No Node toolchain; a single binary with embedded assets; automatic escaping against XSS; live progress with SSE; little JavaScript to audit | Very rich interactions cost more; untyped templates |
+| SPA (Svelte, React, Vue) | Rich interaction; clean API separation | npm toolchain, hundreds of packages, two applications to maintain |
+| `templ` (typed templates for Go) | Typing | Extra generation tool; not needed for the size of this UI |
 
-La interfaz no consume la API REST: ambas llaman a los mismos servicios. Así la API no se
-deforma para la interfaz y la interfaz no paga latencia extra.
+The UI does not consume the REST API: both call the same services. This way the API is not
+distorted for the UI and the UI does not pay extra latency.
 
-JavaScript permitido: un archivo propio pequeño (`app.js`, menos de 300 líneas) para copiar al
-portapapeles, confirmaciones tecleadas y progreso en vivo. Sin `eval`, sin scripts en línea. Al
-implementar se descartó htmx: formularios con POST, redirección y GET bastan. El tema sigue al
-sistema.
+Allowed JavaScript: one small file of our own (`app.js`, under 300 lines) for copying to the
+clipboard, typed confirmations and live progress. No `eval`, no inline scripts. htmx was
+discarded during implementation: forms with POST, redirect and GET are enough. The theme follows
+the system.
 
-## 3. Estado del plano de control: **SQLite**
+## 3. Control plane state: **SQLite**
 
-| Opción | A favor | En contra |
+| Option | Pros | Cons |
 |---|---|---|
-| **SQLite (modernc.org/sqlite, puro Go)** | Independiente de PostgreSQL; un archivo; transacciones; copias en caliente con `VACUUM INTO`; sin servidor | Una sola escritura a la vez (suficiente aquí) |
-| Base `sqsolve` dentro del mismo PostgreSQL | Un solo motor | Si PostgreSQL falla o se restaura, el panel pierde su estado justo cuando hace falta; mezcla plano de control y de datos |
-| Archivos JSON | Simple | Sin transacciones ni consultas; corrupción ante cortes |
+| **SQLite (modernc.org/sqlite, pure Go)** | Independent of PostgreSQL; a single file; transactions; hot copies with `VACUUM INTO`; no server | Only one writer at a time (enough here) |
+| `sqsolve` database inside the same PostgreSQL | A single engine | If PostgreSQL fails or is restored, the panel loses its state exactly when it is needed; mixes control plane and data plane |
+| JSON files | Simple | No transactions or queries; corruption on power loss |
 
-`modernc.org/sqlite` evita CGO y mantiene la compilación estática y cruzada.
+`modernc.org/sqlite` avoids CGO and keeps the build static and cross-compilable.
 
-## 4. Base de datos de bibliotecas: **PostgreSQL 18, imagen oficial**
+## 4. Library database: **PostgreSQL 18, official image**
 
-| Opción | A favor | En contra |
+| Option | Pros | Cons |
 |---|---|---|
-| **`postgres:18.x-trixie` de Docker Official Images, fijada por digest** | Mantenida por la comunidad de Docker y PostgreSQL; actualizaciones de seguridad rápidas; es la que usan los catálogos de NAS | Hay que pasar la configuración por archivos y `-c` |
-| PostgreSQL 13 como Blackmagic recomendaba para 18 a 20 | Coincide con instalaciones viejas | Sin soporte desde 2025-11-13 [01 §12] |
-| Imágenes de terceros empaquetadas | Configuración cómoda | Añaden un proveedor intermedio con su propia política de distribución |
-| PostgreSQL compilado por nosotros | Control total | Mantenimiento de seguridad propio sin necesidad |
+| **`postgres:18.x-trixie` from Docker Official Images, pinned by digest** | Maintained by the Docker and PostgreSQL community; fast security updates; the one NAS catalogs use | Configuration has to be passed through files and `-c` |
+| PostgreSQL 13 as Blackmagic recommended for 18 to 20 | Matches old installations | Unsupported since 2025-11-13 [01 §12] |
+| Packaged third-party images | Convenient configuration | Add an intermediate vendor with its own distribution policy |
+| PostgreSQL built by us | Full control | Own security maintenance without need |
 
-Detalle y alternativas por versión en ADR 0006.
+Details and per-version alternatives in ADR 0006.
 
-## 5. Respaldos
+## 5. Backups
 
-| Necesidad | Elegido | Alternativas evaluadas |
+| Need | Chosen | Alternatives evaluated |
 |---|---|---|
-| Respaldo por biblioteca, restaurable en Resolve | `pg_dump` formato custom orquestado por sqsolve | `prodrigestivill/postgres-backup-local` (sin verificación ni catálogo ni restauración segura); scripts cron (sin estado ni interfaz) |
-| Copia externa cifrada (1.1) | **restic** (BSD-2, binario único, cifrado y deduplicación por defecto, `restic check`) | rclone (sin cifrado por defecto ni verificación de repositorio); Borg (requiere servidor Borg por SSH); Kopia (válido, menos difundido en NAS) |
-| Recuperación a un punto en el tiempo (2.0) | **pgBackRest** (MIT) | WAL-G (válido; pgBackRest tiene mejor verificación y documentación); Barman (Python, pensado para servidores dedicados) |
-| Cifrado de archivos sueltos (1.1) | **age** (`filippo.io/age`, BSD-3) | GPG (complejo de operar) |
+| Per-library backup, restorable in Resolve | `pg_dump` custom format orchestrated by sqsolve | `prodrigestivill/postgres-backup-local` (no verification, catalog or safe restore); cron scripts (no state or UI) |
+| Encrypted offsite copy (1.1) | **restic** (BSD-2, single binary, encryption and deduplication by default, `restic check`) | rclone (no encryption by default or repository verification); Borg (requires a Borg server over SSH); Kopia (valid, less widespread on NAS) |
+| Point-in-time recovery (2.0) | **pgBackRest** (MIT) | WAL-G (valid; pgBackRest has better verification and documentation); Barman (Python, meant for dedicated servers) |
+| Encryption of individual files (1.1) | **age** (`filippo.io/age`, BSD-3) | GPG (complex to operate) |
 
-## 6. Programación de tareas
+## 6. Job scheduling
 
-| Opción | A favor | En contra |
+| Option | Pros | Cons |
 |---|---|---|
-| **Programador dentro del proceso + cola en SQLite** | Estado visible en la interfaz; ejecuciones perdidas controladas; sin otro servicio | Hay que escribirlo bien (alcance acotado y probado) |
-| cron dentro del contenedor (como Studio Server con `/etc/cron.d`) | Conocido | Otro proceso supervisado; estado invisible; difícil de probar |
-| Programador del host (cron del NAS, timers de systemd) | Ya existe | Configuración fuera de la app; no portable |
+| **In-process scheduler + SQLite queue** | State visible in the UI; controlled missed runs; no other service | Has to be written well (bounded and tested scope) |
+| cron inside the container (like Studio Server with `/etc/cron.d`) | Familiar | Another supervised process; invisible state; hard to test |
+| Host scheduler (NAS cron, systemd timers) | Already exists | Configuration outside the app; not portable |
 
-Expresiones cron: `github.com/adhocore/gronx` (MIT) para validar y calcular la siguiente
-ejecución con zona horaria. Alternativa si se abandona: `github.com/robfig/cron/v3` (MIT), solo su
-analizador.
+Cron expressions: `github.com/adhocore/gronx` (MIT) to validate and compute the next run with
+time zone. Fallback if it is abandoned: `github.com/robfig/cron/v3` (MIT), only its parser.
 
-## 7. Notificaciones
+## 7. Notifications
 
-Implementación propia de tres canales (webhook con HMAC, SMTP con `net/smtp` y STARTTLS o TLS
-implícito, ntfy por HTTP). Se descartó Apprise porque metería Python en la imagen para tres
-protocolos sencillos.
+Own implementation of three channels (webhook with HMAC, SMTP with `net/smtp` and STARTTLS or
+implicit TLS, ntfy over HTTP). Apprise was discarded because it would put Python in the image for
+three simple protocols.
 
-## 8. Autenticación
+## 8. Authentication
 
-- Contraseñas: Argon2id de `golang.org/x/crypto/argon2`.
-- TOTP: implementación propia de RFC 6238 (unas 60 líneas, probada con los vectores del RFC).
-- OIDC (2.0): `github.com/coreos/go-oidc/v3` (Apache-2.0) con `golang.org/x/oauth2`.
-- WebAuthn (2.0): `github.com/go-webauthn/webauthn` (BSD-3), a evaluar en su ADR.
+- Passwords: Argon2id from `golang.org/x/crypto/argon2`.
+- TOTP: own implementation of RFC 6238 (about 60 lines, tested with the RFC vectors).
+- OIDC (2.0): `github.com/coreos/go-oidc/v3` (Apache-2.0) with `golang.org/x/oauth2`.
+- WebAuthn (2.0): `github.com/go-webauthn/webauthn` (BSD-3), to be evaluated in its ADR.
 
-## 9. Lista cerrada de dependencias de Go para 1.0
+## 9. Closed list of Go dependencies for 1.0
 
-| Módulo | Licencia | Uso |
+| Module | License | Use |
 |---|---|---|
-| `github.com/jackc/pgx/v5` | MIT | Cliente PostgreSQL, `Identifier.Sanitize` |
-| `modernc.org/sqlite` | BSD-3 | SQLite sin CGO |
+| `github.com/jackc/pgx/v5` | MIT | PostgreSQL client, `Identifier.Sanitize` |
+| `modernc.org/sqlite` | BSD-3 | SQLite without CGO |
 | `golang.org/x/crypto` | BSD-3 | Argon2id, XChaCha20-Poly1305 |
-| `github.com/adhocore/gronx` | MIT | Expresiones cron |
-| `github.com/klauspost/compress` | BSD-3 | Solo su paquete `zstd`, para la exportación experimental de proyectos y grados (ADR 0019) |
+| `github.com/adhocore/gronx` | MIT | Cron expressions |
+| `github.com/klauspost/compress` | BSD-3 | Only its `zstd` package, for the experimental project and grade export (ADR 0019) |
 
-La lista cerrada para 1.0 tiene cinco módulos desde el 2026-10-19.
+The closed list for 1.0 has five modules since 2026-10-19.
 
-Solo en pruebas: `github.com/testcontainers/testcontainers-go` (MIT), `github.com/chromedp/chromedp`
+Tests only: `github.com/testcontainers/testcontainers-go` (MIT), `github.com/chromedp/chromedp`
 (MIT), `github.com/getkin/kin-openapi` (MIT).
 
-Sin recursos de terceros vendorizados: estilos, scripts y la marca SVG son propios
+No vendored third-party assets: styles, scripts and the SVG brand are our own
 (`internal/web/static`).
 
-Cualquier módulo nuevo requiere ADR, versión publicada hace al menos 7 días, revisión de
-licencia y del árbol de dependencias transitivas (`go mod graph`).
+Any new module requires an ADR, a version published at least 7 days ago, a license review and a
+review of the transitive dependency tree (`go mod graph`).
 
-## 10. Imagen y empaquetado
+## 10. Image and packaging
 
-- Imagen de sqsolve `FROM postgres:18.x-trixie@sha256:...` (ADR 0016) para garantizar que
-  `pg_dump` y `pg_restore` son de la misma versión mayor que el servidor y compartir capas con
-  el contenedor de PostgreSQL.
-- Compilación del binario en una etapa `golang:<versión>-trixie` fijada por digest, con
+- The sqsolve image is `FROM postgres:18.x-trixie@sha256:...` (ADR 0016) to guarantee that
+  `pg_dump` and `pg_restore` have the same major version as the server and to share layers with
+  the PostgreSQL container.
+- The binary is built in a `golang:<version>-trixie` stage pinned by digest, with
   `CGO_ENABLED=0 -trimpath -buildvcs=true`.
-- Despliegue: Docker Compose v2. Sin Helm, sin Kubernetes, sin catálogos de NAS específicos.
+- Deployment: Docker Compose v2. No Helm, no Kubernetes, no NAS-specific catalogs.
 
-## 11. Herramientas de desarrollo y CI
+## 11. Development tools and CI
 
-| Herramienta | Uso |
+| Tool | Use |
 |---|---|
-| `make` | Punto de entrada único: `make check`, `make test-integration`, `make image` |
-| `gofmt`, `go vet`, `staticcheck` | Calidad |
-| `govulncheck` | Vulnerabilidades conocidas en dependencias y biblioteca estándar |
-| `gosec` | Análisis estático de seguridad |
-| Docker Buildx | Imágenes multiarquitectura |
-| `syft` | SBOM en SPDX y CycloneDX |
-| `cosign` | Firma de imágenes y atestaciones |
-| OWASP ZAP (imagen Docker) | Escaneo de la interfaz en CI |
+| `make` | Single entry point: `make check`, `make test-integration`, `make image` |
+| `gofmt`, `go vet`, `staticcheck` | Quality |
+| `govulncheck` | Known vulnerabilities in dependencies and the standard library |
+| `gosec` | Static security analysis |
+| Docker Buildx | Multi-architecture images |
+| `syft` | SBOM in SPDX and CycloneDX |
+| `cosign` | Signing of images and attestations |
+| OWASP ZAP (Docker image) | UI scan in CI |
 
-CI escrito para GitHub Actions con sintaxis compatible con Forgejo Actions, para poder mudar o
-duplicar la integración a una forja libre sin reescribirla.
+CI is written for GitHub Actions with syntax compatible with Forgejo Actions, so the integration
+can be moved or duplicated to a free forge without rewriting it.

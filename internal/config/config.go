@@ -88,14 +88,14 @@ func load(get func(string) string) (*Config, error) {
 		}
 		n, err := strconv.Atoi(v)
 		if err != nil || n < min || n > max {
-			errs = append(errs, &Error{name, fmt.Sprintf("debe ser un entero entre %d y %d", min, max)})
+			errs = append(errs, &Error{name, fmt.Sprintf("must be an integer between %d and %d", min, max)})
 			return def
 		}
 		return n
 	}
 	boolean := func(name string) bool {
 		switch strings.ToLower(strings.TrimSpace(get(name))) {
-		case "1", "true", "yes", "si", "sí", "on":
+		case "1", "true", "yes", "on":
 			return true
 		}
 		return false
@@ -128,19 +128,19 @@ func load(get func(string) string) (*Config, error) {
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
-		errs = append(errs, &Error{"SQSOLVE_LOG_LEVEL", "debe ser debug, info, warn o error"})
+		errs = append(errs, &Error{"SQSOLVE_LOG_LEVEL", "must be debug, info, warn or error"})
 	}
 	switch c.LogFormat {
 	case "json", "text":
 	default:
-		errs = append(errs, &Error{"SQSOLVE_LOG_FORMAT", "debe ser json o text"})
+		errs = append(errs, &Error{"SQSOLVE_LOG_FORMAT", "must be json or text"})
 	}
 	for _, p := range []struct{ name, val string }{
 		{"SQSOLVE_APP_DIR", c.AppDir}, {"SQSOLVE_BACKUP_DIR", c.BackupDir},
 		{"SQSOLVE_PG_DIR", c.PGDir}, {"SQSOLVE_PG_SOCKET_DIR", c.PGSocket},
 	} {
 		if !filepath.IsAbs(p.val) {
-			errs = append(errs, &Error{p.name, "debe ser una ruta absoluta"})
+			errs = append(errs, &Error{p.name, "must be an absolute path"})
 		}
 	}
 	if v := strings.TrimSpace(get("SQSOLVE_TRUSTED_PROXIES")); v != "" {
@@ -154,7 +154,7 @@ func load(get func(string) string) (*Config, error) {
 				if a, err2 := netip.ParseAddr(part); err2 == nil {
 					p = netip.PrefixFrom(a, a.BitLen())
 				} else {
-					errs = append(errs, &Error{"SQSOLVE_TRUSTED_PROXIES", "CIDR inválido: " + part})
+					errs = append(errs, &Error{"SQSOLVE_TRUSTED_PROXIES", "invalid CIDR: " + part})
 					continue
 				}
 			}
@@ -164,7 +164,7 @@ func load(get func(string) string) (*Config, error) {
 	tz := str("TZ", "UTC")
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
-		errs = append(errs, &Error{"TZ", "zona horaria desconocida: " + tz})
+		errs = append(errs, &Error{"TZ", "unknown time zone: " + tz})
 		loc = time.UTC
 	}
 	c.Location = loc
@@ -174,7 +174,7 @@ func load(get func(string) string) (*Config, error) {
 		for i, e := range errs {
 			msgs[i] = e.Error()
 		}
-		return c, fmt.Errorf("configuración inválida:\n  %s", strings.Join(msgs, "\n  "))
+		return c, fmt.Errorf("invalid configuration:\n  %s", strings.Join(msgs, "\n  "))
 	}
 	return c, nil
 }

@@ -2,71 +2,71 @@
 {{$s := .Data.S}}
 <div class="pagehead">
   <div>
-    <h1>Panel</h1>
-    <p class="muted">¿Están protegidos los proyectos y pueden trabajar las estaciones?</p>
+    <h1>Dashboard</h1>
+    <p class="muted">Are the projects protected and can the workstations work?</p>
   </div>
-  {{if .P.Can "library.create"}}<div class="actions"><a class="button" href="/bibliotecas/nueva">Nueva biblioteca</a></div>{{end}}
+  {{if .P.Can "library.create"}}<div class="actions"><a class="button" href="/libraries/new">New library</a></div>{{end}}
 </div>
-{{if not .Data.Host}}<div class="flash info" role="status">Falta la dirección que usan las estaciones. <a href="/ajustes">Defínela en Ajustes</a>.</div>{{end}}
+{{if not .Data.Host}}<div class="flash info" role="status">The address workstations use is missing. <a href="/settings">Set it in Settings</a>.</div>{{end}}
 
 <div class="strip">
   <div>
     <p class="section-label">PostgreSQL</p>
     {{if $s.PostgresUp}}
-      <p class="value">{{template "badge" (dict "tone" "ok" "label" "En línea")}} <span class="mono">{{$s.Postgres.Version}}</span></p>
-      <p class="muted small">{{$s.Postgres.Connections}} de {{$s.Postgres.MaxConnections}} conexiones · encendido {{ago $s.Postgres.StartedAt}}</p>
+      <p class="value">{{template "badge" (dict "tone" "ok" "label" "Online")}} <span class="mono">{{$s.Postgres.Version}}</span></p>
+      <p class="muted small">{{$s.Postgres.Connections}} of {{$s.Postgres.MaxConnections}} connections · up since {{ago $s.Postgres.StartedAt}}</p>
     {{else}}
-      <p class="value">{{template "badge" (dict "tone" "bad" "label" "Sin respuesta")}}</p>
-      <p class="muted small">Las estaciones no pueden abrir proyectos. <a href="/salud">Ver salud</a></p>
+      <p class="value">{{template "badge" (dict "tone" "bad" "label" "Not responding")}}</p>
+      <p class="muted small">Workstations cannot open projects. <a href="/health">View health</a></p>
     {{end}}
   </div>
   <div>
-    <p class="section-label">Estaciones conectadas</p>
+    <p class="section-label">Connected workstations</p>
     <p class="value">{{.Data.Stations}}</p>
-    <p class="muted small">en {{$s.Active}} {{if eq $s.Active 1}}biblioteca activa{{else}}bibliotecas activas{{end}}</p>
+    <p class="muted small">in {{$s.Active}} active {{if eq $s.Active 1}}library{{else}}libraries{{end}}</p>
   </div>
   <div>
-    <p class="section-label">Almacenamiento</p>
+    <p class="section-label">Storage</p>
     {{range $s.Volumes}}
-      <div class="meter"><span class="mlabel">{{.Name}}</span><meter min="0" max="100" low="80" high="90" optimum="0" value="{{pctw .UsedPct}}" title="{{pct .UsedPct}} usado">{{pct .UsedPct}}</meter><span class="mval">{{bytes .Free}} libres</span></div>
+      <div class="meter"><span class="mlabel">{{.Name}}</span><meter min="0" max="100" low="80" high="90" optimum="0" value="{{pctw .UsedPct}}" title="{{pct .UsedPct}} used">{{pct .UsedPct}}</meter><span class="mval">{{bytes .Free}} free</span></div>
     {{end}}
   </div>
 </div>
 
 {{if $s.Attention}}
-<section class="card" aria-labelledby="atencion">
-  <h2 id="atencion">Atención</h2>
+<section class="card" aria-labelledby="attention">
+  <h2 id="attention">Attention</h2>
   <ul class="attention">
     {{range $s.Attention}}<li>{{template "badge" (dict "tone" (sevtone .Severity) "label" (sev .Severity))}} <a href="{{.Link}}">{{.Message}}</a></li>{{end}}
   </ul>
 </section>
 {{end}}
 
-<section class="card" aria-labelledby="proteccion">
-  <div class="cardhead"><h2 id="proteccion">Protección de los últimos 14 días</h2><a href="/bibliotecas">Todas las bibliotecas</a></div>
+<section class="card" aria-labelledby="protection">
+  <div class="cardhead"><h2 id="protection">Protection over the last 14 days</h2><a href="/libraries">All libraries</a></div>
   {{if .Data.Tracks}}
   <div class="tracks">
-    <div class="trackrow" aria-hidden="true"><span class="ruler"><span>hace 14 días</span><span>hace 7 días</span><span>ahora</span></span></div>
+    <div class="trackrow" aria-hidden="true"><span class="ruler"><span>14 days ago</span><span>7 days ago</span><span>now</span></span></div>
     {{range .Data.Tracks}}{{template "trackrow" (dict "t" . "name" .Label)}}{{end}}
   </div>
   {{template "tracklegend"}}
   {{else}}
-  {{template "empty" (dict "text" "Aún no hay bibliotecas. Una biblioteca es una base de PostgreSQL donde Resolve guarda los proyectos; aquí verás cada una como una pista con sus respaldos." "href" "/bibliotecas/nueva" "action" "Crear la primera biblioteca")}}
+  {{template "empty" (dict "text" "There are no libraries yet. A library is a PostgreSQL database where Resolve stores projects; here you will see each one as a track with its backups." "href" "/libraries/new" "action" "Create the first library")}}
   {{end}}
 </section>
 
 <div class="grid2">
   <section class="card">
-    <div class="cardhead"><h2>Tareas recientes</h2><a href="/tareas">Ver todas</a></div>
-    {{if .Data.Jobs}}{{template "joblist" .Data.Jobs}}{{else}}<p class="muted">Sin tareas todavía.</p>{{end}}
+    <div class="cardhead"><h2>Recent jobs</h2><a href="/jobs">View all</a></div>
+    {{if .Data.Jobs}}{{template "joblist" .Data.Jobs}}{{else}}<p class="muted">No jobs yet.</p>{{end}}
   </section>
   <section class="card">
-    <div class="cardhead"><h2>Eventos recientes</h2><a href="/actividad">Ver actividad</a></div>
+    <div class="cardhead"><h2>Recent events</h2><a href="/activity">View activity</a></div>
     {{if .Data.Events}}
     <ul class="events">
       {{range .Data.Events}}<li>{{template "badge" (dict "tone" (sevtone .Severity) "label" (sev .Severity))}} {{.Message}} <time class="muted small" datetime="{{iso .TS}}" title="{{dt .TS}}">{{ago .TS}}</time></li>{{end}}
     </ul>
-    {{else}}<p class="muted">Sin eventos. Todo lo importante aparecerá aquí.</p>{{end}}
+    {{else}}<p class="muted">No events. Everything important will show up here.</p>{{end}}
   </section>
 </div>
 {{end}}

@@ -40,15 +40,15 @@ func (s Severity) Rank() int {
 	return 0
 }
 
-// Label is the Spanish name of a severity.
+// Label is the display name of a severity.
 func (s Severity) Label() string {
 	switch s {
 	case Warning:
-		return "Aviso"
+		return "Warning"
 	case Error:
 		return "Error"
 	case Critical:
-		return "Crítico"
+		return "Critical"
 	}
 	return "Info"
 }
@@ -201,7 +201,7 @@ func (r *Recorder) Emit(ctx context.Context, e Event) Event {
 	_, err := r.db.ExecContext(context.WithoutCancel(ctx), `INSERT INTO events(id, ts, type, severity, library_id, job_id, message, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, store.T(e.TS), e.Type, string(e.Severity), e.LibraryID, e.JobID, e.Message, string(data))
 	if err != nil {
-		r.log.Error("no se pudo guardar el evento", "type", e.Type, "err", err)
+		r.log.Error("could not save the event", "type", e.Type, "err", err)
 	}
 	level := slog.LevelInfo
 	switch e.Severity {

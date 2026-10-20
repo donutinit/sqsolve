@@ -26,7 +26,7 @@ FAILS = []
 
 
 def check(name, ok, detail=""):
-    print(("ok    " if ok else "FALLA ") + name + ("" if ok else f"  [{str(detail)[-600:]}]"), flush=True)
+    print(("ok    " if ok else "FAIL  ") + name + ("" if ok else f"  [{str(detail)[-600:]}]"), flush=True)
     if not ok:
         FAILS.append(name)
     return ok
@@ -36,7 +36,7 @@ def dc(*args, stdin=None, check_rc=False):
     r = subprocess.run(["docker", "compose", "-f", COMPOSE, *args], capture_output=True, text=True, input=stdin, timeout=900)
     if check_rc and r.returncode != 0:
         print(r.stdout, r.stderr)
-        raise SystemExit(f"docker compose {' '.join(args)} falló")
+        raise SystemExit(f"docker compose {' '.join(args)} failed")
     return r.returncode, r.stdout + r.stderr
 
 
@@ -96,7 +96,7 @@ def wait_job(loc, timeout=300):
     jid = loc.rsplit("/", 1)[-1]
     end = time.time() + timeout
     while time.time() < end:
-        st, body = page("/tareas/" + jid)
+        st, body = page("/jobs/" + jid)
         m = re.search(r'data-job-state="(\w+)"', body)
         if m and m.group(1) in ("succeeded", "failed", "canceled", "interrupted"):
             return m.group(1), re.sub(r"<[^>]+>", " ", body)
@@ -112,34 +112,34 @@ def psql(user, password, db, sql):
 
 
 def main():
-    check("el stack arranca y queda listo", wait_ready(), dc("logs")[1][-2000:])
+    check("the stack starts and becomes ready", wait_ready(), dc("logs")[1][-2000:])
     logs = dc("logs", "--no-log-prefix", "sqsolve")[1]
-    m = re.search(r"código de instalación:.*?\b([A-Z0-9]{5}-[A-Z0-9]{5})\b", logs, re.S)
-    if not check("el registro muestra el código de instalación", m, logs[-1500:]):
+    m = re.search(r"installation code:.*?\b([A-Z0-9]{5}-[A-Z0-9]{5})\b", logs, re.S)
+    if not check("the log shows the installation code", m, logs[-1500:]):
         return
-    st, body = page("/instalar")
-    st, loc, _ = http("POST", "/instalar", {"csrf": csrf(body), "code": m.group(1), "username": "admin", "password": "una contraseña larga de prueba",
-                                            "password2": "una contraseña larga de prueba", "host": "127.0.0.1", "name": "CI", "preset": "diario"})
-    check("instalación desde el panel", loc == "/instalar/kit", loc)
+    st, body = page("/setup")
+    st, loc, _ = http("POST", "/setup", {"csrf": csrf(body), "code": m.group(1), "username": "admin", "password": "a long test password",
+                                            "password2": "a long test password", "host": "127.0.0.1", "name": "CI", "preset": "daily"})
+    check("setup from the panel", loc == "/setup/kit", loc)
     st, body = page("/")
     tok = csrf(body)
-    st, loc, _ = http("POST", "/bibliotecas/nueva", {"csrf": tok, "name": "Prueba de CI", "slug": "prueba_ci", "strategy": "resolve"})
+    st, loc, _ = http("POST", "/libraries/new", {"csrf": tok, "name": "CI test", "slug": "ci_test", "strategy": "resolve"})
     lib = loc.split("?")[0]
     for _ in range(60):
         st, body = page(lib)
         if 'data-state="awaiting_init"' in body:
             break
         time.sleep(0.5)
-    st, loc, body = http("POST", lib + "/contrasena/ver", {"csrf": tok})
+    st, loc, body = http("POST", lib + "/password/reveal", {"csrf": tok})
     pw = re.search(r'id="r-pass">([^<]+)<', body)
-    if not check("la contraseña de la biblioteca se puede ver", pw, body[:400]):
+    if not check("the library password can be revealed", pw, body[:400]):
         return
     pw = pw.group(1)
-    rc, out = psql("prueba_ci", pw, "postgres", "CREATE DATABASE prueba_ci")
-    check("una estación crea la base por el puerto publicado", rc == 0, out)
-    rc, out = psql("prueba_ci", pw, "prueba_ci", 'CREATE TABLE "SM_Project"(id serial primary key, name text); '
+    rc, out = psql("ci_test", pw, "postgres", "CREATE DATABASE ci_test")
+    check("a workstation creates the database through the published port", rc == 0, out)
+    rc, out = psql("ci_test", pw, "ci_test", 'CREATE TABLE "SM_Project"(id serial primary key, name text); '
                    'INSERT INTO "SM_Project"(name) SELECT \'p\'||g FROM generate_series(1,500) g')
-    check("y crea sus tablas", rc == 0, out)
+    check("and creates its tables", rc == 0, out)
     active = False
     for _ in range(60):
         st, body = page(lib)
@@ -147,48 +147,48 @@ def main():
             active = True
             break
         time.sleep(1)
-    check("la biblioteca se activa sola", active)
-    st, loc, _ = http("POST", lib + "/respaldar", {"csrf": tok})
+    check("the library activates by itself", active)
+    st, loc, _ = http("POST", lib + "/backup", {"csrf": tok})
     state, text = wait_job(loc)
-    check("respaldo desde el panel", state == "succeeded", text)
-    st, body = page(lib + "?tab=respaldos")
-    bid = re.search(r'href="/respaldos/([0-9A-Z]{26})"', body)
+    check("backup from the panel", state == "succeeded", text)
+    st, body = page(lib + "?tab=backups")
+    bid = re.search(r'href="/backups/([0-9A-Z]{26})"', body)
     if bid:
-        st, loc, _ = http("POST", f"/respaldos/{bid.group(1)}/verificar", {"csrf": tok})
+        st, loc, _ = http("POST", f"/backups/{bid.group(1)}/verify", {"csrf": tok})
         state, text = wait_job(loc)
-        check("restauración de prueba dentro del contenedor", state == "succeeded", text)
-        st, loc, _ = http("POST", f"/respaldos/{bid.group(1)}/restaurar", {"csrf": tok, "mode": "nueva", "slug": "prueba_ci_copia", "name": "Copia"})
+        check("test restore inside the container", state == "succeeded", text)
+        st, loc, _ = http("POST", f"/backups/{bid.group(1)}/restore", {"csrf": tok, "mode": "new", "slug": "ci_test_copy", "name": "Copy"})
         state, text = wait_job(loc)
-        check("restaurar como biblioteca nueva", state == "succeeded", text)
-    rc, out = dc("exec", "-T", "sqsolve", "sqsolve", "backup", "create", "prueba_ci", "--wait")
-    check("la consola dentro del contenedor", rc == 0, out)
+        check("restore as a new library", state == "succeeded", text)
+    rc, out = dc("exec", "-T", "sqsolve", "sqsolve", "backup", "create", "ci_test", "--wait")
+    check("the console inside the container", rc == 0, out)
     rc, out = dc("exec", "-T", "sqsolve", "sqsolve", "doctor")
-    check("doctor sin fallas", rc == 0, out)
+    check("doctor without failures", rc == 0, out)
     # The folders are 0700 and belong to the service user, not to the runner.
     find = ["find", os.path.join(WORK, "respaldos"), "-name", "*.backup"]
     if subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0:
         find = ["sudo", "-n"] + find
     files = subprocess.run(find, capture_output=True, text=True).stdout.split()
-    check("los respaldos quedan en la carpeta del host", len(files) >= 2, files)
+    check("backups end up in the host folder", len(files) >= 2, files)
 
     dc("down")
     dc("up", "-d", check_rc=True)
-    check("vuelve a quedar listo tras down y up", wait_ready(), dc("logs")[1][-2000:])
-    rc, out = psql("prueba_ci", pw, "prueba_ci", 'SELECT count(*) FROM "SM_Project"')
-    check("los datos sobreviven a down y up", rc == 0 and out == "500", out)
+    check("ready again after down and up", wait_ready(), dc("logs")[1][-2000:])
+    rc, out = psql("ci_test", pw, "ci_test", 'SELECT count(*) FROM "SM_Project"')
+    check("data survives down and up", rc == 0 and out == "500", out)
     st, body = page("/")
-    check("la sesión del panel sigue válida", st == 200 and "Panel" in body, st)
+    check("the panel session is still valid", st == 200 and "Dashboard" in body, st)
     rc, out = dc("run", "--rm", "sqsolve-init")
-    check("sqsolve-init se puede volver a correr", rc == 0 and "listo" in out, out)
+    check("sqsolve-init can run again", rc == 0 and "done" in out, out)
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        check("el recorrido terminó sin excepción", False, repr(e))
+        check("the walkthrough finished without an exception", False, repr(e))
     if FAILS:
-        print("\nFallas:", *FAILS, sep="\n - ")
+        print("\nFailures:", *FAILS, sep="\n - ")
         print(dc("logs")[1][-4000:])
         sys.exit(1)
-    print("\nTodo bien.")
+    print("\nAll good.")

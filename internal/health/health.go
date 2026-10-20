@@ -141,9 +141,9 @@ func (m *Monitor) checkPG(ctx context.Context) {
 		return
 	}
 	if *prev && !up {
-		m.Events.Emit(ctx, events.Event{Type: events.PostgresDown, Severity: events.Critical, Message: "PostgreSQL no responde: " + err.Error()})
+		m.Events.Emit(ctx, events.Event{Type: events.PostgresDown, Severity: events.Critical, Message: "PostgreSQL is not responding: " + err.Error()})
 	} else if !*prev && up {
-		m.Events.Emit(ctx, events.Event{Type: events.PostgresUp, Message: "PostgreSQL volvió a responder"})
+		m.Events.Emit(ctx, events.Event{Type: events.PostgresUp, Message: "PostgreSQL is responding again"})
 	}
 }
 
@@ -151,9 +151,9 @@ func (m *Monitor) checkPG(ctx context.Context) {
 func (m *Monitor) Volumes() []Volume {
 	cfg := m.Svc.Cfg
 	list := []struct{ name, path string }{
-		{"Base de datos", filepath.Join(cfg.PGDir)},
-		{"Aplicación", cfg.AppDir},
-		{"Respaldos", cfg.BackupDir},
+		{"Database", filepath.Join(cfg.PGDir)},
+		{"Application", cfg.AppDir},
+		{"Backups", cfg.BackupDir},
 	}
 	var out []Volume
 	for _, v := range list {
@@ -201,11 +201,11 @@ func (m *Monitor) checkVolumes(ctx context.Context) {
 		}
 		switch level {
 		case 1:
-			m.Events.Emit(ctx, events.Event{Type: events.StorageLow, Severity: events.Warning, Message: fmt.Sprintf("El volumen %s está al %.0f %%", v.Name, v.UsedPct)})
+			m.Events.Emit(ctx, events.Event{Type: events.StorageLow, Severity: events.Warning, Message: fmt.Sprintf("Volume %s is at %.0f %%", v.Name, v.UsedPct)})
 		case 2:
-			m.Events.Emit(ctx, events.Event{Type: events.StorageLow, Severity: events.Error, Message: fmt.Sprintf("El volumen %s está al %.0f %%: libera espacio", v.Name, v.UsedPct)})
+			m.Events.Emit(ctx, events.Event{Type: events.StorageLow, Severity: events.Error, Message: fmt.Sprintf("Volume %s is at %.0f %%: free up space", v.Name, v.UsedPct)})
 		case 3:
-			m.Events.Emit(ctx, events.Event{Type: events.StorageVolumeMissing, Severity: events.Critical, Message: "El volumen de respaldos no está disponible: " + v.Err})
+			m.Events.Emit(ctx, events.Event{Type: events.StorageVolumeMissing, Severity: events.Critical, Message: "The backups volume is not available: " + v.Err})
 		}
 	}
 }
@@ -234,7 +234,7 @@ func (m *Monitor) checkCerts(ctx context.Context) {
 	for _, c := range m.Certs() {
 		if c.Err == "" && time.Until(c.NotAfter) < 30*24*time.Hour {
 			m.Events.Emit(ctx, events.Event{Type: events.TLSExpiring, Severity: events.Warning,
-				Message: fmt.Sprintf("El certificado de %s vence el %s", c.Name, c.NotAfter.Format("2006-01-02"))})
+				Message: fmt.Sprintf("The certificate of %s expires on %s", c.Name, c.NotAfter.Format("2006-01-02"))})
 		}
 	}
 }
@@ -247,7 +247,7 @@ func (m *Monitor) Snapshot(ctx context.Context) Status {
 		st.Databases, _ = m.Svc.PG.Databases(ctx)
 	} else {
 		st.PostgresErr = err.Error()
-		st.Attention = append(st.Attention, Attention{events.Critical, "PostgreSQL no responde: las estaciones no pueden abrir proyectos", "/salud"})
+		st.Attention = append(st.Attention, Attention{events.Critical, "PostgreSQL is not responding: workstations cannot open projects", "/health"})
 	}
 	st.Volumes = m.Volumes()
 	for _, v := range st.Volumes {
@@ -257,21 +257,21 @@ func (m *Monitor) Snapshot(ctx context.Context) Status {
 			if v.Err != "" {
 				msg = "Volumen " + v.Name + ": " + v.Err
 			}
-			st.Attention = append(st.Attention, Attention{events.Error, msg, "/salud"})
+			st.Attention = append(st.Attention, Attention{events.Error, msg, "/health"})
 		case "warn":
-			st.Attention = append(st.Attention, Attention{events.Warning, fmt.Sprintf("Volumen %s al %.0f %%", v.Name, v.UsedPct), "/salud"})
+			st.Attention = append(st.Attention, Attention{events.Warning, fmt.Sprintf("Volumen %s al %.0f %%", v.Name, v.UsedPct), "/health"})
 		}
 	}
 	st.Certs = m.Certs()
 	for _, c := range st.Certs {
 		if c.Err == "" && time.Until(c.NotAfter) < 30*24*time.Hour {
-			st.Attention = append(st.Attention, Attention{events.Warning, "El certificado de " + c.Name + " vence pronto", "/salud"})
+			st.Attention = append(st.Attention, Attention{events.Warning, "The certificate of " + c.Name + " expires soon", "/health"})
 		}
 	}
 	st.Queued, st.Running, _ = m.Jobs.Counts(ctx)
 	st.Failed24h, _ = m.Jobs.FailedSince(ctx, time.Now().Add(-24*time.Hour))
 	if st.Failed24h > 0 {
-		st.Attention = append(st.Attention, Attention{events.Error, fmt.Sprintf("%d tareas fallaron en las últimas 24 horas", st.Failed24h), "/tareas?estado=failed"})
+		st.Attention = append(st.Attention, Attention{events.Error, fmt.Sprintf("%d jobs failed in the last 24 hours", st.Failed24h), "/jobs?state=failed"})
 	}
 	libs, _ := m.Svc.Libraries(ctx, core.ListOptions{})
 	stale := time.Duration(m.Svc.Settings(ctx).StaleHours) * time.Hour
@@ -282,24 +282,24 @@ func (m *Monitor) Snapshot(ctx context.Context) Status {
 			st.Active++
 			if time.Since(l.CreatedAt) > stale {
 				if b, _ := m.Svc.LatestVerified(ctx, l.ID); b == nil || time.Since(b.StartedAt) > stale {
-					st.Attention = append(st.Attention, Attention{events.Warning, fmt.Sprintf("%s no tiene un respaldo verificado reciente", l.DisplayName), "/bibliotecas/" + l.ID + "?tab=respaldos"})
+					st.Attention = append(st.Attention, Attention{events.Warning, fmt.Sprintf("%s has no recent verified backup", l.DisplayName), "/libraries/" + l.ID + "?tab=backups"})
 				}
 			}
 		case core.StateAwaitingInit:
-			st.Attention = append(st.Attention, Attention{events.Info, l.DisplayName + " espera que Resolve la inicialice", "/bibliotecas/" + l.ID})
+			st.Attention = append(st.Attention, Attention{events.Info, l.DisplayName + " is waiting for Resolve to initialize it", "/libraries/" + l.ID})
 		case core.StateInitExpired:
-			st.Attention = append(st.Attention, Attention{events.Warning, "Venció la inicialización de " + l.DisplayName, "/bibliotecas/" + l.ID})
+			st.Attention = append(st.Attention, Attention{events.Warning, "Initialization expired for " + l.DisplayName, "/libraries/" + l.ID})
 		case core.StateMissing:
-			st.Attention = append(st.Attention, Attention{events.Critical, l.DisplayName + " no tiene base en el servidor: recréala desde un respaldo", "/bibliotecas/" + l.ID})
+			st.Attention = append(st.Attention, Attention{events.Critical, l.DisplayName + " has no database on the server: recreate it from a backup", "/libraries/" + l.ID})
 		}
 	}
 	for _, d := range st.Databases {
 		if d.CollationStale {
-			st.Attention = append(st.Attention, Attention{events.Warning, "La versión de colación de " + d.Name + " cambió; conviene reindexar", "/salud"})
+			st.Attention = append(st.Attention, Attention{events.Warning, "The collation version of " + d.Name + " changed; consider reindexing", "/health"})
 		}
 	}
 	if st.PostgresUp && st.Postgres.MaxConnections > 0 && st.Postgres.Connections*100/st.Postgres.MaxConnections >= 80 {
-		st.Attention = append(st.Attention, Attention{events.Warning, fmt.Sprintf("PostgreSQL usa %d de %d conexiones", st.Postgres.Connections, st.Postgres.MaxConnections), "/salud"})
+		st.Attention = append(st.Attention, Attention{events.Warning, fmt.Sprintf("PostgreSQL is using %d of %d connections", st.Postgres.Connections, st.Postgres.MaxConnections), "/health"})
 	}
 	return st
 }

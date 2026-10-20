@@ -89,9 +89,9 @@ func Start(t testing.TB) *Cluster {
 	bin := BinDir()
 	if bin == "" {
 		if os.Getenv("SQSOLVE_REQUIRE_PG") == "1" {
-			t.Fatal("PostgreSQL no está instalado y SQSOLVE_REQUIRE_PG=1")
+			t.Fatal("PostgreSQL is not installed and SQSOLVE_REQUIRE_PG=1")
 		}
-		t.Skip("PostgreSQL no está instalado; define SQSOLVE_TEST_PG_BIN")
+		t.Skip("PostgreSQL is not installed; set SQSOLVE_TEST_PG_BIN")
 	}
 	base := baseDir(t)
 	sock, err := os.MkdirTemp("/tmp", "sqs")
@@ -158,7 +158,7 @@ func Start(t testing.TB) *Cluster {
 		}
 		if time.Now().After(deadline) {
 			log, _ := os.ReadFile(c.LogPath)
-			t.Fatalf("PostgreSQL no arrancó: %v\n%s", err, log)
+			t.Fatalf("PostgreSQL did not start: %v\n%s", err, log)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -230,7 +230,7 @@ func (c *Cluster) Restart(t testing.TB) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("PostgreSQL no rearrancó: %v\n%s", err, c.Log())
+			t.Fatalf("PostgreSQL did not restart: %v\n%s", err, c.Log())
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

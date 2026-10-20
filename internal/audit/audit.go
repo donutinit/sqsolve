@@ -28,18 +28,18 @@ type Actor struct {
 // Common actors.
 var (
 	System = Actor{Type: "system", ID: "sqsolve", Name: "sqsolve"}
-	CLI    = Actor{Type: "cli", ID: "cli", Name: "consola"}
+	CLI    = Actor{Type: "cli", ID: "cli", Name: "console"}
 )
 
 // Label is a human description of the actor.
 func (a Actor) Label() string {
 	switch a.Type {
 	case "system":
-		return "sistema"
+		return "system"
 	case "schedule":
-		return "programación"
+		return "schedule"
 	case "cli":
-		return "consola"
+		return "console"
 	}
 	if a.Name != "" {
 		return a.Name

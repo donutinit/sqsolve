@@ -13,8 +13,8 @@ import (
 
 // Errors of the experimental export (ADR 0019, docs 22 §8).
 var (
-	ErrExportsDisabled   = errors.New("SQS-E002 la exportación experimental está desactivada; un administrador puede activarla en Ajustes")
-	ErrExportUnavailable = errors.New("SQS-E005 la biblioteca no está disponible para exportar")
+	ErrExportsDisabled   = errors.New("SQS-E002 experimental export is disabled; an administrator can enable it in Settings")
+	ErrExportUnavailable = errors.New("SQS-E005 the library is not available for export")
 )
 
 // OpenExport opens a read-only export session on a library. The caller must
@@ -25,7 +25,7 @@ func (s *Service) OpenExport(ctx context.Context, l *Library) (*drp.Session, err
 		return nil, ErrExportsDisabled
 	}
 	if l.State != StateActive && l.State != StateMaintenance {
-		return nil, fmt.Errorf("%w: está en estado %s", ErrExportUnavailable, l.State.Label())
+		return nil, fmt.Errorf("%w: it is in state %s", ErrExportUnavailable, l.State.Label())
 	}
 	conn, err := s.PG.ConnectDB(ctx, l.DBName)
 	if err != nil {

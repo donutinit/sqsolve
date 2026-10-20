@@ -3,79 +3,79 @@
 {{template "libhead" .}}
 {{template "libtabs" .}}
 
-{{if eq .Data.Tab "conexion"}}
+{{if eq .Data.Tab "connection"}}
   {{if eq $l.State "provisioning"}}
-    <section class="card"><p>Preparando la biblioteca. Esta página se actualiza sola.</p><div data-autorefresh="3" data-watch="/api/v1/libraries/{{$id}}" data-watch-state="{{$l.State}}"></div></section>
+    <section class="card"><p>Preparing the library. This page refreshes by itself.</p><div data-autorefresh="3" data-watch="/api/v1/libraries/{{$id}}" data-watch-state="{{$l.State}}"></div></section>
   {{else if eq $l.State "awaiting_init"}}
-    {{with .Data.Misnamed}}<div class="flash warn" role="status">Resolve creó {{range $i, $d := .}}{{if $i}}, {{end}}<code>{{$d}}</code>{{end}}, pero la biblioteca debe llamarse exactamente <code>{{$l.Slug}}</code>. En Resolve quita esa biblioteca de la lista y vuelve a crearla con el nombre correcto. sqsolve no borra la base con el nombre equivocado por su cuenta.</div>{{end}}
+    {{with .Data.Misnamed}}<div class="flash warn" role="status">Resolve created {{range $i, $d := .}}{{if $i}}, {{end}}<code>{{$d}}</code>{{end}}, but the library must be named exactly <code>{{$l.Slug}}</code>. In Resolve remove that library from the list and create it again with the correct name. sqsolve does not delete the wrongly named database on its own.</div>{{end}}
     <section class="card emphasis">
-      <h2>Inicializa la biblioteca desde Resolve</h2>
-      <p>Tienes {{until $l.InitWindowExpiresAt}} para hacerlo. En <strong>una sola estación</strong>:</p>
+      <h2>Initialize the library from Resolve</h2>
+      <p>You have {{until $l.InitWindowExpiresAt}} to do it. On <strong>a single workstation</strong>:</p>
       <ol class="steps">
-        <li>Abre DaVinci Resolve y el Project Manager.</li>
-        <li>Agrega una biblioteca de proyectos en red (PostgreSQL) con la opción <strong>Create</strong>.</li>
-        <li>Escribe estos valores. Como nombre de la biblioteca usa exactamente el identificador.</li>
+        <li>Open DaVinci Resolve and the Project Manager.</li>
+        <li>Add a network project library (PostgreSQL) with the <strong>Create</strong> option.</li>
+        <li>Enter these values. Use the identifier exactly as the library name.</li>
       </ol>
       <div class="copygrid">
-        {{template "copy" (dict "label" "Nombre de la biblioteca" "value" $l.Slug "id" "c-name")}}
-        {{template "copy" (dict "label" "Ubicación (IP o servidor)" "value" (or .Data.Host "Por confirmar: define la dirección en Ajustes") "id" "c-host")}}
-        {{template "copy" (dict "label" "Usuario" "value" $l.OwnerRole "id" "c-user")}}
-        <div class="copyfield"><span class="label">Contraseña</span>
-          <form method="post" action="/bibliotecas/{{$id}}/contrasena/ver">{{template "csrf" $csrf}}<button type="submit" class="ghost small">Mostrar contraseña</button></form>
+        {{template "copy" (dict "label" "Library name" "value" $l.Slug "id" "c-name")}}
+        {{template "copy" (dict "label" "Location (IP or server)" "value" (or .Data.Host "To be confirmed: set the address in Settings") "id" "c-host")}}
+        {{template "copy" (dict "label" "Username" "value" $l.OwnerRole "id" "c-user")}}
+        <div class="copyfield"><span class="label">Password</span>
+          <form method="post" action="/libraries/{{$id}}/password/reveal">{{template "csrf" $csrf}}<button type="submit" class="ghost small">Reveal password</button></form>
         </div>
       </div>
-      <p class="hint">Los nombres exactos de los campos cambian entre versiones de Resolve. Las demás estaciones usarán "Connect" con los mismos datos cuando la biblioteca esté activa. Esta página detecta la inicialización sola.</p>
+      <p class="hint">The exact field names change between Resolve versions. The other workstations will use "Connect" with the same values once the library is active. This page detects the initialization by itself.</p>
       <div data-autorefresh="5" data-watch="/api/v1/libraries/{{$id}}" data-watch-state="{{$l.State}}"></div>
     </section>
   {{else if eq $l.State "init_expired"}}
-    <section class="card"><h2>Venció la ventana de inicialización</h2><p>Nadie creó la biblioteca desde Resolve a tiempo. Puedes abrir otra ventana.</p>
-      {{if $p.Can "library.edit"}}<form method="post" action="/bibliotecas/{{$id}}/ventana">{{template "csrf" $csrf}}<button type="submit">Abrir otra ventana</button></form>{{end}}
+    <section class="card"><h2>The initialization window expired</h2><p>Nobody created the library from Resolve in time. You can open another window.</p>
+      {{if $p.Can "library.edit"}}<form method="post" action="/libraries/{{$id}}/window">{{template "csrf" $csrf}}<button type="submit">Open another window</button></form>{{end}}
     </section>
   {{else if eq $l.State "missing"}}
-    <section class="card emphasis bad"><h2>La base no existe en el servidor</h2>
-      <p>Pasa al mover sqsolve a otro servidor o si alguien borró la base. Recréala desde su último respaldo verificado; si la clave maestra es la misma, las estaciones conservan su contraseña.</p>
-      {{with .Data.Last}}<p class="muted">Último respaldo verificado: {{dt .StartedAt}} ({{bytes .SizeBytes}}).</p>{{end}}
-      {{if $p.Can "restore.replace"}}<form method="post" action="/bibliotecas/{{$id}}/recrear">{{template "csrf" $csrf}}<button type="submit">Recrear desde el último respaldo</button></form>{{end}}
+    <section class="card emphasis bad"><h2>The database does not exist on the server</h2>
+      <p>This happens when sqsolve is moved to another server or someone deleted the database. Recreate it from its last verified backup; if the master key is the same, workstations keep their password.</p>
+      {{with .Data.Last}}<p class="muted">Last verified backup: {{dt .StartedAt}} ({{bytes .SizeBytes}}).</p>{{end}}
+      {{if $p.Can "restore.replace"}}<form method="post" action="/libraries/{{$id}}/recreate">{{template "csrf" $csrf}}<button type="submit">Recreate from the last backup</button></form>{{end}}
     </section>
   {{else if eq $l.State "trashed"}}
-    <section class="card"><h2>En la papelera</h2><p>Nadie puede conectarse. Se borrará del servidor el {{dt $l.PurgeAfter}}; sus respaldos se conservan.</p>
+    <section class="card"><h2>In the trash</h2><p>Nobody can connect. It will be deleted from the server on {{dt $l.PurgeAfter}}; its backups are kept.</p>
       {{if $p.Can "library.delete"}}<div class="actions">
-        <form method="post" action="/bibliotecas/{{$id}}/recuperar">{{template "csrf" $csrf}}<button type="submit">Recuperar</button></form>
-        <a class="button danger" href="/bibliotecas/{{$id}}/purgar">Purgar ahora</a></div>{{end}}
+        <form method="post" action="/libraries/{{$id}}/untrash">{{template "csrf" $csrf}}<button type="submit">Recover</button></form>
+        <a class="button danger" href="/libraries/{{$id}}/purge">Purge now</a></div>{{end}}
     </section>
   {{else if eq $l.State "purged"}}
-    <section class="card"><h2>Purgada</h2><p>Ya no existe en el servidor. Sus respaldos siguen en el catálogo y se pueden restaurar como una biblioteca nueva.</p><p><a href="?tab=respaldos">Ver respaldos</a></p></section>
+    <section class="card"><h2>Purged</h2><p>It no longer exists on the server. Its backups remain in the catalog and can be restored as a new library.</p><p><a href="?tab=backups">View backups</a></p></section>
   {{else}}
-    {{if eq $l.State "maintenance"}}<div class="flash info" role="status">En mantenimiento: no acepta conexiones nuevas. <a href="?tab=peligro">Reabrir</a></div>{{end}}
+    {{if eq $l.State "maintenance"}}<div class="flash info" role="status">In maintenance: it does not accept new connections. <a href="?tab=danger">Reopen</a></div>{{end}}
     <section class="card">
-      <h2>Conectar una estación</h2>
-      <p>En DaVinci Resolve, abre el Project Manager, agrega una biblioteca de proyectos en red (PostgreSQL) con la opción <strong>Connect</strong> y usa estos valores:</p>
+      <h2>Connect a workstation</h2>
+      <p>In DaVinci Resolve, open the Project Manager, add a network project library (PostgreSQL) with the <strong>Connect</strong> option and use these values:</p>
       <div class="copygrid">
-        {{template "copy" (dict "label" "Nombre de la biblioteca" "value" $l.Slug "id" "c-name")}}
-        {{template "copy" (dict "label" "Ubicación (IP o servidor)" "value" (or .Data.Host "Por confirmar: define la dirección en Ajustes") "id" "c-host")}}
-        {{template "copy" (dict "label" "Usuario" "value" $l.OwnerRole "id" "c-user")}}
-        <div class="copyfield"><span class="label">Contraseña</span>
-          {{if $p.Can "library.reveal"}}<form method="post" action="/bibliotecas/{{$id}}/contrasena/ver">{{template "csrf" $csrf}}<button type="submit" class="ghost small">Mostrar contraseña</button></form>{{else}}<span class="muted">Pídela a un administrador</span>{{end}}
+        {{template "copy" (dict "label" "Library name" "value" $l.Slug "id" "c-name")}}
+        {{template "copy" (dict "label" "Location (IP or server)" "value" (or .Data.Host "To be confirmed: set the address in Settings") "id" "c-host")}}
+        {{template "copy" (dict "label" "Username" "value" $l.OwnerRole "id" "c-user")}}
+        <div class="copyfield"><span class="label">Password</span>
+          {{if $p.Can "library.reveal"}}<form method="post" action="/libraries/{{$id}}/password/reveal">{{template "csrf" $csrf}}<button type="submit" class="ghost small">Reveal password</button></form>{{else}}<span class="muted">Ask an administrator for it</span>{{end}}
         </div>
       </div>
-      <p class="hint">Puerto {{.Data.Port}}. Resolve no pide el puerto: usa el 5432 de PostgreSQL. <a href="/bibliotecas/{{$id}}/instrucciones">Instrucciones para compartir</a> (sin contraseña).</p>
+      <p class="hint">Port {{.Data.Port}}. Resolve does not ask for the port: it uses PostgreSQL's 5432. <a href="/libraries/{{$id}}/instructions">Instructions to share</a> (without a password).</p>
       <details class="more">
-        <summary>Colaboración entre estaciones</summary>
+        <summary>Collaboration between workstations</summary>
         <ul>
-          <li>La colaboración de Resolve requiere DaVinci Resolve Studio en todas las estaciones y la misma versión de Resolve.</li>
-          <li>Las estaciones hablan entre sí por TCP en los puertos 50059 a 50314: ábrelos en el firewall de cada estación. El servidor solo necesita el 5432.</li>
-          <li>Conectar la biblioteca no prueba que el enlace entre estaciones funcione: si el chat o los bloqueos no se actualizan, revisa esos puertos.</li>
+          <li>Resolve collaboration requires DaVinci Resolve Studio on all workstations and the same Resolve version.</li>
+          <li>Workstations talk to each other over TCP on ports 50059 to 50314: open them in each workstation's firewall. The server only needs 5432.</li>
+          <li>Connecting the library does not prove that the link between workstations works: if chat or locks do not update, check those ports.</li>
         </ul>
       </details>
       <details class="more">
-        <summary>Llave de acceso .resolvedbkey</summary>
-        <p>Resolve puede importar llaves .resolvedbkey generadas por el Project Server oficial. Su formato no está documentado; sqsolve no las genera hasta comprobarlo (PoC-05). Usa los valores de arriba.</p>
+        <summary>Access key .resolvedbkey</summary>
+        <p>Resolve can import .resolvedbkey keys generated by the official Project Server. Its format is not documented; sqsolve does not generate them until that is verified (PoC-05). Use the values above.</p>
       </details>
     </section>
     {{with .Data.Sessions}}
     <section class="card">
-      <h2>Conectadas ahora</h2>
-      <div class="scroll-x"><table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Conectada</th><th>Cifrado</th></tr></thead><tbody>
+      <h2>Connected now</h2>
+      <div class="scroll-x"><table class="table compact"><thead><tr><th>User</th><th>From</th><th>Application</th><th>Connected</th><th>Encryption</th></tr></thead><tbody>
       {{range .}}<tr><td class="mono">{{.User}}</td><td class="mono">{{.ClientAddr}}</td><td>{{.Application}}</td><td>{{ago .Started}}</td><td>{{template "sslbadge" .}}</td></tr>{{end}}
       </tbody></table></div>
     </section>
@@ -83,199 +83,199 @@
   {{end}}
 {{end}}
 
-{{if eq .Data.Tab "respaldos"}}
+{{if eq .Data.Tab "backups"}}
 {{with .Data.Track}}
-<section class="card" aria-labelledby="pista">
-  <div class="cardhead"><h2 id="pista">Protección de los últimos 30 días</h2>{{template "badge" (dict "tone" .Tone "label" (printf "Último verificado: %s" .LastAgo))}}</div>
-  <div class="trackrow single" aria-hidden="true"><span class="ruler"><span>hace 30 días</span><span>hace 15 días</span><span>ahora</span></span></div>
+<section class="card" aria-labelledby="track">
+  <div class="cardhead"><h2 id="track">Protection over the last 30 days</h2>{{template "badge" (dict "tone" .Tone "label" (printf "Last verified: %s" .LastAgo))}}</div>
+  <div class="trackrow single" aria-hidden="true"><span class="ruler"><span>30 days ago</span><span>15 days ago</span><span>now</span></span></div>
   {{template "track" (dict "t" . "big" true)}}
   {{template "tracklegend"}}
-  {{if .GapHours}}<p class="hint">{{.GapHours}} horas del periodo quedaron sin un respaldo verificado reciente.</p>{{end}}
+  {{if .GapHours}}<p class="hint">{{.GapHours}} hours of the period were without a recent verified backup.</p>{{end}}
 </section>
 {{end}}
 <section class="card flush">
-  <div class="cardhead pad"><h2>Respaldos</h2>
-    <div class="actions">{{if $p.Can "backup.import"}}<a href="/respaldos/importar?biblioteca={{$id}}">Importar</a>{{end}}</div></div>
+  <div class="cardhead pad"><h2>Backups</h2>
+    <div class="actions">{{if $p.Can "backup.import"}}<a href="/backups/import?library={{$id}}">Import</a>{{end}}</div></div>
   {{if .Data.Backups}}
   <table class="table cards-on-mobile">
-    <thead><tr><th>Fecha</th><th>Tipo</th><th>Estado</th><th>Verificación</th><th>Tamaño</th><th>Duración</th><th></th></tr></thead>
+    <thead><tr><th>Date</th><th>Type</th><th>State</th><th>Verification</th><th>Size</th><th>Duration</th><th></th></tr></thead>
     <tbody>
     {{range .Data.Backups}}
       <tr>
-        <td data-label="Fecha"><a href="/respaldos/{{.ID}}">{{dt .StartedAt}}</a>{{if .Pinned}} {{template "badge" (dict "tone" "info" "label" "Fijado")}}{{end}}</td>
-        <td data-label="Tipo">{{kind .Kind}}</td>
-        <td data-label="Estado">{{template "badge" (dict "tone" (backuptone .Status) "label" (backuplabel .Status))}}</td>
-        <td data-label="Verificación">{{if eq .Status "ok"}}{{template "badge" (dict "tone" (verifytone .VerifyStatus) "label" (verifylabel .VerifyStatus))}}{{end}}</td>
-        <td data-label="Tamaño">{{if .SizeBytes}}{{bytes .SizeBytes}}{{end}}</td>
-        <td data-label="Duración">{{dur .Duration}}</td>
-        <td>{{if eq .Status "ok"}}<a href="/respaldos/{{.ID}}/restaurar">Restaurar</a>{{end}}</td>
+        <td data-label="Date"><a href="/backups/{{.ID}}">{{dt .StartedAt}}</a>{{if .Pinned}} {{template "badge" (dict "tone" "info" "label" "Pinned")}}{{end}}</td>
+        <td data-label="Type">{{kind .Kind}}</td>
+        <td data-label="State">{{template "badge" (dict "tone" (backuptone .Status) "label" (backuplabel .Status))}}</td>
+        <td data-label="Verification">{{if eq .Status "ok"}}{{template "badge" (dict "tone" (verifytone .VerifyStatus) "label" (verifylabel .VerifyStatus))}}{{end}}</td>
+        <td data-label="Size">{{if .SizeBytes}}{{bytes .SizeBytes}}{{end}}</td>
+        <td data-label="Duration">{{dur .Duration}}</td>
+        <td>{{if eq .Status "ok"}}<a href="/backups/{{.ID}}/restore">Restore</a>{{end}}</td>
       </tr>
     {{end}}
     </tbody>
   </table>
-  {{else}}<p class="pad muted">Sin respaldos todavía.</p>{{end}}
+  {{else}}<p class="pad muted">No backups yet.</p>{{end}}
 </section>
-<p class="hint">Un respaldo guarda los proyectos (metadatos). Los medios (video, audio, gráficos) viven en otro almacenamiento y se protegen aparte.</p>
+<p class="hint">A backup stores the projects (metadata). The media (video, audio, graphics) live in other storage and are protected separately.</p>
 {{end}}
 
-{{if eq .Data.Tab "programacion"}}
+{{if eq .Data.Tab "schedule"}}
 {{$pol := .Data.Policy}}
 <section class="card">
-  <h2>Programación y retención</h2>
+  <h2>Schedule and retention</h2>
   {{if $p.Can "policy.edit"}}
-  <form method="post" action="/bibliotecas/{{$id}}/politica" class="form">
+  <form method="post" action="/libraries/{{$id}}/policy" class="form">
     {{template "csrf" $csrf}}
-    <label class="check"><input type="checkbox" name="enabled" {{if $pol.Enabled}}checked{{end}}> Respaldos automáticos activados</label>
+    <label class="check"><input type="checkbox" name="enabled" {{if $pol.Enabled}}checked{{end}}> Automatic backups enabled</label>
     <fieldset>
-      <legend>Cuándo</legend>
-      <label class="radio"><input type="radio" name="preset" value="actividad" {{if $pol.Adaptive}}checked{{end}}> Según actividad: revisa cada <select name="check_minutes" class="tiny" aria-label="Minutos entre revisiones">{{range $m := $.Data.CheckOptions}}<option value="{{$m}}" {{if eq $m $pol.CheckMinutes}}selected{{end}}>{{$m}}</option>{{end}}</select> minutos y respalda solo si hubo cambios desde el último respaldo</label>
-      <label class="radio"><input type="radio" name="preset" value="diario"> Diario a la hora <input type="number" name="hour" min="0" max="23" value="2" class="tiny" aria-label="Hora"></label>
-      <label class="radio"><input type="radio" name="preset" value="laboral"> Cada 4 horas de 09:00 a 21:00, de lunes a sábado</label>
-      <label class="radio"><input type="radio" name="preset" value="cada4"> Cada 4 horas</label>
-      <label class="radio"><input type="radio" name="preset" value="cadahora"> Cada hora</label>
-      <label class="radio"><input type="radio" name="preset" value="cron" {{if not $pol.Adaptive}}checked{{end}}> Expresión cron <input name="cron" value="{{if $pol.Adaptive}}0 2 * * *{{else}}{{$pol.Cron}}{{end}}" class="mono" aria-label="Expresión cron"></label>
-      <label>Zona horaria<input name="timezone" value="{{$pol.Timezone}}" class="mono"></label>
-      <p class="hint">Según actividad: mientras alguien trabaje en la biblioteca sale un respaldo en cada revisión; si nadie la toca, ninguno. Un respaldo que sigue vigente no cuenta como atrasado. Cron de 5 campos: minuto, hora, día del mes, mes, día de la semana. Ejemplo: <code>30 1 * * *</code> es todos los días a la 01:30.</p>
+      <legend>When</legend>
+      <label class="radio"><input type="radio" name="preset" value="activity" {{if $pol.Adaptive}}checked{{end}}> Activity-based: check every <select name="check_minutes" class="tiny" aria-label="Minutes between checks">{{range $m := $.Data.CheckOptions}}<option value="{{$m}}" {{if eq $m $pol.CheckMinutes}}selected{{end}}>{{$m}}</option>{{end}}</select> minutes and back up only if there were changes since the last backup</label>
+      <label class="radio"><input type="radio" name="preset" value="daily"> Daily at hour <input type="number" name="hour" min="0" max="23" value="2" class="tiny" aria-label="Hour"></label>
+      <label class="radio"><input type="radio" name="preset" value="workdays"> Every 4 hours from 09:00 to 21:00, Monday to Saturday</label>
+      <label class="radio"><input type="radio" name="preset" value="every4h"> Every 4 hours</label>
+      <label class="radio"><input type="radio" name="preset" value="hourly"> Every hour</label>
+      <label class="radio"><input type="radio" name="preset" value="cron" {{if not $pol.Adaptive}}checked{{end}}> Cron expression <input name="cron" value="{{if $pol.Adaptive}}0 2 * * *{{else}}{{$pol.Cron}}{{end}}" class="mono" aria-label="Cron expression"></label>
+      <label>Time zone<input name="timezone" value="{{$pol.Timezone}}" class="mono"></label>
+      <p class="hint">Activity-based: while someone works in the library a backup is taken at every check; if nobody touches it, none. A backup that is still current does not count as late. 5-field cron: minute, hour, day of month, month, day of week. Example: <code>30 1 * * *</code> is every day at 01:30.</p>
     </fieldset>
     <fieldset class="row5">
-      <legend>Cuántos conservar</legend>
-      <label>Últimos<input type="number" name="keep_last" min="0" max="1000" value="{{$pol.KeepLast}}"></label>
-      <label>Diarios<input type="number" name="keep_daily" min="0" max="1000" value="{{$pol.KeepDaily}}"></label>
-      <label>Semanales<input type="number" name="keep_weekly" min="0" max="1000" value="{{$pol.KeepWeekly}}"></label>
-      <label>Mensuales<input type="number" name="keep_monthly" min="0" max="1000" value="{{$pol.KeepMonthly}}"></label>
-      <label>Mínimo verificados<input type="number" name="min_verified" min="1" max="100" value="{{$pol.MinVerified}}"></label>
+      <legend>How many to keep</legend>
+      <label>Latest<input type="number" name="keep_last" min="0" max="1000" value="{{$pol.KeepLast}}"></label>
+      <label>Daily<input type="number" name="keep_daily" min="0" max="1000" value="{{$pol.KeepDaily}}"></label>
+      <label>Weekly<input type="number" name="keep_weekly" min="0" max="1000" value="{{$pol.KeepWeekly}}"></label>
+      <label>Monthly<input type="number" name="keep_monthly" min="0" max="1000" value="{{$pol.KeepMonthly}}"></label>
+      <label>Minimum verified<input type="number" name="min_verified" min="1" max="100" value="{{$pol.MinVerified}}"></label>
     </fieldset>
-    <p class="hint">Nunca se borran respaldos fijados ni los tomados antes de restaurar, eliminar o actualizar Resolve durante 30 días.</p>
-    <div class="actions"><button type="submit">Guardar</button></div>
+    <p class="hint">Pinned backups and those taken before a restore, delete or Resolve upgrade are never deleted for 30 days.</p>
+    <div class="actions"><button type="submit">Save</button></div>
   </form>
   {{else}}
-  <p>Programación: {{if $pol.Adaptive}}según actividad, revisión cada {{$pol.CheckMinutes}} minutos{{else}}<code>{{$pol.Cron}}</code>{{end}} ({{$pol.Timezone}}). Conserva {{$pol.KeepLast}} últimos, {{$pol.KeepDaily}} diarios, {{$pol.KeepWeekly}} semanales y {{$pol.KeepMonthly}} mensuales.</p>
+  <p>Schedule: {{if $pol.Adaptive}}activity-based, check every {{$pol.CheckMinutes}} minutes{{else}}<code>{{$pol.Cron}}</code>{{end}} ({{$pol.Timezone}}). Keeps {{$pol.KeepLast}} latest, {{$pol.KeepDaily}} daily, {{$pol.KeepWeekly}} weekly and {{$pol.KeepMonthly}} monthly.</p>
   {{end}}
 </section>
 <div class="grid2">
-  <section class="card"><h2>{{if $pol.Adaptive}}Próximas revisiones{{else}}Próximas ejecuciones{{end}}</h2>
-    <ul>{{range .Data.Upcoming}}<li>{{dt .}}</li>{{else}}<li class="muted">Sin próximas ejecuciones.</li>{{end}}</ul>
-    {{with .Data.Schedule}}{{if .LastRunAt}}<p class="muted small">Última: {{dt .LastRunAt}}</p>{{end}}{{end}}
-    {{if $pol.LastCheckAt}}<p class="muted small">Última revisión {{ago $pol.LastCheckAt}}: {{if $pol.LastCheckSame}}sin cambios desde el último respaldo{{else}}hubo cambios{{end}}.</p>{{end}}
-    <p class="hint">Cada biblioteca arranca unos minutos después de la hora exacta para no coincidir con las demás.</p>
+  <section class="card"><h2>{{if $pol.Adaptive}}Upcoming checks{{else}}Upcoming runs{{end}}</h2>
+    <ul>{{range .Data.Upcoming}}<li>{{dt .}}</li>{{else}}<li class="muted">No upcoming runs.</li>{{end}}</ul>
+    {{with .Data.Schedule}}{{if .LastRunAt}}<p class="muted small">Last: {{dt .LastRunAt}}</p>{{end}}{{end}}
+    {{if $pol.LastCheckAt}}<p class="muted small">Last check {{ago $pol.LastCheckAt}}: {{if $pol.LastCheckSame}}no changes since the last backup{{else}}there were changes{{end}}.</p>{{end}}
+    <p class="hint">Each library starts a few minutes after the exact hour so it does not coincide with the others.</p>
   </section>
-  <section class="card"><h2>Efecto de la retención hoy</h2>
-    <p>Se conservan <strong>{{.Data.Keep}}</strong> respaldos y se borrarían <strong>{{.Data.Expire}}</strong> en la próxima pasada.</p>
+  <section class="card"><h2>Effect of the retention today</h2>
+    <p><strong>{{.Data.Keep}}</strong> backups are kept and <strong>{{.Data.Expire}}</strong> would be deleted on the next pass.</p>
   </section>
 </div>
 {{end}}
 
-{{if eq .Data.Tab "accesos"}}
+{{if eq .Data.Tab "access"}}
 <section class="card">
-  <h2>Credenciales</h2>
-  <p class="hint">Resolve solo distingue quién se conecta, no qué hace cada quien dentro de la biblioteca. Para separar clientes o producciones usa bibliotecas distintas.</p>
-  <div class="scroll-x"><table class="table compact"><thead><tr><th>Usuario en Resolve</th><th>Para</th><th>Creada</th><th>Contraseña cambiada</th><th></th></tr></thead><tbody>
+  <h2>Credentials</h2>
+  <p class="hint">Resolve only distinguishes who connects, not what each person does inside the library. To separate clients or productions use different libraries.</p>
+  <div class="scroll-x"><table class="table compact"><thead><tr><th>User in Resolve</th><th>For</th><th>Created</th><th>Password changed</th><th></th></tr></thead><tbody>
   {{range .Data.Creds}}
     <tr class="{{if .RevokedAt}}revoked{{end}}">
       <td class="mono">{{.PGRole}}</td>
-      <td>{{if eq .Kind "owner"}}Principal{{else}}{{.PersonLabel}}{{end}}{{if .RevokedAt}} {{template "badge" (dict "tone" "off" "label" "Revocada")}}{{end}}</td>
+      <td>{{if eq .Kind "owner"}}Primary{{else}}{{.PersonLabel}}{{end}}{{if .RevokedAt}} {{template "badge" (dict "tone" "off" "label" "Revoked")}}{{end}}</td>
       <td>{{dt .CreatedAt}}</td>
-      <td>{{if .RotatedAt}}{{dt .RotatedAt}}{{else}}<span class="muted">nunca</span>{{end}}</td>
+      <td>{{if .RotatedAt}}{{dt .RotatedAt}}{{else}}<span class="muted">never</span>{{end}}</td>
       <td class="actions">
         {{if and (not .RevokedAt) ($p.Can "library.credentials")}}
-          <form method="post" action="/bibliotecas/{{$id}}/contrasena/ver">{{template "csrf" $csrf}}<input type="hidden" name="cred" value="{{.ID}}"><button class="ghost small" type="submit">Mostrar</button></form>
-          <form method="post" action="/bibliotecas/{{$id}}/contrasena/rotar" data-confirm="Las estaciones que usan {{.PGRole}} tendrán que escribir la contraseña nueva. ¿Continuar?">{{template "csrf" $csrf}}<input type="hidden" name="cred" value="{{.ID}}"><button class="ghost small" type="submit">Cambiar contraseña</button></form>
-          {{if eq .Kind "member"}}<form method="post" action="/bibliotecas/{{$id}}/personas/{{.ID}}/revocar" data-confirm="Se cerrarán sus sesiones y ya no podrá entrar. ¿Continuar?">{{template "csrf" $csrf}}<button class="ghost small danger" type="submit">Revocar</button></form>{{end}}
+          <form method="post" action="/libraries/{{$id}}/password/reveal">{{template "csrf" $csrf}}<input type="hidden" name="cred" value="{{.ID}}"><button class="ghost small" type="submit">Reveal</button></form>
+          <form method="post" action="/libraries/{{$id}}/password/rotate" data-confirm="Workstations using {{.PGRole}} will have to type the new password. Continue?">{{template "csrf" $csrf}}<input type="hidden" name="cred" value="{{.ID}}"><button class="ghost small" type="submit">Change password</button></form>
+          {{if eq .Kind "member"}}<form method="post" action="/libraries/{{$id}}/people/{{.ID}}/revoke" data-confirm="Their sessions will be closed and they will no longer be able to sign in. Continue?">{{template "csrf" $csrf}}<button class="ghost small danger" type="submit">Revoke</button></form>{{end}}
         {{end}}
       </td>
     </tr>
   {{end}}
   </tbody></table></div>
   {{if and ($p.Can "library.credentials") (or (eq $l.State "active") (eq $l.State "maintenance"))}}
-  <form method="post" action="/bibliotecas/{{$id}}/personas" class="form inline">
+  <form method="post" action="/libraries/{{$id}}/people" class="form inline">
     {{template "csrf" $csrf}}
-    <label>Credencial para una persona<input name="person" required pattern="[a-z][a-z0-9]{1,19}" maxlength="20" placeholder="ana" class="mono"></label>
-    <button type="submit">Crear</button>
+    <label>Credential for a person<input name="person" required pattern="[a-z][a-z0-9]{1,19}" maxlength="20" placeholder="ana" class="mono"></label>
+    <button type="submit">Create</button>
   </form>
-  <p class="hint">Cada persona tiene su usuario y contraseña; revocarla no afecta a los demás. Lo que crea queda a nombre de la biblioteca.</p>
+  <p class="hint">Each person has their own username and password; revoking one does not affect the others. Whatever they create belongs to the library.</p>
   {{end}}
 </section>
 <section class="card">
-  <h2>Redes permitidas</h2>
+  <h2>Allowed networks</h2>
   {{if $p.Can "library.credentials"}}
-  <form method="post" action="/bibliotecas/{{$id}}/redes" class="form">
+  <form method="post" action="/libraries/{{$id}}/networks" class="form">
     {{template "csrf" $csrf}}
-    <label>Una red o dirección por línea (vacío permite cualquier dirección)<textarea name="cidrs" rows="3" class="mono" placeholder="192.168.1.0/24&#10;10.8.0.0/24">{{range .Data.Rules}}{{.CIDR}}
+    <label>One network or address per line (empty allows any address)<textarea name="cidrs" rows="3" class="mono" placeholder="192.168.1.0/24&#10;10.8.0.0/24">{{range .Data.Rules}}{{.CIDR}}
 {{end}}</textarea></label>
-    <div class="actions"><button type="submit">Aplicar</button></div>
+    <div class="actions"><button type="submit">Apply</button></div>
   </form>
-  <p class="hint">Funciona si PostgreSQL ve la IP real de las estaciones (red bridge de Docker con puertos publicados o red del host). La prueba PoC-08 lo confirma en cada instalación.</p>
-  {{else}}<ul>{{range .Data.Rules}}<li class="mono">{{.CIDR}}</li>{{else}}<li>Cualquier dirección</li>{{end}}</ul>{{end}}
+  <p class="hint">It works if PostgreSQL sees the real IP of the workstations (Docker bridge network with published ports, or host network). The PoC-08 test confirms it on each installation.</p>
+  {{else}}<ul>{{range .Data.Rules}}<li class="mono">{{.CIDR}}</li>{{else}}<li>Any address</li>{{end}}</ul>{{end}}
 </section>
 {{end}}
 
-{{if eq .Data.Tab "actividad"}}
+{{if eq .Data.Tab "activity"}}
 <section class="card">
-  <h2>Sesiones activas</h2>
+  <h2>Active sessions</h2>
   {{if .Data.Sessions}}
-  <div class="scroll-x"><table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Conectada</th><th>Cifrado</th><th>Estado</th><th></th></tr></thead><tbody>
+  <div class="scroll-x"><table class="table compact"><thead><tr><th>User</th><th>From</th><th>Application</th><th>Connected</th><th>Encryption</th><th>State</th><th></th></tr></thead><tbody>
   {{range .Data.Sessions}}<tr><td class="mono">{{.User}}</td><td class="mono">{{.ClientAddr}}</td><td>{{.Application}}</td><td>{{ago .Started}}</td><td>{{template "sslbadge" .}}</td><td>{{.State}}</td>
-    <td>{{if $p.Can "library.session.terminate"}}<form method="post" action="/bibliotecas/{{$id}}/sesiones/{{.PID}}/cerrar" data-confirm="Resolve perderá esta conexión. ¿Cerrarla?">{{template "csrf" $csrf}}<button class="ghost small danger" type="submit">Cerrar</button></form>{{end}}</td></tr>{{end}}
+    <td>{{if $p.Can "library.session.terminate"}}<form method="post" action="/libraries/{{$id}}/sessions/{{.PID}}/terminate" data-confirm="Resolve will lose this connection. Close it?">{{template "csrf" $csrf}}<button class="ghost small danger" type="submit">Close</button></form>{{end}}</td></tr>{{end}}
   </tbody></table></div>
-  {{else}}<p class="muted">Nadie conectado.</p>{{end}}
+  {{else}}<p class="muted">Nobody connected.</p>{{end}}
 </section>
-<section class="card"><h2>Tareas</h2>{{if .Data.Jobs}}{{template "jobtable" .Data.Jobs}}{{else}}<p class="muted">Sin tareas.</p>{{end}}</section>
-<section class="card"><h2>Eventos</h2>
-  <ul class="events">{{range .Data.Events}}<li>{{template "badge" (dict "tone" (sevtone .Severity) "label" (sev .Severity))}} {{.Message}} <time class="muted small" datetime="{{iso .TS}}" title="{{dt .TS}}">{{ago .TS}}</time></li>{{else}}<li class="muted">Sin eventos.</li>{{end}}</ul>
-  {{if $l.Fingerprint}}<p class="hint">Huella de estructura actual: <code class="break">{{$l.Fingerprint}}</code> ({{$l.TableCount}} tablas, revisada {{ago $l.FingerprintCheckedAt}}).</p>{{end}}
+<section class="card"><h2>Jobs</h2>{{if .Data.Jobs}}{{template "jobtable" .Data.Jobs}}{{else}}<p class="muted">No jobs.</p>{{end}}</section>
+<section class="card"><h2>Events</h2>
+  <ul class="events">{{range .Data.Events}}<li>{{template "badge" (dict "tone" (sevtone .Severity) "label" (sev .Severity))}} {{.Message}} <time class="muted small" datetime="{{iso .TS}}" title="{{dt .TS}}">{{ago .TS}}</time></li>{{else}}<li class="muted">No events.</li>{{end}}</ul>
+  {{if $l.Fingerprint}}<p class="hint">Current structure fingerprint: <code class="break">{{$l.Fingerprint}}</code> ({{$l.TableCount}} tables, checked {{ago $l.FingerprintCheckedAt}}).</p>{{end}}
 </section>
 {{end}}
 
-{{if eq .Data.Tab "ajustes"}}
+{{if eq .Data.Tab "settings"}}
 <section class="card narrow">
-  <h2>Ajustes</h2>
+  <h2>Settings</h2>
   {{if $p.Can "library.edit"}}
-  <form method="post" action="/bibliotecas/{{$id}}/ajustes" class="form">
+  <form method="post" action="/libraries/{{$id}}/settings" class="form">
     {{template "csrf" $csrf}}
-    <label>Nombre visible<input name="name" required maxlength="80" value="{{$l.DisplayName}}"></label>
-    <label>Versión de Resolve que usa el estudio<input name="resolve" maxlength="20" value="{{$l.ResolveVersion}}" placeholder="21.1.1" class="mono"></label>
-    <label>Límite de conexiones<input type="number" name="connlimit" min="-1" max="1000" value="{{$l.ConnLimit}}"></label>
-    <p class="hint">-1 sin límite. Cada estación abre varias conexiones.</p>
-    <label>Notas<textarea name="notes" rows="6">{{$l.Notes}}</textarea></label>
-    <p class="hint">Útil para rutas de medios, letra de unidad en Windows, punto de montaje en macOS y Linux, cliente o convenciones de proxies.</p>
-    <div class="actions"><button type="submit">Guardar</button></div>
+    <label>Display name<input name="name" required maxlength="80" value="{{$l.DisplayName}}"></label>
+    <label>Resolve version the studio uses<input name="resolve" maxlength="20" value="{{$l.ResolveVersion}}" placeholder="21.1.1" class="mono"></label>
+    <label>Connection limit<input type="number" name="connlimit" min="-1" max="1000" value="{{$l.ConnLimit}}"></label>
+    <p class="hint">-1 means no limit. Each workstation opens several connections.</p>
+    <label>Notes<textarea name="notes" rows="6">{{$l.Notes}}</textarea></label>
+    <p class="hint">Useful for media paths, drive letter on Windows, mount point on macOS and Linux, client or proxy conventions.</p>
+    <div class="actions"><button type="submit">Save</button></div>
   </form>
   {{else}}<p class="pre">{{$l.Notes}}</p>{{end}}
   <dl class="facts">
-    <dt>Identificador</dt><dd class="mono">{{$l.Slug}}</dd>
-    <dt>Base de datos</dt><dd class="mono">{{$l.DBName}}</dd>
-    <dt>Creada</dt><dd>{{dt $l.CreatedAt}} ({{if eq $l.Strategy "resolve"}}inicializada desde Resolve{{else if eq $l.Strategy "restore"}}restaurada de un respaldo{{else}}base vacía{{end}})</dd>
-    {{with .Data.DB}}<dt>Tamaño</dt><dd>{{bytes .SizeBytes}}</dd>{{end}}
+    <dt>Identifier</dt><dd class="mono">{{$l.Slug}}</dd>
+    <dt>Database</dt><dd class="mono">{{$l.DBName}}</dd>
+    <dt>Created</dt><dd>{{dt $l.CreatedAt}} ({{if eq $l.Strategy "resolve"}}initialized from Resolve{{else if eq $l.Strategy "restore"}}restored from a backup{{else}}empty database{{end}})</dd>
+    {{with .Data.DB}}<dt>Size</dt><dd>{{bytes .SizeBytes}}</dd>{{end}}
   </dl>
 </section>
 {{end}}
 
-{{if eq .Data.Tab "peligro"}}
+{{if eq .Data.Tab "danger"}}
 <section class="card danger-zone">
-  <h2>Zona de peligro</h2>
+  <h2>Danger zone</h2>
   {{if and ($p.Can "library.maintenance") (eq $l.State "active")}}
   <div class="dz-item">
-    <div><h3>Poner en mantenimiento</h3><p>Bloquea conexiones nuevas. Los respaldos siguen funcionando.</p></div>
-    <form method="post" action="/bibliotecas/{{$id}}/mantenimiento" class="form">{{template "csrf" $csrf}}<input type="hidden" name="on" value="1">
-      <label class="check"><input type="checkbox" name="terminate"> Cerrar también las sesiones abiertas</label>
-      <button type="submit" class="warn">Poner en mantenimiento</button></form>
+    <div><h3>Put in maintenance</h3><p>Blocks new connections. Backups keep working.</p></div>
+    <form method="post" action="/libraries/{{$id}}/maintenance" class="form">{{template "csrf" $csrf}}<input type="hidden" name="on" value="1">
+      <label class="check"><input type="checkbox" name="terminate"> Also close open sessions</label>
+      <button type="submit" class="warn">Put in maintenance</button></form>
   </div>
   {{end}}
   {{if and ($p.Can "library.maintenance") (eq $l.State "maintenance")}}
-  <div class="dz-item"><div><h3>Reabrir conexiones</h3><p>La biblioteca vuelve a aceptar estaciones.</p></div>
-    <form method="post" action="/bibliotecas/{{$id}}/mantenimiento">{{template "csrf" $csrf}}<input type="hidden" name="on" value="0"><button type="submit">Reabrir</button></form></div>
+  <div class="dz-item"><div><h3>Reopen connections</h3><p>The library accepts workstations again.</p></div>
+    <form method="post" action="/libraries/{{$id}}/maintenance">{{template "csrf" $csrf}}<input type="hidden" name="on" value="0"><button type="submit">Reopen</button></form></div>
   {{end}}
   {{if and $l.PrevDB ($p.Can "restore.revert")}}
-  <div class="dz-item"><div><h3>Revertir la última restauración</h3><p>Vuelve al estado anterior al {{dt $l.UpdatedAt}}. Disponible hasta {{dt $l.PrevExpiresAt}}.</p></div>
-    <a class="button warn" href="/bibliotecas/{{$id}}/revertir">Revertir</a></div>
+  <div class="dz-item"><div><h3>Revert the last restore</h3><p>Goes back to the state before {{dt $l.UpdatedAt}}. Available until {{dt $l.PrevExpiresAt}}.</p></div>
+    <a class="button warn" href="/libraries/{{$id}}/revert">Revert</a></div>
   {{end}}
   {{if and ($p.Can "library.delete") (or (eq $l.State "active") (eq $l.State "maintenance") (eq $l.State "awaiting_init") (eq $l.State "init_expired") (eq $l.State "missing"))}}
-  <div class="dz-item"><div><h3>Eliminar</h3><p>Hace un respaldo final, la mueve a la papelera durante {{.Data.Settings.TrashDays}} días y luego la borra del servidor. Sus respaldos se conservan.</p></div>
-    <a class="button danger" href="/bibliotecas/{{$id}}/eliminar">Eliminar</a></div>
+  <div class="dz-item"><div><h3>Delete</h3><p>Takes a final backup, moves the library to the trash for {{.Data.Settings.TrashDays}} days and then deletes it from the server. Its backups are kept.</p></div>
+    <a class="button danger" href="/libraries/{{$id}}/delete">Delete</a></div>
   {{end}}
   {{if and ($p.Can "library.delete") (eq $l.State "trashed")}}
-  <div class="dz-item"><div><h3>Purgar ahora</h3><p>Borra la base y los usuarios del servidor sin esperar.</p></div>
-    <a class="button danger" href="/bibliotecas/{{$id}}/purgar">Purgar</a></div>
+  <div class="dz-item"><div><h3>Purge now</h3><p>Deletes the database and users from the server without waiting.</p></div>
+    <a class="button danger" href="/libraries/{{$id}}/purge">Purge</a></div>
   {{end}}
 </section>
 {{end}}

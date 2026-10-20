@@ -53,21 +53,21 @@ func (f family) String() string {
 	case famUUID:
 		return "uuid"
 	case famBool:
-		return "booleano"
+		return "boolean"
 	case famInt:
-		return "entero"
+		return "integer"
 	case famFloat:
 		return "decimal"
 	case famText:
-		return "texto"
+		return "text"
 	case famBytes:
 		return "bytea"
 	case famTime:
-		return "fecha"
+		return "date"
 	case famIntArray:
-		return "arreglo de enteros"
+		return "integer array"
 	}
-	return "desconocido"
+	return "unknown"
 }
 
 // formatScalar renders a scanned value the way Resolve writes it. Nil must be
@@ -97,7 +97,7 @@ func formatScalar(v any, text bool) (string, error) {
 		}
 		return hex.EncodeToString(x), nil
 	}
-	return "", fmt.Errorf("SQS-E006 valor de tipo %T no previsto", v)
+	return "", fmt.Errorf("SQS-E006 unexpected value of type %T", v)
 }
 
 // formatFloat writes the shortest decimal that round-trips, without exponent
@@ -113,7 +113,7 @@ func parseVector(s string) ([]string, error) {
 		return nil, nil
 	}
 	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
-		return nil, fmt.Errorf("SQS-E006 arreglo con formato no previsto: %q", s)
+		return nil, fmt.Errorf("SQS-E006 array with unexpected format: %q", s)
 	}
 	s = s[1 : len(s)-1]
 	if s == "" {

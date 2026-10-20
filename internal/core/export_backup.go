@@ -28,7 +28,7 @@ import (
 const ExportWorkspaceTTL = 2 * time.Hour
 
 // ErrExportNotReady is returned while no workspace is ready for the backup.
-var ErrExportNotReady = errors.New("SQS-E007 el respaldo no está preparado para exportar; prepáralo primero")
+var ErrExportNotReady = errors.New("SQS-E007 the backup is not prepared for export; prepare it first")
 
 // Workspace states.
 const (
@@ -84,7 +84,7 @@ func (s *Service) BackupExportWorkspace(ctx context.Context, backupID string) (*
 func (s *Service) workspace(ctx context.Context, id string) (*ExportWorkspace, error) {
 	w, err := scanWorkspace(s.DB.QueryRowContext(ctx, `SELECT `+workspaceCols+` FROM export_workspaces WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("SQS-E007 no existe el espacio de exportación %s", id)
+		return nil, fmt.Errorf("SQS-E007 export space %s does not exist", id)
 	}
 	return w, err
 }
@@ -100,7 +100,7 @@ func (s *Service) PrepareBackupExport(ctx context.Context, by audit.Actor, backu
 		return nil, nil, err
 	}
 	if !b.Usable() {
-		return nil, nil, errors.New("SQS-E005 el respaldo no está disponible (falló o se borró)")
+		return nil, nil, errors.New("SQS-E005 the backup is not available (it failed or was deleted)")
 	}
 	if w, _ := s.BackupExportWorkspace(ctx, backupID); w.Live(s.now()) {
 		j, _ := s.Jobs.Get(ctx, w.JobID)
@@ -139,13 +139,13 @@ func (s *Service) runBackupExport(ctx context.Context, r *jobs.Run) error {
 		return cause
 	}
 	if b.Status != BackupOK {
-		return fail(fmt.Errorf("SQS-B021 el respaldo no está disponible (%s)", b.Status))
+		return fail(fmt.Errorf("SQS-B021 the backup is not available (%s)", b.Status))
 	}
-	if err := r.Step("verificar_l1", func() error { return s.verifyL1(ctx, b.ID) }); err != nil {
+	if err := r.Step("verify_l1", func() error { return s.verifyL1(ctx, b.ID) }); err != nil {
 		return fail(err)
 	}
 	r.Progress(15)
-	err = r.Step("restaurar_temporal", func() error {
+	err = r.Step("temporary_restore", func() error {
 		if err := s.PG.CreateDatabase(ctx, w.DBName, pg.AdminRole); err != nil {
 			return err
 		}
@@ -157,7 +157,7 @@ func (s *Service) runBackupExport(ctx context.Context, r *jobs.Run) error {
 	}
 	expires := s.now().Add(ExportWorkspaceTTL)
 	s.DB.ExecContext(ctx, `UPDATE export_workspaces SET state = 'ready', expires_at = ? WHERE id = ?`, store.T(expires), w.ID)
-	r.Infof("Respaldo listo para exportar hasta %s", expires.In(s.Cfg.Location).Format("15:04"))
+	r.Infof("Backup ready to export until %s", expires.In(s.Cfg.Location).Format("15:04"))
 	return nil
 }
 

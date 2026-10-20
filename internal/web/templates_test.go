@@ -26,7 +26,7 @@ func renderPage(t *testing.T, name string, data map[string]any) string {
 	if err := s.parseTemplates(); err != nil {
 		t.Fatal(err)
 	}
-	v := View{Title: "t", Section: "bibliotecas", P: &auth.Principal{User: &auth.User{Username: "admin", Role: auth.RoleAdmin}}, Data: data, Now: time.Now(), Query: url.Values{}}
+	v := View{Title: "t", Section: "libraries", P: &auth.Principal{User: &auth.User{Username: "admin", Role: auth.RoleAdmin}}, Data: data, Now: time.Now(), Query: url.Values{}}
 	var buf bytes.Buffer
 	if err := s.pages[name].ExecuteTemplate(&buf, "layout", v); err != nil {
 		t.Fatalf("render %s: %v", name, err)
@@ -39,13 +39,13 @@ func TestLibraryExportPageWithStills(t *testing.T) {
 	still := exportStill{Still: drp.Still{ID: "ab12cd", Label: "0001", RecTC: "01:00:00:00"}, Created: time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)}
 	data := func(can bool) map[string]any {
 		return map[string]any{
-			"L": l, "Tab": "exportar", "Enabled": true, "CanExport": can,
-			"Projects":      []drp.Project{{ID: "p1", Name: "Corto"}},
+			"L": l, "Tab": "export", "Enabled": true, "CanExport": can,
+			"Projects":      []drp.Project{{ID: "p1", Name: "Short"}},
 			"PowerGrades":   []exportAlbum{{Album: drp.Album{ViewID: "v1", Name: "Looks"}, Stills: []exportStill{still}}},
-			"ProjectAlbums": []exportAlbum{{Album: drp.Album{ViewID: "v2", ProjectID: "p1", ProjectName: "Corto"}, Stills: []exportStill{still}}},
+			"ProjectAlbums": []exportAlbum{{Album: drp.Album{ViewID: "v2", ProjectID: "p1", ProjectName: "Short"}, Stills: []exportStill{still}}},
 		}
 	}
-	link := `href="/bibliotecas/01M5A5X0JZQYHV8GE4H1PK6VG9/exportar/stills/ab12cd"`
+	link := `href="/libraries/01M5A5X0JZQYHV8GE4H1PK6VG9/export/stills/ab12cd"`
 	out := renderPage(t, "library_export", data(true))
 	if n := strings.Count(out, link); n != 2 {
 		t.Errorf("with permission: %d .drx links, want 2 (one per album)", n)
@@ -54,18 +54,18 @@ func TestLibraryExportPageWithStills(t *testing.T) {
 		t.Error("still label and timecode missing")
 	}
 	out = renderPage(t, "library_export", data(false))
-	if strings.Contains(out, link) || strings.Contains(out, "/exportar/albumes/") || strings.Contains(out, "/exportar/proyectos/") {
+	if strings.Contains(out, link) || strings.Contains(out, "/export/albums/") || strings.Contains(out, "/export/projects/") {
 		t.Error("without permission the download links must not appear")
 	}
 }
 
-// TestLayoutBrand checks the identity (ADR 0020) in both layouts: the "Nodo"
+// TestLayoutBrand checks the identity (ADR 0020) in both layouts: the "Node"
 // lockup with its ports and the navigation icons, plus the files the layout
 // links to.
 func TestLayoutBrand(t *testing.T) {
 	l := &core.Library{ID: "01M5A5X0JZQYHV8GE4H1PK6VG9", Slug: "apolo", DisplayName: "Apolo", State: core.StateActive}
-	shell := renderPage(t, "library_export", map[string]any{"L": l, "Tab": "exportar", "Enabled": false, "Err": "x"})
-	for _, want := range []string{`class="brand" href="/" aria-label="sqsolve, ir al panel"`, `class="in"`, `class="out"`, `class="word"`, `rel="apple-touch-icon" href="/static/apple-touch-icon.png"`} {
+	shell := renderPage(t, "library_export", map[string]any{"L": l, "Tab": "export", "Enabled": false, "Err": "x"})
+	for _, want := range []string{`class="brand" href="/" aria-label="sqsolve, go to the dashboard"`, `class="in"`, `class="out"`, `class="word"`, `rel="apple-touch-icon" href="/static/apple-touch-icon.png"`} {
 		if !strings.Contains(shell, want) {
 			t.Errorf("shell layout lacks %s", want)
 		}

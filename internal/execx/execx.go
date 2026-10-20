@@ -57,7 +57,7 @@ func (r *Runner) Path(name string) (string, error) {
 		}
 	}
 	if !ok {
-		return "", fmt.Errorf("SQS-X001 programa no permitido: %s", name)
+		return "", fmt.Errorf("SQS-X001 program not allowed: %s", name)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -75,7 +75,7 @@ func (r *Runner) Path(name string) (string, error) {
 			return abs, nil
 		}
 	}
-	return "", fmt.Errorf("SQS-X002 no se encontró %s", name)
+	return "", fmt.Errorf("SQS-X002 %s not found", name)
 }
 
 // Credential is passed to libpq through a temporary PGPASSFILE.
@@ -118,7 +118,7 @@ func (e *Error) Error() string {
 	if msg == "" && e.Err != nil {
 		msg = e.Err.Error()
 	}
-	return fmt.Sprintf("%s terminó con código %d: %s", e.Name, e.ExitCode, msg)
+	return fmt.Sprintf("%s exited with code %d: %s", e.Name, e.ExitCode, msg)
 }
 
 func (e *Error) Unwrap() error { return e.Err }
@@ -201,7 +201,7 @@ func escapePass(s string) string {
 
 func writePassfile(c *Credential) (string, error) {
 	if strings.ContainsAny(c.Password.Reveal(), "\n\r") || strings.ContainsAny(c.User, "\n\r") {
-		return "", errors.New("SQS-X003 credencial con saltos de línea")
+		return "", errors.New("SQS-X003 credential with line breaks")
 	}
 	f, err := os.CreateTemp("", "sqsolve-pgpass-*")
 	if err != nil {

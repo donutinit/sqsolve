@@ -17,7 +17,7 @@ import (
 	"github.com/donutinit/sqsolve/internal/jobs"
 )
 
-var months = []string{"ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"}
+var months = []string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
 
 func funcs(a *app.App) template.FuncMap {
 	loc := func() *time.Location { return a.Cfg.Location }
@@ -52,7 +52,7 @@ func funcs(a *app.App) template.FuncMap {
 		"ago": func(v any) string {
 			t, ok := toTime(v)
 			if !ok {
-				return "nunca"
+				return "never"
 			}
 			return humanAgo(time.Since(t))
 		},
@@ -98,22 +98,22 @@ func funcs(a *app.App) template.FuncMap {
 		"outcomelabel": func(o string) string {
 			switch o {
 			case audit.OK:
-				return "Correcto"
+				return "OK"
 			case audit.Denied:
-				return "Denegado"
+				return "Denied"
 			case audit.Failed:
-				return "Fallido"
+				return "Failed"
 			}
 			return o
 		},
 		"checklabel": func(st string) string {
 			switch st {
 			case "ok":
-				return "Correcto"
+				return "OK"
 			case "warn":
-				return "Aviso"
+				return "Warning"
 			case "fail":
-				return "Fallido"
+				return "Failed"
 			}
 			return st
 		},
@@ -142,15 +142,15 @@ func funcs(a *app.App) template.FuncMap {
 		"verifylabel": func(st string) string {
 			switch st {
 			case core.VerifyL2OK:
-				return "Restauración de prueba correcta"
+				return "Test restore OK"
 			case core.VerifyL1OK:
-				return "Suma e índice correctos"
+				return "Checksum and index OK"
 			case core.VerifyPartial:
-				return "Verificación parcial"
+				return "Partial verification"
 			case core.VerifyFailed:
-				return "Verificación fallida"
+				return "Verification failed"
 			}
-			return "Sin verificar"
+			return "Unverified"
 		},
 		"backuptone": func(st string) string {
 			switch st {
@@ -166,15 +166,15 @@ func funcs(a *app.App) template.FuncMap {
 		"backuplabel": func(st string) string {
 			switch st {
 			case core.BackupOK:
-				return "Disponible"
+				return "Available"
 			case core.BackupRunning:
-				return "En curso"
+				return "Running"
 			case core.BackupFailed:
-				return "Fallido"
+				return "Failed"
 			case core.BackupInterrupted:
-				return "Interrumpido"
+				return "Interrupted"
 			case core.BackupDeleted:
-				return "Borrado"
+				return "Deleted"
 			}
 			return st
 		},
@@ -239,30 +239,30 @@ func toInt64(v any) int64 {
 func humanAgo(d time.Duration) string {
 	switch {
 	case d < 0:
-		return "en el futuro"
+		return "in the future"
 	case d < time.Minute:
-		return "hace un momento"
+		return "just now"
 	case d < time.Hour:
-		return fmt.Sprintf("hace %d min", int(d.Minutes()))
+		return fmt.Sprintf("%d min ago", int(d.Minutes()))
 	case d < 48*time.Hour:
-		return fmt.Sprintf("hace %d h", int(d.Hours()))
+		return fmt.Sprintf("%d h ago", int(d.Hours()))
 	default:
-		return fmt.Sprintf("hace %d días", int(d.Hours()/24))
+		return fmt.Sprintf("%d days ago", int(d.Hours()/24))
 	}
 }
 
 func humanUntil(d time.Duration) string {
 	switch {
 	case d < 0:
-		return "vencido"
+		return "expired"
 	case d < time.Minute:
-		return "en menos de un minuto"
+		return "in less than a minute"
 	case d < time.Hour:
-		return fmt.Sprintf("en %d min", int(d.Minutes())+1)
+		return fmt.Sprintf("in %d min", int(d.Minutes())+1)
 	case d < 48*time.Hour:
-		return fmt.Sprintf("en %d h", int(d.Hours()))
+		return fmt.Sprintf("in %d h", int(d.Hours()))
 	default:
-		return fmt.Sprintf("en %d días", int(d.Hours()/24))
+		return fmt.Sprintf("in %d days", int(d.Hours()/24))
 	}
 }
 
@@ -280,41 +280,50 @@ func humanDuration(d time.Duration) string {
 	return fmt.Sprintf("%d h %d min", int(d.Hours()), int(d.Minutes())%60)
 }
 
+// stepLabels names the job steps (core and jobs packages) for the UI.
 var stepLabels = map[string]string{
-	"validar": "Validar", "crear_rol": "Crear rol", "crear_base": "Crear base", "abrir_ventana": "Abrir ventana de inicialización",
-	"acceso_red": "Aplicar acceso de red", "preparar": "Preparar", "volcar": "Volcar con pg_dump", "sellar": "Sellar y escribir manifiesto",
-	"verificar_l1": "Verificar suma e índice", "retencion": "Aplicar retención", "espacio": "Comprobar espacio",
-	"restaurar_prueba": "Restauración de prueba", "comparar": "Comparar con el manifiesto", "verificar_respaldo": "Verificar respaldo",
-	"restaurar": "Restaurar", "activar": "Activar", "comprobar": "Comprobar", "respaldo_previo": "Respaldo previo",
-	"esperar_sesiones": "Esperar a que cierren las sesiones", "bloquear": "Bloquear conexiones", "intercambiar": "Intercambiar bases",
-	"reabrir": "Reabrir", "respaldo_final": "Respaldo final", "mover": "Mover", "reactivar": "Reactivar",
-	"comprobar_respaldo": "Comprobar respaldo final", "borrar_base": "Borrar base", "borrar_estado_previo": "Borrar estado previo",
-	"borrar_roles": "Borrar roles", "roles": "Recrear roles", "leer": "Leer archivo", "copiar": "Copiar al catálogo",
+	"validate": "Validate", "create_role": "Create role", "create_database": "Create database", "open_window": "Open initialization window",
+	"network_access": "Apply network access", "prepare": "Prepare", "dump": "Dump with pg_dump", "seal": "Seal and write manifest",
+	"verify_l1": "Verify checksum and index", "retention": "Apply retention", "space": "Check space",
+	"test_restore": "Test restore", "compare": "Compare with the manifest", "verify_backup": "Verify backup",
+	"restore": "Restore", "activate": "Activate", "check": "Check", "pre_restore_backup": "Pre-restore backup",
+	"wait_for_sessions": "Wait for sessions to close", "lock": "Lock connections", "swap": "Swap databases",
+	"reopen": "Reopen", "final_backup": "Final backup", "move": "Move", "reactivate": "Reactivate",
+	"check_backup": "Check final backup", "drop_database": "Drop database", "drop_previous_state": "Drop previous state",
+	"drop_roles": "Drop roles", "roles": "Recreate roles", "read": "Read file", "copy": "Copy to the catalog",
+	"temporary_restore": "Temporary restore", "broken": "Broken", "one": "One", "two": "Two",
 }
 
+// stepLabel returns the UI name of a job step. Unknown names are prettified
+// (underscores to spaces, first letter upper case) so a renamed step never
+// shows up broken.
 func stepLabel(name string) string {
 	if l, ok := stepLabels[name]; ok {
 		return l
 	}
-	if strings.HasPrefix(name, "respaldo_") {
-		return "Respaldar " + strings.TrimPrefix(name, "respaldo_")
+	if strings.HasPrefix(name, "backup_") {
+		return "Back up " + strings.ReplaceAll(strings.TrimPrefix(name, "backup_"), "_", " ")
 	}
-	return name
+	pretty := strings.ReplaceAll(name, "_", " ")
+	if pretty == "" {
+		return pretty
+	}
+	return strings.ToUpper(pretty[:1]) + pretty[1:]
 }
 
 // scopeLabel names an API token scope the way the panel describes roles.
 func scopeLabel(s string) string {
 	switch s {
 	case "read":
-		return "Solo lectura"
+		return "Read only"
 	case "backup":
-		return "Respaldar y verificar"
+		return "Back up and verify"
 	case "restore":
-		return "Restaurar y descargar respaldos"
+		return "Restore and download backups"
 	case "export":
-		return "Exportar proyectos y grados (experimental)"
+		return "Export projects and grades (experimental)"
 	case "admin":
-		return "Todo lo que permite tu rol"
+		return "Everything your role allows"
 	}
 	return s
 }

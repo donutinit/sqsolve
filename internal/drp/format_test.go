@@ -30,7 +30,7 @@ func TestFamilyOf(t *testing.T) {
 			t.Errorf("familyOf(%q) = %v, want %v", typ, got, want)
 		}
 	}
-	if famUnknown.String() != "desconocido" || famText.String() != "texto" || famIntArray.String() != "arreglo de enteros" {
+	if famUnknown.String() != "unknown" || famText.String() != "text" || famIntArray.String() != "integer array" {
 		t.Error("family names")
 	}
 }
@@ -88,7 +88,7 @@ func TestEscape(t *testing.T) {
 	if got := escape(`a & b < c > d "e"`); got != "a &amp; b &lt; c &gt; d &quot;e&quot;" {
 		t.Errorf("escape = %q", got)
 	}
-	if got := escape("sin cambios 'ok' ñ"); got != "sin cambios 'ok' ñ" {
+	if got := escape("unchanged 'ok' ñ"); got != "unchanged 'ok' ñ" {
 		t.Errorf("escape changed plain text: %q", got)
 	}
 }

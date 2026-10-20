@@ -276,7 +276,7 @@ func (a *API) backupExportDownload(w http.ResponseWriter, r *http.Request, p *au
 		return
 	}
 	defer s.Close(ctx)
-	slug := "respaldo"
+	slug := "backup"
 	if l, _ := a.A.Svc.Library(ctx, b.LibraryID); l != nil {
 		slug = l.Slug
 	}

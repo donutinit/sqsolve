@@ -80,7 +80,7 @@ func (s *Server) parseTemplates() error {
 		}
 		t, err := template.Must(base.Clone()).ParseFS(templatesFS, e)
 		if err != nil {
-			return fmt.Errorf("plantilla %s: %w", name, err)
+			return fmt.Errorf("template %s: %w", name, err)
 		}
 		s.pages[name] = t
 	}
@@ -109,8 +109,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rw := &statusWriter{ResponseWriter: w, status: 200}
 	defer func() {
 		if p := recover(); p != nil {
-			s.log.Error("pánico en una petición", "path", r.URL.Path, "panic", p)
-			http.Error(rw, "Error interno (SQS-X999)", http.StatusInternalServerError)
+			s.log.Error("panic in a request", "path", r.URL.Path, "panic", p)
+			http.Error(rw, "Internal error (SQS-X999)", http.StatusInternalServerError)
 		}
 		if !strings.HasPrefix(r.URL.Path, "/static/") && r.URL.Path != "/healthz" {
 			s.log.Info("http", "method", r.Method, "path", r.URL.Path, "status", rw.status, "ms", time.Since(start).Milliseconds(), "ip", s.clientIP(r))
@@ -118,7 +118,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	if r.Method == http.MethodPost && !strings.HasPrefix(r.URL.Path, "/api/") {
 		limit := int64(1 << 20)
-		if r.URL.Path == "/respaldos/importar" {
+		if r.URL.Path == "/backups/import" {
 			limit = int64(s.A.Svc.Settings(r.Context()).ImportMaxMB) << 20
 		}
 		r.Body = http.MaxBytesReader(rw, r.Body, limit)
@@ -209,23 +209,23 @@ func principalOf(r *http.Request) *auth.Principal {
 func (s *Server) page(action auth.Action, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if has, err := s.A.Auth.HasAdmin(r.Context()); err == nil && !has {
-			http.Redirect(w, r, "/instalar", http.StatusSeeOther)
+			http.Redirect(w, r, "/setup", http.StatusSeeOther)
 			return
 		}
 		p, raw := s.principal(r, false)
 		if p == nil {
 			if raw != "" {
 				if _, err := s.A.Auth.Session(r.Context(), raw, s.clientIP(r), true); err == nil {
-					http.Redirect(w, r, "/entrar/codigo", http.StatusSeeOther)
+					http.Redirect(w, r, "/login/code", http.StatusSeeOther)
 					return
 				}
 			}
 			next := r.URL.RequestURI()
-			http.Redirect(w, r, "/entrar?next="+url.QueryEscape(next), http.StatusSeeOther)
+			http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusSeeOther)
 			return
 		}
 		if !p.Can(action) {
-			s.renderError(w, r, p, http.StatusForbidden, "SQS-A030 Tu rol no permite esta acción.")
+			s.renderError(w, r, p, http.StatusForbidden, "SQS-A030 Your role does not allow this action.")
 			return
 		}
 		if r.Method == http.MethodPost {
@@ -245,7 +245,7 @@ func (s *Server) page(action auth.Action, h http.HandlerFunc) http.HandlerFunc {
 				ok = s.A.Auth.CheckCSRF(raw, r.FormValue("csrf"))
 			}
 			if !ok {
-				s.renderError(w, r, p, http.StatusForbidden, "SQS-A031 El formulario venció o no viene de este panel. Recarga la página e inténtalo de nuevo.")
+				s.renderError(w, r, p, http.StatusForbidden, "SQS-A031 The form expired or did not come from this panel. Reload the page and try again.")
 				return
 			}
 		}
@@ -307,7 +307,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name, title, sec
 func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int, name, title, section string, data any) {
 	t, ok := s.pages[name]
 	if !ok {
-		http.Error(w, "plantilla desconocida: "+name, 500)
+		http.Error(w, "unknown template: "+name, 500)
 		return
 	}
 	p := principalOf(r)
@@ -321,7 +321,7 @@ func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", v); err != nil {
 		s.log.Error("render", "page", name, "err", err)
-		http.Error(w, "Error al mostrar la página (SQS-X998)", 500)
+		http.Error(w, "Error rendering the page (SQS-X998)", 500)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -357,7 +357,7 @@ func humanError(err error) string {
 	msg := err.Error()
 	var mbe *http.MaxBytesError
 	if errors.As(err, &mbe) {
-		return "SQS-C060 El envío es demasiado grande"
+		return "SQS-C060 The request body is too large"
 	}
 	if len(msg) > 600 {
 		msg = msg[:600] + "..."
@@ -404,95 +404,95 @@ func (s *Server) routes() {
 		http.Redirect(w, r, "/static/favicon.svg", http.StatusMovedPermanently)
 	})
 
-	m.HandleFunc("GET /instalar", s.setupForm)
-	m.HandleFunc("POST /instalar", s.setupSubmit)
-	m.HandleFunc("POST /instalar/recuperar", s.setupRecover)
-	m.HandleFunc("GET /instalar/kit", s.page(auth.ActView, s.setupKit))
-	m.HandleFunc("GET /entrar", s.loginForm)
-	m.HandleFunc("POST /entrar", s.loginSubmit)
-	m.HandleFunc("GET /entrar/codigo", s.totpForm)
-	m.HandleFunc("POST /entrar/codigo", s.totpSubmit)
-	m.HandleFunc("POST /salir", s.page(auth.ActView, s.logout))
+	m.HandleFunc("GET /setup", s.setupForm)
+	m.HandleFunc("POST /setup", s.setupSubmit)
+	m.HandleFunc("POST /setup/recover", s.setupRecover)
+	m.HandleFunc("GET /setup/kit", s.page(auth.ActView, s.setupKit))
+	m.HandleFunc("GET /login", s.loginForm)
+	m.HandleFunc("POST /login", s.loginSubmit)
+	m.HandleFunc("GET /login/code", s.totpForm)
+	m.HandleFunc("POST /login/code", s.totpSubmit)
+	m.HandleFunc("POST /logout", s.page(auth.ActView, s.logout))
 
 	m.HandleFunc("GET /{$}", s.page(auth.ActView, s.dashboard))
-	m.HandleFunc("GET /bibliotecas", s.page(auth.ActView, s.libraries))
-	m.HandleFunc("GET /bibliotecas/nueva", s.page(auth.ActLibraryCreate, s.libraryNewForm))
-	m.HandleFunc("POST /bibliotecas/nueva", s.page(auth.ActLibraryCreate, s.libraryNewSubmit))
-	m.HandleFunc("GET /bibliotecas/{id}", s.page(auth.ActView, s.library))
-	m.HandleFunc("GET /bibliotecas/{id}/instrucciones", s.page(auth.ActView, s.libraryInstructions))
-	m.HandleFunc("POST /bibliotecas/{id}/ajustes", s.page(auth.ActLibraryEdit, s.librarySettings))
-	m.HandleFunc("POST /bibliotecas/{id}/politica", s.page(auth.ActPolicyEdit, s.libraryPolicy))
-	m.HandleFunc("POST /bibliotecas/{id}/respaldar", s.page(auth.ActBackupCreate, s.libraryBackup))
-	m.HandleFunc("POST /bibliotecas/{id}/mantenimiento", s.page(auth.ActLibraryMaintenance, s.libraryMaintenance))
-	m.HandleFunc("POST /bibliotecas/{id}/ventana", s.page(auth.ActLibraryEdit, s.libraryReopen))
-	m.HandleFunc("POST /bibliotecas/{id}/contrasena/ver", s.page(auth.ActLibraryReveal, s.libraryReveal))
-	m.HandleFunc("POST /bibliotecas/{id}/contrasena/rotar", s.page(auth.ActLibraryCredentials, s.libraryRotate))
-	m.HandleFunc("POST /bibliotecas/{id}/personas", s.page(auth.ActLibraryCredentials, s.libraryAddMember))
-	m.HandleFunc("POST /bibliotecas/{id}/personas/{cid}/revocar", s.page(auth.ActLibraryCredentials, s.libraryRevokeMember))
-	m.HandleFunc("POST /bibliotecas/{id}/redes", s.page(auth.ActLibraryCredentials, s.libraryNetwork))
-	m.HandleFunc("POST /bibliotecas/{id}/sesiones/{pid}/cerrar", s.page(auth.ActSessionTerminate, s.librarySessionTerminate))
-	m.HandleFunc("GET /bibliotecas/{id}/eliminar", s.page(auth.ActLibraryDelete, s.libraryDeleteForm))
-	m.HandleFunc("POST /bibliotecas/{id}/eliminar", s.page(auth.ActLibraryDelete, s.libraryDeleteSubmit))
-	m.HandleFunc("POST /bibliotecas/{id}/recuperar", s.page(auth.ActLibraryDelete, s.libraryUntrash))
-	m.HandleFunc("GET /bibliotecas/{id}/purgar", s.page(auth.ActLibraryDelete, s.libraryPurgeForm))
-	m.HandleFunc("POST /bibliotecas/{id}/purgar", s.page(auth.ActLibraryDelete, s.libraryPurgeSubmit))
-	m.HandleFunc("GET /bibliotecas/{id}/revertir", s.page(auth.ActRestoreRevert, s.libraryRevertForm))
-	m.HandleFunc("POST /bibliotecas/{id}/revertir", s.page(auth.ActRestoreRevert, s.libraryRevertSubmit))
-	m.HandleFunc("POST /bibliotecas/{id}/recrear", s.page(auth.ActRestoreReplace, s.libraryRecreate))
-	m.HandleFunc("GET /bibliotecas/{id}/exportar", s.page(auth.ActView, s.libraryExport))
-	m.HandleFunc("GET /bibliotecas/{id}/exportar/proyectos/{pid}", s.page(auth.ActLibraryExport, s.libraryExportProject))
-	m.HandleFunc("GET /bibliotecas/{id}/exportar/stills/{sid}", s.page(auth.ActLibraryExport, s.libraryExportStill))
-	m.HandleFunc("GET /bibliotecas/{id}/exportar/albumes/{vid}", s.page(auth.ActLibraryExport, s.libraryExportAlbum))
+	m.HandleFunc("GET /libraries", s.page(auth.ActView, s.libraries))
+	m.HandleFunc("GET /libraries/new", s.page(auth.ActLibraryCreate, s.libraryNewForm))
+	m.HandleFunc("POST /libraries/new", s.page(auth.ActLibraryCreate, s.libraryNewSubmit))
+	m.HandleFunc("GET /libraries/{id}", s.page(auth.ActView, s.library))
+	m.HandleFunc("GET /libraries/{id}/instructions", s.page(auth.ActView, s.libraryInstructions))
+	m.HandleFunc("POST /libraries/{id}/settings", s.page(auth.ActLibraryEdit, s.librarySettings))
+	m.HandleFunc("POST /libraries/{id}/policy", s.page(auth.ActPolicyEdit, s.libraryPolicy))
+	m.HandleFunc("POST /libraries/{id}/backup", s.page(auth.ActBackupCreate, s.libraryBackup))
+	m.HandleFunc("POST /libraries/{id}/maintenance", s.page(auth.ActLibraryMaintenance, s.libraryMaintenance))
+	m.HandleFunc("POST /libraries/{id}/window", s.page(auth.ActLibraryEdit, s.libraryReopen))
+	m.HandleFunc("POST /libraries/{id}/password/reveal", s.page(auth.ActLibraryReveal, s.libraryReveal))
+	m.HandleFunc("POST /libraries/{id}/password/rotate", s.page(auth.ActLibraryCredentials, s.libraryRotate))
+	m.HandleFunc("POST /libraries/{id}/people", s.page(auth.ActLibraryCredentials, s.libraryAddMember))
+	m.HandleFunc("POST /libraries/{id}/people/{cid}/revoke", s.page(auth.ActLibraryCredentials, s.libraryRevokeMember))
+	m.HandleFunc("POST /libraries/{id}/networks", s.page(auth.ActLibraryCredentials, s.libraryNetwork))
+	m.HandleFunc("POST /libraries/{id}/sessions/{pid}/terminate", s.page(auth.ActSessionTerminate, s.librarySessionTerminate))
+	m.HandleFunc("GET /libraries/{id}/delete", s.page(auth.ActLibraryDelete, s.libraryDeleteForm))
+	m.HandleFunc("POST /libraries/{id}/delete", s.page(auth.ActLibraryDelete, s.libraryDeleteSubmit))
+	m.HandleFunc("POST /libraries/{id}/untrash", s.page(auth.ActLibraryDelete, s.libraryUntrash))
+	m.HandleFunc("GET /libraries/{id}/purge", s.page(auth.ActLibraryDelete, s.libraryPurgeForm))
+	m.HandleFunc("POST /libraries/{id}/purge", s.page(auth.ActLibraryDelete, s.libraryPurgeSubmit))
+	m.HandleFunc("GET /libraries/{id}/revert", s.page(auth.ActRestoreRevert, s.libraryRevertForm))
+	m.HandleFunc("POST /libraries/{id}/revert", s.page(auth.ActRestoreRevert, s.libraryRevertSubmit))
+	m.HandleFunc("POST /libraries/{id}/recreate", s.page(auth.ActRestoreReplace, s.libraryRecreate))
+	m.HandleFunc("GET /libraries/{id}/export", s.page(auth.ActView, s.libraryExport))
+	m.HandleFunc("GET /libraries/{id}/export/projects/{pid}", s.page(auth.ActLibraryExport, s.libraryExportProject))
+	m.HandleFunc("GET /libraries/{id}/export/stills/{sid}", s.page(auth.ActLibraryExport, s.libraryExportStill))
+	m.HandleFunc("GET /libraries/{id}/export/albums/{vid}", s.page(auth.ActLibraryExport, s.libraryExportAlbum))
 
-	m.HandleFunc("GET /respaldos", s.page(auth.ActView, s.backups))
-	m.HandleFunc("GET /respaldos/importar", s.page(auth.ActBackupImport, s.importForm))
-	m.HandleFunc("POST /respaldos/importar", s.page(auth.ActBackupImport, s.importSubmit))
-	m.HandleFunc("GET /respaldos/{id}", s.page(auth.ActView, s.backup))
-	m.HandleFunc("POST /respaldos/{id}/verificar", s.page(auth.ActBackupVerify, s.backupVerify))
-	m.HandleFunc("POST /respaldos/{id}/fijar", s.page(auth.ActBackupPin, s.backupPin))
-	m.HandleFunc("POST /respaldos/{id}/borrar", s.page(auth.ActLibraryDelete, s.backupDelete))
-	m.HandleFunc("GET /respaldos/{id}/descargar", s.page(auth.ActBackupDownload, s.backupDownload))
-	m.HandleFunc("GET /respaldos/{id}/exportar", s.page(auth.ActView, s.backupExport))
-	m.HandleFunc("POST /respaldos/{id}/exportar/preparar", s.page(auth.ActLibraryExport, s.backupExportPrepare))
-	m.HandleFunc("POST /respaldos/{id}/exportar/cerrar", s.page(auth.ActLibraryExport, s.backupExportClose))
-	m.HandleFunc("GET /respaldos/{id}/exportar/proyectos/{pid}", s.page(auth.ActLibraryExport, s.backupExportProject))
-	m.HandleFunc("GET /respaldos/{id}/exportar/stills/{sid}", s.page(auth.ActLibraryExport, s.backupExportStill))
-	m.HandleFunc("GET /respaldos/{id}/exportar/albumes/{vid}", s.page(auth.ActLibraryExport, s.backupExportAlbum))
-	m.HandleFunc("GET /respaldos/{id}/restaurar", s.page(auth.ActRestoreNew, s.restoreForm))
-	m.HandleFunc("POST /respaldos/{id}/restaurar", s.page(auth.ActRestoreNew, s.restoreSubmit))
+	m.HandleFunc("GET /backups", s.page(auth.ActView, s.backups))
+	m.HandleFunc("GET /backups/import", s.page(auth.ActBackupImport, s.importForm))
+	m.HandleFunc("POST /backups/import", s.page(auth.ActBackupImport, s.importSubmit))
+	m.HandleFunc("GET /backups/{id}", s.page(auth.ActView, s.backup))
+	m.HandleFunc("POST /backups/{id}/verify", s.page(auth.ActBackupVerify, s.backupVerify))
+	m.HandleFunc("POST /backups/{id}/pin", s.page(auth.ActBackupPin, s.backupPin))
+	m.HandleFunc("POST /backups/{id}/delete", s.page(auth.ActLibraryDelete, s.backupDelete))
+	m.HandleFunc("GET /backups/{id}/download", s.page(auth.ActBackupDownload, s.backupDownload))
+	m.HandleFunc("GET /backups/{id}/export", s.page(auth.ActView, s.backupExport))
+	m.HandleFunc("POST /backups/{id}/export/prepare", s.page(auth.ActLibraryExport, s.backupExportPrepare))
+	m.HandleFunc("POST /backups/{id}/export/close", s.page(auth.ActLibraryExport, s.backupExportClose))
+	m.HandleFunc("GET /backups/{id}/export/projects/{pid}", s.page(auth.ActLibraryExport, s.backupExportProject))
+	m.HandleFunc("GET /backups/{id}/export/stills/{sid}", s.page(auth.ActLibraryExport, s.backupExportStill))
+	m.HandleFunc("GET /backups/{id}/export/albums/{vid}", s.page(auth.ActLibraryExport, s.backupExportAlbum))
+	m.HandleFunc("GET /backups/{id}/restore", s.page(auth.ActRestoreNew, s.restoreForm))
+	m.HandleFunc("POST /backups/{id}/restore", s.page(auth.ActRestoreNew, s.restoreSubmit))
 
-	m.HandleFunc("GET /tareas", s.page(auth.ActView, s.jobsList))
-	m.HandleFunc("GET /tareas/{id}", s.page(auth.ActView, s.job))
-	m.HandleFunc("GET /tareas/{id}/eventos", s.page(auth.ActView, s.jobEvents))
-	m.HandleFunc("POST /tareas/{id}/cancelar", s.page(auth.ActJobCancel, s.jobCancel))
-	m.HandleFunc("POST /tareas/{id}/reintentar", s.page(auth.ActBackupCreate, s.jobRetry))
+	m.HandleFunc("GET /jobs", s.page(auth.ActView, s.jobsList))
+	m.HandleFunc("GET /jobs/{id}", s.page(auth.ActView, s.job))
+	m.HandleFunc("GET /jobs/{id}/events", s.page(auth.ActView, s.jobEvents))
+	m.HandleFunc("POST /jobs/{id}/cancel", s.page(auth.ActJobCancel, s.jobCancel))
+	m.HandleFunc("POST /jobs/{id}/retry", s.page(auth.ActBackupCreate, s.jobRetry))
 
-	m.HandleFunc("GET /actividad", s.page(auth.ActView, s.activity))
-	m.HandleFunc("GET /actividad/auditoria.jsonl", s.page(auth.ActAuditView, s.auditExport))
-	m.HandleFunc("GET /salud", s.page(auth.ActView, s.healthPage))
+	m.HandleFunc("GET /activity", s.page(auth.ActView, s.activity))
+	m.HandleFunc("GET /activity/audit.jsonl", s.page(auth.ActAuditView, s.auditExport))
+	m.HandleFunc("GET /health", s.page(auth.ActView, s.healthPage))
 
-	m.HandleFunc("GET /ajustes", s.page(auth.ActView, s.settings))
-	m.HandleFunc("POST /ajustes/general", s.page(auth.ActSettingsEdit, s.settingsGeneral))
-	m.HandleFunc("POST /ajustes/certificado", s.page(auth.ActSettingsEdit, s.settingsCert))
-	m.HandleFunc("POST /ajustes/usuarios", s.page(auth.ActUsersManage, s.userCreate))
-	m.HandleFunc("POST /ajustes/usuarios/{id}", s.page(auth.ActUsersManage, s.userUpdate))
-	m.HandleFunc("POST /ajustes/usuarios/{id}/contrasena", s.page(auth.ActUsersManage, s.userPassword))
-	m.HandleFunc("POST /ajustes/usuarios/{id}/totp", s.page(auth.ActUsersManage, s.userDisableTOTP))
-	m.HandleFunc("POST /ajustes/notificaciones", s.page(auth.ActNotifyManage, s.notifySave))
-	m.HandleFunc("POST /ajustes/notificaciones/{id}/probar", s.page(auth.ActNotifyManage, s.notifyTest))
-	m.HandleFunc("POST /ajustes/notificaciones/{id}/borrar", s.page(auth.ActNotifyManage, s.notifyDelete))
-	m.HandleFunc("POST /ajustes/mantenimiento/{accion}", s.page(auth.ActSettingsEdit, s.maintenanceAction))
-	m.HandleFunc("GET /ajustes/kit", s.page(auth.ActSettingsEdit, s.recoveryKit))
-	m.HandleFunc("GET /ajustes/diagnostico", s.page(auth.ActDiagnostics, s.diagnostics))
+	m.HandleFunc("GET /settings", s.page(auth.ActView, s.settings))
+	m.HandleFunc("POST /settings/general", s.page(auth.ActSettingsEdit, s.settingsGeneral))
+	m.HandleFunc("POST /settings/certificate", s.page(auth.ActSettingsEdit, s.settingsCert))
+	m.HandleFunc("POST /settings/users", s.page(auth.ActUsersManage, s.userCreate))
+	m.HandleFunc("POST /settings/users/{id}", s.page(auth.ActUsersManage, s.userUpdate))
+	m.HandleFunc("POST /settings/users/{id}/password", s.page(auth.ActUsersManage, s.userPassword))
+	m.HandleFunc("POST /settings/users/{id}/totp", s.page(auth.ActUsersManage, s.userDisableTOTP))
+	m.HandleFunc("POST /settings/notifications", s.page(auth.ActNotifyManage, s.notifySave))
+	m.HandleFunc("POST /settings/notifications/{id}/test", s.page(auth.ActNotifyManage, s.notifyTest))
+	m.HandleFunc("POST /settings/notifications/{id}/delete", s.page(auth.ActNotifyManage, s.notifyDelete))
+	m.HandleFunc("POST /settings/maintenance/{action}", s.page(auth.ActSettingsEdit, s.maintenanceAction))
+	m.HandleFunc("GET /settings/kit", s.page(auth.ActSettingsEdit, s.recoveryKit))
+	m.HandleFunc("GET /settings/diagnostics", s.page(auth.ActDiagnostics, s.diagnostics))
 
-	m.HandleFunc("GET /cuenta", s.page(auth.ActView, s.account))
-	m.HandleFunc("POST /cuenta/contrasena", s.page(auth.ActView, s.accountPassword))
-	m.HandleFunc("POST /cuenta/totp/iniciar", s.page(auth.ActView, s.accountTOTPBegin))
-	m.HandleFunc("POST /cuenta/totp/activar", s.page(auth.ActView, s.accountTOTPEnable))
-	m.HandleFunc("POST /cuenta/totp/quitar", s.page(auth.ActView, s.accountTOTPDisable))
-	m.HandleFunc("POST /cuenta/tokens", s.page(auth.ActTokensOwn, s.tokenCreate))
-	m.HandleFunc("POST /cuenta/tokens/{id}/revocar", s.page(auth.ActTokensOwn, s.tokenRevoke))
-	m.HandleFunc("POST /cuenta/sesiones", s.page(auth.ActView, s.logoutEverywhere))
+	m.HandleFunc("GET /account", s.page(auth.ActView, s.account))
+	m.HandleFunc("POST /account/password", s.page(auth.ActView, s.accountPassword))
+	m.HandleFunc("POST /account/totp/start", s.page(auth.ActView, s.accountTOTPBegin))
+	m.HandleFunc("POST /account/totp/enable", s.page(auth.ActView, s.accountTOTPEnable))
+	m.HandleFunc("POST /account/totp/disable", s.page(auth.ActView, s.accountTOTPDisable))
+	m.HandleFunc("POST /account/tokens", s.page(auth.ActTokensOwn, s.tokenCreate))
+	m.HandleFunc("POST /account/tokens/{id}/revoke", s.page(auth.ActTokensOwn, s.tokenRevoke))
+	m.HandleFunc("POST /account/sessions", s.page(auth.ActView, s.logoutEverywhere))
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
@@ -501,12 +501,12 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		problems = append(problems, "postgresql")
 	}
 	if err := s.A.Svc.BackupVolumeOK(); err != nil {
-		problems = append(problems, "volumen de respaldos")
+		problems = append(problems, "backup volume")
 	}
 	if len(problems) > 0 {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprintf(w, "no listo: %s\n", strings.Join(problems, ", "))
+		fmt.Fprintf(w, "not ready: %s\n", strings.Join(problems, ", "))
 		return
 	}
-	w.Write([]byte("listo\n"))
+	w.Write([]byte("ready\n"))
 }

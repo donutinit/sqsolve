@@ -141,13 +141,13 @@ def refresh_token():
     return TOK["v"]
 
 def job_id(loc):
-    m = re.search(r"/tareas/([0-9A-Z]{26})", loc)
+    m = re.search(r"/jobs/([0-9A-Z]{26})", loc)
     return m.group(1) if m else ""
 
 def wait_job(jid, timeout=300):
     end = time.time() + timeout
     while time.time() < end:
-        st, b, _ = page(f"/tareas/{jid}")
+        st, b, _ = page(f"/jobs/{jid}")
         m = re.search(r'data-job-state="(\w+)"', b)
         if m and m.group(1) in ("succeeded", "failed", "canceled", "interrupted"):
             return m.group(1), b
@@ -185,7 +185,7 @@ def resolve_create(user, pw, rows_mb=0):
     if rc != 0:
         return rc, out
     sql = RESOLVE_SCHEMA + "".join(f'CREATE TABLE "SmAux{i:03d}"(id serial primary key, v text);' for i in range(120))
-    sql += """INSERT INTO "SM_Project"(name, blob) SELECT 'Proyecto '||g, convert_to(repeat(md5(g::text),40),'UTF8') FROM generate_series(1,60) g;
+    sql += """INSERT INTO "SM_Project"(name, blob) SELECT 'Project '||g, convert_to(repeat(md5(g::text),40),'UTF8') FROM generate_series(1,60) g;
 INSERT INTO "SM_Timeline"(project, payload) SELECT 1+(g%60), convert_to(md5(random()::text),'UTF8') FROM generate_series(1,600) g;
 INSERT INTO "BtVideoInfo"(clip, meta) SELECT 'A00'||g||'.braw', jsonb_build_object('fps',24,'n',g) FROM generate_series(1,3000) g;"""
     if rows_mb:
@@ -194,13 +194,13 @@ INSERT INTO "BtVideoInfo"(clip, meta) SELECT 'A00'||g||'.braw', jsonb_build_obje
     return psql(user, pw, user, sql)
 
 def reveal(libpath):
-    st, loc, b = post(libpath + "/contrasena/ver", {"csrf": TOK["v"]})
+    st, loc, b = post(libpath + "/password/reveal", {"csrf": TOK["v"]})
     pw = re.search(r'id="r-pass">([^<]+)<', b)
     user = re.search(r'id="r-user">([^<]+)<', b)
     return (user.group(1) if user else ""), (pw.group(1) if pw else ""), b
 
 def create_library(name, slug=""):
-    st, loc, b = post("/bibliotecas/nueva", {"csrf": TOK["v"], "name": name, "slug": slug, "strategy": "resolve", "notes": ""})
+    st, loc, b = post("/libraries/new", {"csrf": TOK["v"], "name": name, "slug": slug, "strategy": "resolve", "notes": ""})
     lp = loc.split("?")[0]
     for _ in range(100):
         st, b, _ = page(lp)
@@ -229,150 +229,150 @@ def fresh():
     if not check("compila", r.returncode == 0, r.stderr):
         sys.exit(1)
     rc, out = cli("init")
-    check("init en volúmenes vacíos", rc == 0, out)
+    check("init on empty volumes", rc == 0, out)
     rc2, out2 = cli("init")
     check("init es idempotente", rc2 == 0 and "generad" not in out2, out2)
     pwfile = f"{BASE_DIR}/pg/sqsolve/superuser_password"
     r = subprocess.run(["initdb", "-D", ENV["SQSOLVE_PG_DATA_DIR"], "-U", "postgres", f"--pwfile={pwfile}", "--auth=scram-sha-256",
                         "--encoding=UTF8", "--locale-provider=builtin", "--builtin-locale=C.UTF-8"], capture_output=True, text=True)
-    check("initdb como la imagen oficial", r.returncode == 0, r.stderr[-400:])
-    check("PostgreSQL arranca con la configuración generada", start_pg(), open(f"{BASE_DIR}/postgres.log").read()[-800:])
+    check("initdb like the official image", r.returncode == 0, r.stderr[-400:])
+    check("PostgreSQL starts with the generated configuration", start_pg(), open(f"{BASE_DIR}/postgres.log").read()[-800:])
     check("sqsolve arranca y queda listo", start_sq(), open(f"{BASE_DIR}/sqsolve.log").read()[-1500:])
-    m = re.search(r"código de instalación:\s+([A-Z0-9]{5}-[A-Z0-9]{5})", open(f"{BASE_DIR}/sqsolve.log").read())
-    check("el registro muestra el código de instalación", m is not None)
+    m = re.search(r"installation code:\s+([A-Z0-9]{5}-[A-Z0-9]{5})", open(f"{BASE_DIR}/sqsolve.log").read())
+    check("the log shows the installation code", m is not None)
     return m.group(1) if m else ""
 
 def s_setup(code):
     st, b, _ = page("/")
-    check("sin administrador manda al asistente", "/instalar" in _ or "Instalar" in b, _)
+    check("without an administrator it redirects to the setup wizard", "/setup" in _ or "Setup" in b, _)
     pre = csrf(b)
-    form = {"csrf": pre, "code": "AAAAA-BBBBB", "username": "diego", "password": "luz de tungsteno 3200K", "password2": "luz de tungsteno 3200K",
-            "host": "127.0.0.1", "name": "Estudio", "preset": "diario"}
-    st, loc, _ = post("/instalar", form)
+    form = {"csrf": pre, "code": "AAAAA-BBBBB", "username": "diego", "password": "tungsten light 3200K", "password2": "tungsten light 3200K",
+            "host": "127.0.0.1", "name": "Studio", "preset": "daily"}
+    st, loc, _ = post("/setup", form)
     st, b, _ = page(loc)
     k, msg = flash(b)
-    check("código incorrecto muestra error y no instala", k == "error" and "error" not in loc, f"{loc} {k} {msg}")
+    check("a wrong code shows an error and does not install", k == "error" and "error" not in loc, f"{loc} {k} {msg}")
     form["code"] = code
-    st, loc, _ = post("/instalar", form)
-    check("instalación con el código correcto", loc == "/instalar/kit", loc)
-    st, b, _ = page("/instalar/kit")
-    check("kit de recuperación visible", st == 200 and "recuperación" in b.lower(), str(st))
+    st, loc, _ = post("/setup", form)
+    check("setup with the right code", loc == "/setup/kit", loc)
+    st, b, _ = page("/setup/kit")
+    check("recovery kit visible", st == 200 and "recovery" in b.lower(), str(st))
     refresh_token()
 
 def s_library_flow():
-    lp = create_library("Boda Ana & Luis 💍 2026")
-    check("biblioteca con nombre en Unicode", lp.startswith("/bibliotecas/"), lp)
+    lp = create_library("Wedding Ana & Luis 💍 2026")
+    check("library with a Unicode name", lp.startswith("/libraries/"), lp)
     st, b, _ = page(lp)
     slug = re.search(r'<span class="mono">([a-z0-9_]+)</span>', b)
-    log("identificador sugerido: " + (slug.group(1) if slug else "?"))
+    log("suggested identifier: " + (slug.group(1) if slug else "?"))
     user, pw, rb = reveal(lp)
-    check("la contraseña se muestra (sesión reciente)", bool(user and pw), rb[:300])
+    check("the password is shown (recent session)", bool(user and pw), rb[:300])
     rc, out = resolve_create(user, pw, rows_mb=60)
-    check("Resolve (simulado) crea la base y sus tablas", rc == 0, out[-300:])
-    check("la biblioteca se activa sola", wait_active(lp, 90))
+    check("Resolve (simulated) creates the database and its tables", rc == 0, out[-300:])
+    check("the library activates by itself", wait_active(lp, 90))
     rc, out = psql(user, pw, "postgres", f"CREATE DATABASE {user}_otra")
-    check("tras activarse, el rol ya no puede crear bases", rc != 0 and "permission denied" in out, out)
+    check("after activation, the role can no longer create databases", rc != 0 and "permission denied" in out, out)
     rc, out = psql(user, pw, user, 'SELECT count(*) FROM "SM_Project"')
-    check("la estación sigue entrando a su biblioteca", rc == 0 and out == "60", out)
+    check("the workstation can still enter its library", rc == 0 and out == "60", out)
     return lp, user, pw
 
 def s_isolation(lp1, user1, pw1):
-    lp2 = create_library("Comercial Café")
+    lp2 = create_library("Commercial Café")
     user2, pw2, _ = reveal(lp2)
     rc, out = resolve_create(user2, pw2)
     wait_active(lp2, 90)
     rc, out = psql(user2, pw2, user1, "SELECT 1")
-    check("una biblioteca no puede entrar a otra", rc != 0, out)
-    rc, out = psql(user1, "contraseña-mala", user1, "SELECT 1")
-    check("contraseña incorrecta rechazada", rc != 0 and "password authentication failed" in out, out)
+    check("a library cannot enter another one", rc != 0, out)
+    rc, out = psql(user1, "wrong-password", user1, "SELECT 1")
+    check("wrong password rejected", rc != 0 and "password authentication failed" in out, out)
     rc, out = psql("sqsolve_admin", "x", "postgres", "SELECT 1")
-    check("sqsolve_admin no entra por red", rc != 0, out)
+    check("sqsolve_admin cannot enter over the network", rc != 0, out)
     rc, out = psql("postgres", "x", "postgres", "SELECT 1")
-    check("postgres no entra por red", rc != 0, out)
+    check("postgres cannot enter over the network", rc != 0, out)
     return lp2, user2, pw2
 
 def s_backup_under_load(lp, user, pw):
     writer = subprocess.Popen(["psql", "-X", "-q", "-h", "127.0.0.1", "-p", str(PGPORT), "-U", user, "-d", user, "-c",
                                "DO $$ BEGIN FOR i IN 1..400 LOOP INSERT INTO \"BtVideoInfo\"(clip, meta) VALUES ('live'||i, '{}'); PERFORM pg_sleep(0.02); COMMIT; END LOOP; END $$;"],
                               env=dict(os.environ, PGPASSWORD=pw), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    st, loc, _ = post(lp + "/respaldar", {"csrf": TOK["v"]})
+    st, loc, _ = post(lp + "/backup", {"csrf": TOK["v"]})
     state, b = wait_job(job_id(loc), 300)
     writer.wait(60)
-    check("respaldo con una estación escribiendo", state == "succeeded", state)
-    st, b, _ = page(lp + "?tab=respaldos")
-    bid = re.search(r'href="/respaldos/([0-9A-Z]{26})"', b)
+    check("backup with a workstation writing", state == "succeeded", state)
+    st, b, _ = page(lp + "?tab=backups")
+    bid = re.search(r'href="/backups/([0-9A-Z]{26})"', b)
     bid = bid.group(1) if bid else ""
-    st, loc, _ = post(f"/respaldos/{bid}/verificar", {"csrf": TOK["v"]})
+    st, loc, _ = post(f"/backups/{bid}/verify", {"csrf": TOK["v"]})
     state, b = wait_job(job_id(loc), 300)
-    check("restauración de prueba (L2) del respaldo hecho bajo carga", state == "succeeded", re.sub(r"<[^>]+>", " ", b)[-600:])
+    check("test restore (L2) of the backup taken under load", state == "succeeded", re.sub(r"<[^>]+>", " ", b)[-600:])
     leftovers = superuser("SELECT string_agg(datname, ',') FROM pg_database WHERE datname LIKE 'sqsolve_verify_%'")
-    check("la verificación no deja bases temporales", leftovers == "", leftovers)
+    check("verification leaves no temporary databases", leftovers == "", leftovers)
     return bid
 
 def s_restore_replace(lp, user, pw, bid):
-    psql(user, pw, user, 'INSERT INTO "SM_Project"(name) VALUES (\'después del respaldo\')')
+    psql(user, pw, user, 'INSERT INTO "SM_Project"(name) VALUES (\'after the backup\')')
     sess = idle_session(user, pw, user)
-    st, loc, b = post(f"/respaldos/{bid}/restaurar", {"csrf": TOK["v"], "mode": "reemplazar", "confirm": "no-es", "terminate": ""})
+    st, loc, b = post(f"/backups/{bid}/restore", {"csrf": TOK["v"], "mode": "replace", "confirm": "not-it", "terminate": ""})
     st, b, _ = page(loc)
     k, msg = flash(b)
-    check("reemplazar exige escribir el identificador", k == "error", f"{k} {msg}")
+    check("replacing requires typing the identifier", k == "error", f"{k} {msg}")
     slug = re.search(r"<code>([a-z0-9_]+)</code>", b)
-    st, loc, b = post(f"/respaldos/{bid}/restaurar", {"csrf": TOK["v"], "mode": "reemplazar", "confirm": user, "terminate": "on"})
+    st, loc, b = post(f"/backups/{bid}/restore", {"csrf": TOK["v"], "mode": "replace", "confirm": user, "terminate": "on"})
     state, jb = wait_job(job_id(loc), 400)
-    check("reemplazo con una estación conectada (cerrando sesiones)", state == "succeeded", re.sub(r"<[^>]+>", " ", jb)[-800:])
+    check("replace with a workstation connected (closing sessions)", state == "succeeded", re.sub(r"<[^>]+>", " ", jb)[-800:])
     sess.poll()
-    rc, out = psql(user, pw, user, "SELECT count(*) FROM \"SM_Project\" WHERE name = 'después del respaldo'")
-    check("la biblioteca quedó como en el respaldo", rc == 0 and out == "0", out)
+    rc, out = psql(user, pw, user, "SELECT count(*) FROM \"SM_Project\" WHERE name = 'after the backup'")
+    check("the library is as it was in the backup", rc == 0 and out == "0", out)
     rc, out = psql(user, pw, user, 'SELECT count(*) FROM "SmAux119"')
-    check("las 124 tablas siguen ahí", rc == 0, out)
+    check("the 124 tables are still there", rc == 0, out)
     prev = superuser(f"SELECT string_agg(datname, ',') FROM pg_database WHERE datname LIKE '{user}__prev_%'")
-    check("se conserva el estado anterior para revertir", prev != "", prev)
+    check("the previous state is kept to revert", prev != "", prev)
     # Second replace must not leave the first previous state behind.
     time.sleep(61)
-    st, loc, b = post(f"/respaldos/{bid}/restaurar", {"csrf": TOK["v"], "mode": "reemplazar", "confirm": user, "terminate": "on"})
+    st, loc, b = post(f"/backups/{bid}/restore", {"csrf": TOK["v"], "mode": "replace", "confirm": user, "terminate": "on"})
     state, jb = wait_job(job_id(loc), 400)
     prev2 = superuser(f"SELECT string_agg(datname, ',') FROM pg_database WHERE datname LIKE '{user}__prev_%'")
-    check("un segundo reemplazo no deja estados anteriores huérfanos", state == "succeeded" and prev2 and "," not in prev2, f"{state} {prev2}")
-    st, b, _ = page(lp + "/revertir")
-    st, loc, b = post(lp + "/revertir", {"csrf": TOK["v"], "confirm": user})
+    check("a second replace leaves no orphaned previous states", state == "succeeded" and prev2 and "," not in prev2, f"{state} {prev2}")
+    st, b, _ = page(lp + "/revert")
+    st, loc, b = post(lp + "/revert", {"csrf": TOK["v"], "confirm": user})
     state, jb = wait_job(job_id(loc), 400)
-    check("revertir el último reemplazo", state == "succeeded", re.sub(r"<[^>]+>", " ", jb)[-600:])
+    check("revert the last replace", state == "succeeded", re.sub(r"<[^>]+>", " ", jb)[-600:])
     try:
         sess.stdin.close(); sess.wait(5)
     except Exception:
         pass
 
 def s_kill_during_backup(lp, user, pw):
-    st, loc, _ = post(lp + "/respaldar", {"csrf": TOK["v"]})
+    st, loc, _ = post(lp + "/backup", {"csrf": TOK["v"]})
     jid = job_id(loc)
     for _ in range(100):
-        st, b, _ = page(f"/tareas/{jid}")
+        st, b, _ = page(f"/jobs/{jid}")
         if 'data-job-state="running"' in b:
             break
         time.sleep(0.1)
     time.sleep(0.4)
     stop_sq(signal.SIGKILL)
     partials = [os.path.join(d, f) for d, _, fs in os.walk(f"{BASE_DIR}/backups/libraries") for f in fs if f.endswith(".partial")]
-    log(f"archivos .partial tras matar a sqsolve: {len(partials)}")
-    check("sqsolve vuelve a arrancar tras morir a media tarea", start_sq(), open(f"{BASE_DIR}/sqsolve.log").read()[-1500:])
+    log(f".partial files after killing sqsolve: {len(partials)}")
+    check("sqsolve starts again after dying mid-job", start_sq(), open(f"{BASE_DIR}/sqsolve.log").read()[-1500:])
     time.sleep(2)
     refresh_token()
-    st, b, _ = page(f"/tareas/{jid}")
+    st, b, _ = page(f"/jobs/{jid}")
     m = re.search(r'data-job-state="(\w+)"', b)
-    check("la tarea interrumpida queda marcada como tal", m and m.group(1) in ("interrupted", "failed"), m.group(1) if m else b[:200])
+    check("the interrupted job is marked as such", m and m.group(1) in ("interrupted", "failed"), m.group(1) if m else b[:200])
     partials = [os.path.join(d, f) for d, _, fs in os.walk(f"{BASE_DIR}/backups/libraries") for f in fs if f.endswith(".partial")]
-    check("no quedan archivos .partial tras reconciliar", not partials, str(partials))
+    check("no .partial files remain after reconciling", not partials, str(partials))
     ghosts = superuser("SELECT count(*) FROM pg_stat_activity WHERE application_name = 'pg_dump'")
-    check("ningún pg_dump sobrevive a sqsolve", ghosts == "0", ghosts)
-    st, loc, _ = post(lp + "/respaldar", {"csrf": TOK["v"]})
+    check("no pg_dump outlives sqsolve", ghosts == "0", ghosts)
+    st, loc, _ = post(lp + "/backup", {"csrf": TOK["v"]})
     state, _ = wait_job(job_id(loc), 300)
-    check("el siguiente respaldo funciona", state == "succeeded", state)
+    check("the next backup works", state == "succeeded", state)
 
 def s_pg_down(lp):
-    st, loc, _ = post(lp + "/respaldar", {"csrf": TOK["v"]})
+    st, loc, _ = post(lp + "/backup", {"csrf": TOK["v"]})
     jid = job_id(loc)
     for _ in range(100):
-        st, b, _ = page(f"/tareas/{jid}")
+        st, b, _ = page(f"/jobs/{jid}")
         if 'data-job-state="running"' in b:
             break
         time.sleep(0.1)
@@ -380,149 +380,149 @@ def s_pg_down(lp):
     stop_pg(signal.SIGINT)
     state, b = wait_job(jid, 120)
     detail = re.sub(r"<[^>]+>", " ", b)
-    check("con PostgreSQL caído el respaldo falla y lo explica", state in ("failed", "succeeded"), state)
-    log("estado: " + state)
+    check("with PostgreSQL down the backup fails and explains why", state in ("failed", "succeeded"), state)
+    log("state: " + state)
     st, h, _ = get_raw("/readyz")
-    check("readyz responde 503 sin PostgreSQL", st == 503, str(st))
+    check("readyz answers 503 without PostgreSQL", st == 503, str(st))
     st, b, _ = page("/")
-    check("el panel abre aunque PostgreSQL no esté", st == 200, str(st))
-    st, b, _ = page("/salud")
-    check("Salud dice que PostgreSQL no responde", st == 200 and "Sin respuesta" in b, re.sub(r"<[^>]+>", " ", b)[:400])
+    check("the panel opens even if PostgreSQL is down", st == 200, str(st))
+    st, b, _ = page("/health")
+    check("Health says PostgreSQL is not responding", st == 200 and "Not responding" in b, re.sub(r"<[^>]+>", " ", b)[:400])
     start_pg()
     ok = False
     for _ in range(60):
         if get_raw("/readyz")[0] == 200:
             ok = True; break
         time.sleep(1)
-    check("se recupera solo cuando PostgreSQL vuelve", ok)
-    st, loc, _ = post(lp + "/respaldar", {"csrf": TOK["v"]})
+    check("recovers by itself when PostgreSQL returns", ok)
+    st, loc, _ = post(lp + "/backup", {"csrf": TOK["v"]})
     state, b = wait_job(job_id(loc), 300)
-    check("respaldo después de que PostgreSQL volvió", state == "succeeded", re.sub(r"<[^>]+>", " ", b)[-500:])
+    check("backup after PostgreSQL came back", state == "succeeded", re.sub(r"<[^>]+>", " ", b)[-500:])
 
 def s_unwritable_backups(lp, slug):
     d = os.path.join(BASE_DIR, "backups", "libraries", slug, time.strftime("%Y", time.gmtime()), time.strftime("%m", time.gmtime()))
     os.chmod(d, 0o500)
     try:
-        st, loc, _ = post(lp + "/respaldar", {"csrf": TOK["v"]})
+        st, loc, _ = post(lp + "/backup", {"csrf": TOK["v"]})
         state, b = wait_job(job_id(loc), 120)
         text = re.sub(r"<[^>]+>", " ", b)
-        check("sin permiso de escritura el respaldo falla con mensaje claro", state == "failed" and ("permiso" in text.lower() or "permission" in text.lower()), text[-500:])
+        check("without write permission the backup fails with a clear message", state == "failed" and "permission" in text.lower(), text[-500:])
     finally:
         os.chmod(d, 0o700)
 
 def s_network_rules(lp, user, pw):
-    st, loc, b = post(lp + "/redes", {"csrf": TOK["v"], "cidrs": "10.9.9.0/24"})
+    st, loc, b = post(lp + "/networks", {"csrf": TOK["v"], "cidrs": "10.9.9.0/24"})
     rc, out = psql(user, pw, user, "SELECT 1")
-    check("una regla de red bloquea otras direcciones", rc != 0, out)
-    st, loc, b = post(lp + "/redes", {"csrf": TOK["v"], "cidrs": ""})
+    check("a network rule blocks other addresses", rc != 0, out)
+    st, loc, b = post(lp + "/networks", {"csrf": TOK["v"], "cidrs": ""})
     rc, out = psql(user, pw, user, "SELECT 1")
-    check("quitar la regla devuelve el acceso", rc == 0, out)
-    st, loc, b = post(lp + "/redes", {"csrf": TOK["v"], "cidrs": "300.1.1.1/8"})
+    check("removing the rule restores access", rc == 0, out)
+    st, loc, b = post(lp + "/networks", {"csrf": TOK["v"], "cidrs": "300.1.1.1/8"})
     st, b, _ = page(loc)
-    check("una red inválida se rechaza con mensaje", flash(b)[0] == "error", str(flash(b)))
+    check("an invalid network is rejected with a message", flash(b)[0] == "error", str(flash(b)))
 
 def s_members(lp, user, pw):
-    st, loc, b = post(lp + "/personas", {"csrf": TOK["v"], "person": "maria"})
+    st, loc, b = post(lp + "/people", {"csrf": TOK["v"], "person": "maria"})
     st, b, _ = page(loc)
-    check("credencial por persona creada", flash(b)[0] == "ok", str(flash(b)))
-    cid = re.search(r'name="cred" value="([0-9A-Z]{26})"[^>]*>\s*<button[^>]*>Ver', b) or re.findall(r'name="cred" value="([0-9A-Z]{26})"', b)
+    check("per-person credential created", flash(b)[0] == "ok", str(flash(b)))
+    cid = re.search(r'name="cred" value="([0-9A-Z]{26})"[^>]*>\s*<button[^>]*>Reveal', b) or re.findall(r'name="cred" value="([0-9A-Z]{26})"', b)
     creds = re.findall(r'name="cred" value="([0-9A-Z]{26})"', b)
     member_pw = ""
     for c in creds:
-        st2, loc2, rb = post(lp + "/contrasena/ver", {"csrf": TOK["v"], "cred": c})
+        st2, loc2, rb = post(lp + "/password/reveal", {"csrf": TOK["v"], "cred": c})
         u = re.search(r'id="r-user">([^<]+)<', rb)
         p = re.search(r'id="r-pass">([^<]+)<', rb)
         if u and u.group(1).endswith("__maria"):
             member_pw = p.group(1)
             break
     rc, out = psql(f"{user}__maria", member_pw, user, "CREATE TABLE \"SmNuevaDeMaria\"(id int); SELECT tableowner FROM pg_tables WHERE tablename='SmNuevaDeMaria'")
-    check("la persona entra y lo que crea queda a nombre de la biblioteca", rc == 0 and out.endswith(user), out)
+    check("the person connects and what they create belongs to the library", rc == 0 and out.endswith(user), out)
 
 def s_import(lp, bid):
-    st, h, data = raw("GET", f"/respaldos/{bid}/descargar")
-    check("descarga del respaldo", st == 200 and data[:5] == b"PGDMP", f"{st} {data[:10]}")
-    st, b, _ = page("/respaldos/importar?biblioteca=" + lp.rsplit("/", 1)[1])
+    st, h, data = raw("GET", f"/backups/{bid}/download")
+    check("backup download", st == 200 and data[:5] == b"PGDMP", f"{st} {data[:10]}")
+    st, b, _ = page("/backups/import?library=" + lp.rsplit("/", 1)[1])
     tok = csrf(b)
     libid = lp.rsplit("/", 1)[1]
-    st, loc, _ = post_multipart("/respaldos/importar", [("csrf", tok), ("library", libid)], [("upload", "subido.backup", data)])
+    st, loc, _ = post_multipart("/backups/import", [("csrf", tok), ("library", libid)], [("upload", "uploaded.backup", data)])
     state, jb = wait_job(job_id(loc), 300)
-    check("importar subiendo el archivo desde el panel", state == "succeeded", f"{loc} " + re.sub(r"<[^>]+>", " ", jb)[-400:])
+    check("import by uploading the file from the panel", state == "succeeded", f"{loc} " + re.sub(r"<[^>]+>", " ", jb)[-400:])
     left = os.listdir(f"{BASE_DIR}/backups/_import")
-    check("la subida no se queda duplicada en _import", left == [], str(left))
-    st, loc, _ = post_multipart("/respaldos/importar", [("library", libid), ("csrf", tok)], [("upload", "x.backup", b"PGDMP")])
+    check("the upload is not left duplicated in _import", left == [], str(left))
+    st, loc, _ = post_multipart("/backups/import", [("library", libid), ("csrf", tok)], [("upload", "x.backup", b"PGDMP")])
     st2, b2, _ = page("/")
-    check("multipart sin CSRF primero se rechaza", st == 403, str(st))
+    check("multipart without the CSRF part first is rejected", st == 403, str(st))
     shutil.copy(f"{BASE_DIR}/backups/" + [os.path.relpath(os.path.join(d, f), f"{BASE_DIR}/backups") for d, _, fs in os.walk(f"{BASE_DIR}/backups/libraries") for f in fs if f.endswith(".backup")][0],
-                f"{BASE_DIR}/backups/_import/copiado.backup")
-    st, loc, _ = post_multipart("/respaldos/importar", [("csrf", tok), ("library", libid), ("file", "copiado.backup"), ("delete", "on")], [("upload", "", b"")])
+                f"{BASE_DIR}/backups/_import/copied.backup")
+    st, loc, _ = post_multipart("/backups/import", [("csrf", tok), ("library", libid), ("file", "copied.backup"), ("delete", "on")], [("upload", "", b"")])
     state, jb = wait_job(job_id(loc), 300)
-    check("importar un archivo copiado a _import (y moverlo)", state == "succeeded" and not os.path.exists(f"{BASE_DIR}/backups/_import/copiado.backup"), state)
+    check("importar un archivo copiado a _import (y moverlo)", state == "succeeded" and not os.path.exists(f"{BASE_DIR}/backups/_import/copied.backup"), state)
 
 def s_cli():
     rc, out = cli("doctor")
-    check("doctor sin fallas", rc == 0, out)
+    check("doctor without failures", rc == 0, out)
     rc, out = cli("library", "list")
     check("library list", rc == 0 and "ACTIVA" in out.upper(), out)
     rc, out = cli("audit", "verify")
-    check("auditoría íntegra", rc == 0, out)
-    rc, out = cli("admin", "create", "operador", "--role", "operator", stdin="otra contraseña larga 1234\n")
-    check("admin create desde la consola", rc == 0, out)
-    rc, out = cli("backup", "create", "comercial_cafe", "--wait")
-    check("backup create --wait desde la consola", rc == 0, out)
+    check("audit log intact", rc == 0, out)
+    rc, out = cli("admin", "create", "operator1", "--role", "operator", stdin="another long password 1234\n")
+    check("admin create from the console", rc == 0, out)
+    rc, out = cli("backup", "create", "commercial_cafe", "--wait")
+    check("backup create --wait from the console", rc == 0, out)
 
 def s_restart_all():
     stop_sq(); stop_pg()
     check("PostgreSQL arranca otra vez", start_pg())
     check("sqsolve arranca otra vez", start_sq())
     st, b, path = page("/")
-    check("la sesión sigue válida tras reiniciar", st == 200 and "/entrar" not in path, path)
+    check("the session is still valid after restart", st == 200 and "/login" not in path, path)
     refresh_token()
 
 def s_pages():
     bad = []
-    st, b, _ = page("/bibliotecas")
-    libs = set(re.findall(r'href="(/bibliotecas/[0-9A-Z]{26})"', b))
-    paths = ["/", "/bibliotecas", "/bibliotecas?ver=papelera", "/bibliotecas/nueva", "/respaldos", "/respaldos/importar", "/tareas", "/actividad",
-             "/actividad?tab=auditoria", "/salud", "/ajustes", "/ajustes?tab=usuarios", "/ajustes?tab=notificaciones", "/ajustes?tab=mantenimiento",
-             "/ajustes?tab=acerca", "/cuenta"]
+    st, b, _ = page("/libraries")
+    libs = set(re.findall(r'href="(/libraries/[0-9A-Z]{26})"', b))
+    paths = ["/", "/libraries", "/libraries?view=trash", "/libraries/new", "/backups", "/backups/import", "/jobs", "/activity",
+             "/activity?tab=audit", "/health", "/settings", "/settings?tab=users", "/settings?tab=notifications", "/settings?tab=maintenance",
+             "/settings?tab=about", "/account"]
     for l in libs:
-        paths += [l + "?tab=" + t for t in ["conexion", "respaldos", "programacion", "accesos", "actividad", "ajustes", "peligro"]]
-        paths += [l + "/instrucciones"]
+        paths += [l + "?tab=" + t for t in ["connection", "backups", "schedule", "access", "activity", "settings", "danger"]]
+        paths += [l + "/instructions"]
     for p in paths:
         st, b, _ = page(p)
         if st != 200 or "SQS-X99" in b:
             bad.append(f"{p}:{st}")
-    check(f"{len(paths)} páginas responden 200", not bad, ", ".join(bad))
+    check(f"{len(paths)} pages answer 200", not bad, ", ".join(bad))
 
 def s_delete_purge(lp, user):
-    st, b, _ = page(lp + "/eliminar")
-    st, loc, _ = post(lp + "/eliminar", {"csrf": TOK["v"], "confirm": user})
+    st, b, _ = page(lp + "/delete")
+    st, loc, _ = post(lp + "/delete", {"csrf": TOK["v"], "confirm": user})
     state, jb = wait_job(job_id(loc), 300)
-    check("enviar a la papelera (con respaldo final)", state == "succeeded", re.sub(r"<[^>]+>", " ", jb)[-500:])
-    st, loc, _ = post(lp + "/recuperar", {"csrf": TOK["v"]})
+    check("send to the trash (with a final backup)", state == "succeeded", re.sub(r"<[^>]+>", " ", jb)[-500:])
+    st, loc, _ = post(lp + "/untrash", {"csrf": TOK["v"]})
     state, jb = wait_job(job_id(loc), 300)
-    check("sacar de la papelera", state == "succeeded", re.sub(r"<[^>]+>", " ", jb)[-500:])
-    st, loc, _ = post(lp + "/eliminar", {"csrf": TOK["v"], "confirm": user})
+    check("take out of the trash", state == "succeeded", re.sub(r"<[^>]+>", " ", jb)[-500:])
+    st, loc, _ = post(lp + "/delete", {"csrf": TOK["v"], "confirm": user})
     wait_job(job_id(loc), 300)
-    st, loc, _ = post(lp + "/purgar", {"csrf": TOK["v"], "confirm": user})
+    st, loc, _ = post(lp + "/purge", {"csrf": TOK["v"], "confirm": user})
     state, jb = wait_job(job_id(loc), 300)
     check("purgar definitivamente", state == "succeeded", re.sub(r"<[^>]+>", " ", jb)[-500:])
     left = superuser(f"SELECT count(*) FROM pg_database WHERE datname LIKE '{user}%'") + "/" + superuser(f"SELECT count(*) FROM pg_roles WHERE rolname LIKE '{user}%'")
-    check("no quedan bases ni roles de la biblioteca purgada", left == "0/0", left)
+    check("no databases or roles remain of the purged library", left == "0/0", left)
 
 def guarded(fn, *args):
     try:
         return fn(*args)
     except Exception as e:
         import traceback
-        check(f"{fn.__name__} terminó sin excepción", False, traceback.format_exc()[-600:])
+        check(f"{fn.__name__} finished without an exception", False, traceback.format_exc()[-600:])
 
 def main():
     code = fresh()
     s_setup(code)
     lp, user, pw = s_library_flow()
     if not pw:
-        print("sin credenciales; no sigo"); return
+        print("no credentials; stopping"); return
     lp2, user2, pw2 = s_isolation(lp, user, pw)
     bid = guarded(s_backup_under_load, lp, user, pw)
     guarded(s_members, lp, user, pw)
@@ -539,7 +539,7 @@ def main():
     guarded(s_delete_purge, lp2, user2)
     stop_sq(); stop_pg()
     fails = [r for r in RESULTS if not r[1]]
-    print(f"\n{len(RESULTS) - len(fails)}/{len(RESULTS)} pasaron")
+    print(f"\n{len(RESULTS) - len(fails)}/{len(RESULTS)} passed")
     for n, _, d in fails:
         print(" -", n, "|", d[:300].replace("\n", " "))
     if fails:
