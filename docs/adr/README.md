@@ -26,3 +26,5 @@ Formato: contexto, decisión, alternativas, consecuencias. Estados: **Propuesto*
 | [0018](0018-tres-volumenes.md) | Tres volúmenes visibles: base de datos, aplicación y respaldos | Aceptado |
 | [0019](0019-exportacion-experimental.md) | Exportación experimental de proyectos (`.drp`) y grados (`.drx`) leyendo un conjunto fijo de tablas | Propuesto |
 | [0020](0020-identidad-visual.md) | Identidad visual "Nodo": símbolo, logotipo en trazos, paleta de marca solo en los puertos, íconos | Aceptado |
+| [0021](0021-seguridad-proporcional.md) | Seguridad proporcional a LAN y VPN: sin reautenticación, contraseñas de 8, sesiones largas, HTTPS obligatorio, bloqueo de cuenta con desbloqueo por CLI | Aceptado |
+| [0022](0022-respaldo-segun-actividad.md) | Respaldo según actividad: revisión cada N minutos y respaldo solo si la biblioteca cambió; un respaldo vigente no es atraso | Aceptado |

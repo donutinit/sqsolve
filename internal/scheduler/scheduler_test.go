@@ -105,3 +105,40 @@ func TestTickEnqueuesAndMisfire(t *testing.T) {
 		t.Fatalf("missed event: %d", len(evs))
 	}
 }
+
+func TestGateSkipsRunWithoutJob(t *testing.T) {
+	ctx := context.Background()
+	db, _ := store.Open(ctx, filepath.Join(t.TempDir(), "s.db"), "")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	bus := events.NewBus()
+	ev := events.NewRecorder(db, bus, log)
+	jm := jobs.NewManager(db, ev, bus, log, 1, 1)
+	jm.Register(jobs.Spec{Type: "backup.create", Run: func(context.Context, *jobs.Run) error { return nil }})
+	s := New(db, jm, ev, log)
+	open := false
+	s.RegisterKind("backup", Kind{JobType: "backup.create", Title: "respaldo", Gate: func(context.Context, string) (bool, string) { return open, "sin cambios" }})
+	base := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return base }
+	if err := s.Upsert(ctx, "backup", "LIB1", "*/15 * * * *", "UTC", true, 24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	sc, _ := s.Get(ctx, "backup", "LIB1")
+	due := *sc.NextRunAt
+	// Closed gate: no job, but the schedule moves on to the next check.
+	s.Now = func() time.Time { return due.Add(time.Second) }
+	s.Tick(ctx)
+	if js, _ := jm.List(ctx, jobs.Filter{}); len(js) != 0 {
+		t.Fatalf("gated run was enqueued: %d", len(js))
+	}
+	sc, _ = s.Get(ctx, "backup", "LIB1")
+	if !sc.NextRunAt.Equal(due.Add(15 * time.Minute)) {
+		t.Fatalf("next %s, want %s", sc.NextRunAt, due.Add(15*time.Minute))
+	}
+	// Open gate: the next check enqueues.
+	open = true
+	s.Now = func() time.Time { return sc.NextRunAt.Add(time.Second) }
+	s.Tick(ctx)
+	if js, _ := jm.List(ctx, jobs.Filter{}); len(js) != 1 {
+		t.Fatalf("open gate did not enqueue: %d", len(js))
+	}
+}

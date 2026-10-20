@@ -164,6 +164,19 @@ PowerGrade y de cada proyecto con sus miniaturas, botón ".drx" por still y "Des
 | `GET /bibliotecas/{id}/exportar/proyectos/{pid}` | Descarga del `.drp` |
 | `GET /bibliotecas/{id}/exportar/stills/{sid}` | Descarga del `.drx` |
 | `GET /bibliotecas/{id}/exportar/albumes/{vid}` | Descarga del `.zip` |
+| `GET /respaldos/{id}/exportar` | Exportar desde un respaldo: estado y catálogo |
+| `POST /respaldos/{id}/exportar/preparar` | Restaura el respaldo en una base temporal (tarea `backup.export`) |
+| `POST /respaldos/{id}/exportar/cerrar` | Borra la base temporal |
+| `GET /respaldos/{id}/exportar/proyectos/{pid}`, `.../stills/{sid}`, `.../albumes/{vid}` | Descargas desde el respaldo |
+
+**Exportar desde un respaldo.** Para recuperar un proyecto o un grado tal como estaba en un
+respaldo, sin restaurar la biblioteca: la tarea `backup.export` verifica el archivo (L1) y lo
+restaura en una base temporal `sqsolve_export_<id>` con dueño `sqsolve_admin` y límite de 4
+conexiones; el espacio de trabajo (`export_workspaces`) queda `ready` dos horas desde el último
+uso y la sesión de exportación lo lee igual que a una biblioteca viva. "Cerrar" lo borra; la
+limpieza nocturna borra los vencidos y un arranque borra cualquier `sqsolve_export_*` huérfana.
+Los nombres de archivo llevan el identificador de la biblioteca y la fecha del respaldo. Cada
+descarga queda en la auditoría como `backup.export`.
 
 | Ruta de la API | Alcance mínimo |
 |---|---|
@@ -172,6 +185,10 @@ PowerGrade y de cada proyecto con sus miniaturas, botón ".drx" por still y "Des
 | `GET /libraries/{id}/grades` | `read` |
 | `GET /libraries/{id}/grades/{sid}/export` | `export` |
 | `GET /libraries/{id}/grades/albums/{vid}/export` | `export` |
+| `GET /backups/{id}/export` | `read`: estado del espacio de trabajo y, si está listo, proyectos y álbumes |
+| `POST /backups/{id}/export` | `export`: prepara (202 con la tarea) |
+| `DELETE /backups/{id}/export` | `export`: cierra |
+| `GET /backups/{id}/export/projects/{pid}`, `.../grades/{sid}`, `.../grades/albums/{vid}` | `export` |
 
 Acción `library.export` para operador y administrador; alcance de token `export`. Cada descarga
 queda en la auditoría con tipo, id, nombre, archivos, bytes, huella y las notas de la
@@ -187,6 +204,7 @@ exportación.
 | `SQS-E004` | El proyecto usa una función que la exportación no reproduce |
 | `SQS-E005` | La biblioteca no está disponible o falló la lectura |
 | `SQS-E006` | Un valor o formato no previsto |
+| `SQS-E007` | El respaldo no está preparado para exportar (falta la base temporal o venció) |
 
 ## 9. Límites y riesgos
 

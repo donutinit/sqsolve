@@ -134,6 +134,10 @@ type Session struct {
 	Started     time.Time
 	State       string
 	StateChange *time.Time
+	// SSL and TLSVersion come from pg_stat_ssl: whether the connection is
+	// encrypted and with which protocol ("" when not).
+	SSL        bool
+	TLSVersion string
 }
 
 // Sessions lists client sessions on db.
@@ -142,10 +146,11 @@ func (c *Client) Sessions(ctx context.Context, db string) ([]Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := p.Query(ctx, `SELECT pid, COALESCE(usename, ''), COALESCE(host(client_addr), 'local'), COALESCE(application_name, ''),
-		backend_start, COALESCE(state, ''), state_change
-		FROM pg_stat_activity WHERE datname = $1 AND backend_type = 'client backend' AND pid <> pg_backend_pid()
-		ORDER BY backend_start`, db)
+	rows, err := p.Query(ctx, `SELECT a.pid, COALESCE(a.usename, ''), COALESCE(host(a.client_addr), 'local'), COALESCE(a.application_name, ''),
+		a.backend_start, COALESCE(a.state, ''), a.state_change, COALESCE(s.ssl, false), COALESCE(s.version, '')
+		FROM pg_stat_activity a LEFT JOIN pg_stat_ssl s USING (pid)
+		WHERE a.datname = $1 AND a.backend_type = 'client backend' AND a.pid <> pg_backend_pid()
+		ORDER BY a.backend_start`, db)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +158,7 @@ func (c *Client) Sessions(ctx context.Context, db string) ([]Session, error) {
 	var out []Session
 	for rows.Next() {
 		var s Session
-		if err := rows.Scan(&s.PID, &s.User, &s.ClientAddr, &s.Application, &s.Started, &s.State, &s.StateChange); err != nil {
+		if err := rows.Scan(&s.PID, &s.User, &s.ClientAddr, &s.Application, &s.Started, &s.State, &s.StateChange, &s.SSL, &s.TLSVersion); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -527,3 +532,57 @@ func ParseCIDR(s string) (string, error) {
 	}
 	return "", fmt.Errorf("SQS-L020 red inválida: %q", s)
 }
+
+// ActivityMark summarizes the writes a database has received since its
+// statistics were last reset: rows inserted, updated and deleted, plus the
+// reset time so a reset never reads as "unchanged". It only reads
+// pg_stat_database (docs 07 §7); two equal marks mean no row changed in
+// between. Empty when the database is unknown.
+func (c *Client) ActivityMark(ctx context.Context, db string) (string, error) {
+	marks, err := c.ActivityMarks(ctx)
+	if err != nil {
+		return "", err
+	}
+	return marks[db], nil
+}
+
+// ActivityMarks returns the activity mark of every database.
+func (c *Client) ActivityMarks(ctx context.Context) (map[string]string, error) {
+	p, err := c.Pool()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := p.Query(ctx, `SELECT datname, tup_inserted + tup_updated + tup_deleted, COALESCE(stats_reset::text, '')
+		FROM pg_stat_database WHERE datname IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var name, reset string
+		var tup int64
+		if err := rows.Scan(&name, &tup, &reset); err != nil {
+			return nil, err
+		}
+		out[name] = activityMark(tup, reset)
+	}
+	return out, rows.Err()
+}
+
+// ActivityMarkFrom reads the mark of the current database on an open
+// connection or transaction, so a backup records the mark of its own snapshot.
+func ActivityMarkFrom(ctx context.Context, q interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}) (string, error) {
+	var reset string
+	var tup int64
+	err := q.QueryRow(ctx, `SELECT tup_inserted + tup_updated + tup_deleted, COALESCE(stats_reset::text, '')
+		FROM pg_stat_database WHERE datname = current_database()`).Scan(&tup, &reset)
+	if err != nil {
+		return "", err
+	}
+	return activityMark(tup, reset), nil
+}
+
+func activityMark(tup int64, reset string) string { return fmt.Sprintf("%d@%s", tup, reset) }

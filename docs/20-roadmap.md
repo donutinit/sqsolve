@@ -7,16 +7,16 @@ como orden de magnitud relativo.
 
 | Versión | Contenido | Talla |
 |---|---|---|
-| **0.0** Fase 0 | PoC-01 a PoC-10, laboratorio, ADR confirmados o corregidos | M |
+| **0.0** Fase 0 | PoC-01, 03, 04, 06, 08 y 09 contra mininas y la estación de Diego; PoC-02 solo 21.1.x con PostgreSQL 18; ADR confirmados o corregidos (recorte del 2026-10-19) | M |
 | **0.1** Esqueleto | Repo, CI, binario, configuración, SQLite, secretos, Compose, arranque de PostgreSQL, rol de control, salud, `doctor` | M |
 | **0.2** Acceso | Usuarios del panel, sesiones, TOTP, tokens, autorización, auditoría, asistente inicial | M |
 | **0.3** Bibliotecas | Ciclo de vida completo con E1 (y E0 si aplica), credenciales, `pg_hba.conf`, sesiones, mantenimiento, papelera, huella | L |
 | **0.4** Respaldos | Respaldo manual y programado, manifiesto, L1, catálogo, retención, descarga, importación, plano de control | L |
 | **0.5** Restauración | Como nueva, por intercambio, reversión, L2, recuperación tras cortes | L |
-| **0.6** Interfaz y API | Todas las pantallas 1.0, OpenAPI completo, SSE, webhooks | L |
-| **0.9** Beta | Endurecimiento, pruebas de fallos, ZAP, documentación de usuario, runbooks, ventana de actualización de Resolve, kit y recuperación de instalación | M |
-| **1.0** MVP | Guion de aceptación AC-01 a AC-11 aprobado | S |
-| **1.1** Equipos | Credenciales por persona, portal de colaborador, reglas de red en la interfaz, SMTP y ntfy, restic, hooks en contenedor aparte, migración desde otro servidor, `.resolvedbkey` si PoC-05 pasa, E2 plantillas, exportación experimental de proyectos y grados (ADR 0019) | L |
+| **0.6** Interfaz y API | Todas las pantallas 1.0, API JSON, SSE, webhooks. OpenAPI y pruebas de contrato pasan a 1.1 | L |
+| **0.9** Beta | Endurecimiento, batería de fallos que ya corre en CI, revisión de seguridad manual contra `08` y una corrida local de ZAP, README como manual, SECURITY, CHANGELOG, CONTRIBUTING, tres runbooks, ventana de actualización de Resolve, kit y recuperación de instalación | M |
+| **1.0** MVP | Guion de aceptación corto (AC-01 a AC-11 en una sesión con dos estaciones, sin las 72 horas) aprobado; versión firmada con cosign sin clave y publicada en GitHub con el compose y las notas. Incluye la identidad (ADR 0020), la seguridad proporcional (ADR 0021), el respaldo según actividad (ADR 0022) y la exportación experimental desde biblioteca y desde respaldo (ADR 0019) | S |
+| **1.1** Equipos | Credenciales por persona, portal de colaborador, reglas de red en la interfaz, SMTP y ntfy, restic, hooks en contenedor aparte, migración desde otro servidor, `.resolvedbkey` si PoC-05 pasa, E2 plantillas. Recibe de 1.0: OpenAPI y contrato, e2e con navegador, ZAP nocturno, fuzz y reproducible, PoC-02 completa, 05, 07 y 10, manuales y runbooks restantes, réplica del registro y binarios sueltos | L |
 | **1.2** Operación | Métricas Prometheus, capacidad de volúmenes de medios, `sqsolve-check` para estaciones, mantenimiento programable en la interfaz | M |
 | **2.0** Avanzado | PITR con pgBackRest, OIDC, WebAuthn, asistente de versión mayor de PostgreSQL, modo servidor externo | L |
 

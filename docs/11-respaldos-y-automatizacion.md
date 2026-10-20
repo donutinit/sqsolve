@@ -51,7 +51,8 @@ Tarea `backup.create`. Pasos (cada uno se registra en `job_steps`):
    igual a `max(1.5 × tamaño del último respaldo, 0.5 × pg_database_size)` (si no hay historial,
    `pg_database_size`); no hay restauración de esa biblioteca en curso.
 2. **snapshot**: conexión de control en `BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY`;
-   `SELECT pg_export_snapshot()`.
+   `SELECT pg_export_snapshot()`; se lee la marca de actividad de la base (`07` §7) y se guarda
+   con el respaldo (`activity_mark`) y en el manifiesto.
 3. **dump**: `pg_dump --dbname=<slug> --format=custom --quote-all-identifiers --snapshot=<id>
    --lock-wait-timeout=60s --file=<ruta>.partial` (compresión por defecto de `pg_dump`; `zstd`
    opcional si PoC-04 confirma que no afecta la restauración desde Resolve). Credenciales por
@@ -221,8 +222,14 @@ Antes de restaurar se compara el manifiesto con el servidor:
 
 ## 10. Programador
 
-- Expresiones cron de 5 campos en la zona horaria de la política, más presets: "diario a las
-  HH:MM", "cada N horas entre HH y HH, días laborables", "semanal".
+- Dos modos por biblioteca (ADR 0022). **Según actividad**, el modo por defecto en instalaciones
+  nuevas: el programador despierta cada 5, 10, 15, 30 o 60 minutos y respalda solo si la marca de
+  actividad cambió desde el último respaldo correcto; la revisión queda en la política
+  (`last_check_at`, `last_check_same`) y no genera tarea ni evento. **Cron**: expresiones de 5
+  campos en la zona horaria de la política, más presets: "diario a las HH:MM", "cada N horas
+  entre HH y HH, días laborables", "cada 4 horas", "cada hora".
+- Un respaldo verificado cuya marca coincide con la actual sigue vigente aunque sea viejo: no
+  dispara `backup.stale` ni pinta franja ámbar en la línea de protección.
 - Desplazamiento aleatorio fijo por biblioteca de 0 a 5 min (derivado del ID) para no lanzar todo
   a la vez.
 - Ejecuciones perdidas: si al arrancar la última ejecución programada quedó sin correr y fue hace

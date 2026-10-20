@@ -697,21 +697,62 @@ func (s *Service) recordFingerprint(ctx context.Context, l *Library, fp pg.Finge
 	l.Fingerprint, l.TableCount = fp.Hash, fp.Tables
 }
 
+// Backup policy modes (ADR 0022).
+const (
+	// ModeCron runs a backup at every tick of the cron expression.
+	ModeCron = "cron"
+	// ModeActivity checks every CheckMinutes and backs up only when the
+	// library's rows changed since the last successful backup.
+	ModeActivity = "activity"
+)
+
+// ActivityCron is the check cadence of a policy in activity mode.
+func ActivityCron(minutes int) string { return fmt.Sprintf("*/%d * * * *", minutes) }
+
 // Policy is the backup policy of a library.
 type Policy struct {
-	Enabled     bool   `json:"enabled"`
-	Cron        string `json:"cron"`
-	Timezone    string `json:"timezone"`
-	KeepLast    int    `json:"keep_last"`
-	KeepDaily   int    `json:"keep_daily"`
-	KeepWeekly  int    `json:"keep_weekly"`
-	KeepMonthly int    `json:"keep_monthly"`
-	MinVerified int    `json:"min_verified"`
+	Enabled      bool   `json:"enabled"`
+	Mode         string `json:"mode"`
+	CheckMinutes int    `json:"check_minutes"`
+	Cron         string `json:"cron"`
+	Timezone     string `json:"timezone"`
+	KeepLast     int    `json:"keep_last"`
+	KeepDaily    int    `json:"keep_daily"`
+	KeepWeekly   int    `json:"keep_weekly"`
+	KeepMonthly  int    `json:"keep_monthly"`
+	MinVerified  int    `json:"min_verified"`
+	// LastCheckAt and LastCheckSame describe the last activity check in
+	// activity mode: when it ran and whether it found the library unchanged.
+	LastCheckAt   *time.Time `json:"last_check_at,omitempty"`
+	LastCheckSame bool       `json:"last_check_same"`
+}
+
+// Adaptive reports whether the policy backs up according to activity.
+func (p Policy) Adaptive() bool { return p.Mode == ModeActivity }
+
+// EffectiveCron is the expression the scheduler runs: the check cadence in
+// activity mode, the user's expression otherwise.
+func (p Policy) EffectiveCron() string {
+	if p.Adaptive() {
+		return ActivityCron(p.CheckMinutes)
+	}
+	return p.Cron
 }
 
 // Validate checks a policy.
 func (p Policy) Validate() error {
-	if _, err := validateCron(p.Cron, p.Timezone); err != nil {
+	switch p.Mode {
+	case "", ModeCron:
+	case ModeActivity:
+		switch p.CheckMinutes {
+		case 5, 10, 15, 30, 60:
+		default:
+			return errors.New("SQS-B033 según actividad se revisa cada 5, 10, 15, 30 o 60 minutos")
+		}
+	default:
+		return errors.New("SQS-B034 modo de programación desconocido")
+	}
+	if _, err := validateCron(p.EffectiveCron(), p.Timezone); err != nil {
 		return err
 	}
 	for _, v := range []int{p.KeepLast, p.KeepDaily, p.KeepWeekly, p.KeepMonthly} {
@@ -731,11 +772,15 @@ func (p Policy) Validate() error {
 // Policy returns the backup policy of a library (defaults if none).
 func (s *Service) Policy(ctx context.Context, libraryID string) (Policy, error) {
 	var p Policy
-	err := s.DB.QueryRowContext(ctx, `SELECT enabled, schedule_cron, timezone, keep_last, keep_daily, keep_weekly, keep_monthly, min_verified
-		FROM backup_policies WHERE library_id = ?`, libraryID).Scan(&p.Enabled, &p.Cron, &p.Timezone, &p.KeepLast, &p.KeepDaily, &p.KeepWeekly, &p.KeepMonthly, &p.MinVerified)
+	var lastCheck sql.NullString
+	err := s.DB.QueryRowContext(ctx, `SELECT enabled, schedule_cron, timezone, keep_last, keep_daily, keep_weekly, keep_monthly, min_verified,
+		mode, check_minutes, last_check_at, last_check_same FROM backup_policies WHERE library_id = ?`, libraryID).
+		Scan(&p.Enabled, &p.Cron, &p.Timezone, &p.KeepLast, &p.KeepDaily, &p.KeepWeekly, &p.KeepMonthly, &p.MinVerified,
+			&p.Mode, &p.CheckMinutes, &lastCheck, &p.LastCheckSame)
 	if errors.Is(err, sql.ErrNoRows) {
 		return s.Settings(ctx).DefaultPolicy, nil
 	}
+	p.LastCheckAt = store.NullT(lastCheck)
 	return p, err
 }
 
@@ -748,17 +793,28 @@ func (s *Service) SetPolicy(ctx context.Context, by audit.Actor, libraryID strin
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO backup_policies(library_id, enabled, schedule_cron, timezone, keep_last, keep_daily, keep_weekly, keep_monthly, min_verified, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	if p.Mode == "" {
+		p.Mode = ModeCron
+	}
+	// In activity mode the stored expression is the check cadence, so the
+	// schedule and the "next runs" preview agree. A missed check is no
+	// loss: the next one backs up if anything changed.
+	misfire := 12 * time.Hour
+	if p.Adaptive() {
+		p.Cron = p.EffectiveCron()
+		misfire = 24 * time.Hour
+	}
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO backup_policies(library_id, enabled, schedule_cron, timezone, keep_last, keep_daily, keep_weekly, keep_monthly, min_verified, mode, check_minutes, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(library_id) DO UPDATE SET enabled = excluded.enabled, schedule_cron = excluded.schedule_cron, timezone = excluded.timezone,
 		keep_last = excluded.keep_last, keep_daily = excluded.keep_daily, keep_weekly = excluded.keep_weekly, keep_monthly = excluded.keep_monthly,
-		min_verified = excluded.min_verified, updated_at = excluded.updated_at`,
-		libraryID, p.Enabled, p.Cron, p.Timezone, p.KeepLast, p.KeepDaily, p.KeepWeekly, p.KeepMonthly, p.MinVerified, store.NowT())
+		min_verified = excluded.min_verified, mode = excluded.mode, check_minutes = excluded.check_minutes, updated_at = excluded.updated_at`,
+		libraryID, p.Enabled, p.Cron, p.Timezone, p.KeepLast, p.KeepDaily, p.KeepWeekly, p.KeepMonthly, p.MinVerified, p.Mode, p.CheckMinutes, store.NowT())
 	if err != nil {
 		return err
 	}
 	enabled := p.Enabled && (l.State == StateActive || l.State == StateMaintenance)
-	if err := s.Sched.Upsert(ctx, ScheduleBackup, libraryID, p.Cron, p.Timezone, enabled, 12*time.Hour); err != nil {
+	if err := s.Sched.Upsert(ctx, ScheduleBackup, libraryID, p.Cron, p.Timezone, enabled, misfire); err != nil {
 		return err
 	}
 	if by.Type != "" {

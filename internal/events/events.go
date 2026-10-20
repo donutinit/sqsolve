@@ -84,6 +84,7 @@ const (
 	PostgresDown             = "postgres.down"
 	PostgresUp               = "postgres.up"
 	AuthBruteforce           = "auth.login_failed_burst"
+	AuthLocked               = "auth.locked"
 	AuditChainBroken         = "audit.chain_broken"
 	TLSExpiring              = "tls.expiring"
 	JobInterrupted           = "job.interrupted"

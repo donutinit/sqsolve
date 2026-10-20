@@ -28,8 +28,8 @@
 - Concurrencia optimista: recursos editables devuelven `ETag`; `PATCH` exige `If-Match`.
 - Paginación por cursor: `?limit=50&cursor=...`, respuesta con `next_cursor`.
 - Fechas RFC 3339 en UTC. Tamaños en bytes. Identificadores ULID.
-- Operaciones peligrosas exigen en el cuerpo `"confirm": "<slug>"` y, con sesión, reautenticación
-  de los últimos 5 min (`SQS-A007` si falta); con token, el alcance `admin` o `restore`.
+- Operaciones peligrosas exigen en el cuerpo `"confirm": "<slug>"` y, con token, el alcance
+  `admin` o `restore`. No hay reautenticación (ADR 0021).
 
 ## 2. Recursos
 
@@ -47,7 +47,8 @@
 | `DELETE /libraries/{id}` | `admin` + confirmación | A la papelera; devuelve tarea |
 | `POST /libraries/{id}/restore-from-trash` | `admin` | Recuperar de la papelera |
 | `GET /libraries/{id}/connection` | `read` | Ubicación, base, usuario; sin contraseña |
-| `POST /libraries/{id}/connection/reveal` | `admin` + reautenticación | Contraseña; auditado |
+| `POST /libraries/{id}/connection/reveal` | `admin` | Contraseña; auditado |
+| `GET` y `PUT /libraries/{id}/backup-policy` | `read` y `admin` | Política: `mode` (`cron` o `activity`), `check_minutes` (5, 10, 15, 30, 60), `cron`, retención; `last_check_at` y `last_check_same` solo de lectura (ADR 0022) |
 | `GET /libraries/{id}/resolvedbkey` | `admin` | Archivo de llave (si el módulo está activo) |
 | `GET /libraries/{id}/credentials` | `admin` | Lista sin contraseñas |
 | `POST /libraries/{id}/credentials` | `admin` | Crear credencial de persona (1.1) |

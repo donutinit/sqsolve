@@ -101,8 +101,11 @@ func TrashDB(slug string, t time.Time) string {
 // VerifyDB is the scratch database of a level 2 verification.
 func VerifyDB(short string) string { return "sqsolve_verify_" + short }
 
+// ExportDB is the temporary database of an export from a backup.
+func ExportDB(short string) string { return "sqsolve_export_" + short }
+
 // IsAuxiliary reports whether a database name is one of sqsolve's auxiliary
 // names.
 func IsAuxiliary(name string) bool {
-	return strings.HasPrefix(name, "sqsolve_verify_") || strings.Contains(name, "__")
+	return strings.HasPrefix(name, "sqsolve_verify_") || strings.HasPrefix(name, "sqsolve_export_") || strings.Contains(name, "__")
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/donutinit/sqsolve/internal/app"
 	"github.com/donutinit/sqsolve/internal/audit"
 	"github.com/donutinit/sqsolve/internal/auth"
+	"github.com/donutinit/sqsolve/internal/core"
 )
 
 func safeNext(next string) string {
@@ -93,13 +94,16 @@ func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request) {
 	if n := strings.TrimSpace(r.FormValue("name")); n != "" {
 		st.InstanceName = n
 	}
+	st.DefaultPolicy.Mode, st.DefaultPolicy.CheckMinutes = core.ModeCron, 15
 	switch r.FormValue("preset") {
 	case "laboral":
 		st.DefaultPolicy.Cron = "0 9-21/4 * * 1-6"
 	case "cada4":
 		st.DefaultPolicy.Cron = "0 */4 * * *"
-	default:
+	case "diario":
 		st.DefaultPolicy.Cron = "0 2 * * *"
+	default:
+		st.DefaultPolicy.Mode, st.DefaultPolicy.Cron = core.ModeActivity, core.ActivityCron(15)
 	}
 	if err := s.A.Svc.SaveSettings(ctx, audit.Actor{Type: "user", ID: u.ID, Name: u.Username}, st); err != nil {
 		back(humanError(err))
@@ -224,20 +228,6 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) logoutEverywhere(w http.ResponseWriter, r *http.Request) {
 	s.A.Auth.LogoutEverywhere(r.Context(), principalOf(r))
 	s.ok(w, r, "/cuenta", "Se cerraron tus otras sesiones.")
-}
-
-func (s *Server) reauthForm(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "reauth", "Confirmar identidad", "", map[string]any{"Next": safeNext(r.URL.Query().Get("next"))})
-}
-
-func (s *Server) reauthSubmit(w http.ResponseWriter, r *http.Request) {
-	next := safeNext(r.FormValue("next"))
-	if err := s.A.Auth.Reauth(r.Context(), principalOf(r), r.FormValue("password"), r.FormValue("code")); err != nil {
-		s.flash(w, "error", humanError(err))
-		http.Redirect(w, r, "/confirmar?next="+url.QueryEscape(next), http.StatusSeeOther)
-		return
-	}
-	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 
 func (s *Server) account(w http.ResponseWriter, r *http.Request) {

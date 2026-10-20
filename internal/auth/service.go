@@ -29,9 +29,11 @@ import (
 
 // Session lifetimes (docs 08 T-03).
 const (
-	SessionIdle     = 8 * time.Hour
-	SessionAbsolute = 7 * 24 * time.Hour
-	ReauthWindow    = 5 * time.Minute
+	SessionIdle = 30 * 24 * time.Hour
+	// LockoutAttempts is the number of consecutive wrong passwords that locks
+	// an account until `sqsolve admin unlock` (ADR 0021).
+	LockoutAttempts = 10
+	SessionAbsolute = 180 * 24 * time.Hour
 )
 
 // User is a panel account.
@@ -44,9 +46,13 @@ type User struct {
 	CreatedAt   time.Time
 	LastLoginAt *time.Time
 	DisabledAt  *time.Time
-	hash        string
-	totpEnc     string
-	totpLast    int64
+	// FailedLogins counts consecutive wrong passwords; at LockoutAttempts the
+	// account is locked (LockedAt) until `sqsolve admin unlock` (ADR 0021).
+	FailedLogins int
+	LockedAt     *time.Time
+	hash         string
+	totpEnc      string
+	totpLast     int64
 }
 
 // Name returns the display name or the username.
@@ -70,7 +76,7 @@ type Principal struct {
 
 // Can reports whether the principal may perform a.
 func (p *Principal) Can(a Action) bool {
-	if p == nil || p.User == nil || p.User.DisabledAt != nil {
+	if p == nil || p.User == nil || p.User.DisabledAt != nil || p.User.LockedAt != nil {
 		return false
 	}
 	if !RoleAllows(p.User.Role, a) {
@@ -80,15 +86,6 @@ func (p *Principal) Can(a Action) bool {
 		return ScopeAllows(p.Scopes, a)
 	}
 	return true
-}
-
-// FreshAuth reports whether a dangerous action can proceed without asking
-// for the password again.
-func (p *Principal) FreshAuth() bool {
-	if p.TokenID != "" {
-		return true
-	}
-	return time.Since(p.ReauthAt) < ReauthWindow
 }
 
 // Actor for audit entries.
@@ -128,15 +125,16 @@ func New(db *store.DB, box *secrets.Box, a *audit.Log, ev *events.Recorder, mast
 	return &Service{db: db, box: box, audit: a, ev: ev, csrfKey: m.Sum(nil), limiter: newLimiter(), Now: time.Now}
 }
 
-const userCols = `id, username, display_name, password_hash, role, totp_secret_enc, totp_enabled, totp_last_counter, created_at, last_login_at, disabled_at`
+const userCols = `id, username, display_name, password_hash, role, totp_secret_enc, totp_enabled, totp_last_counter, created_at, last_login_at, disabled_at, failed_logins, locked_at`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	var role, created string
-	var last, disabled sql.NullString
-	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.hash, &role, &u.totpEnc, &u.TOTPEnabled, &u.totpLast, &created, &last, &disabled); err != nil {
+	var last, disabled, locked sql.NullString
+	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.hash, &role, &u.totpEnc, &u.TOTPEnabled, &u.totpLast, &created, &last, &disabled, &u.FailedLogins, &locked); err != nil {
 		return nil, err
 	}
+	u.LockedAt = store.NullT(locked)
 	u.Role = Role(role)
 	u.CreatedAt = store.ParseT(created)
 	u.LastLoginAt = store.NullT(last)
@@ -227,7 +225,7 @@ func (s *Service) SetPassword(ctx context.Context, by audit.Actor, userID, passw
 	if err := ValidatePassword(password, u.Username); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET password_hash = ?, password_changed_at = ? WHERE id = ?`, HashPassword(password), store.NowT(), userID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET password_hash = ?, password_changed_at = ?, failed_logins = 0, locked_at = NULL WHERE id = ?`, HashPassword(password), store.NowT(), userID); err != nil {
 		return err
 	}
 	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND id_hash <> ?`, userID, keepSession)
@@ -270,6 +268,9 @@ func (s *Service) UpdateUser(ctx context.Context, by audit.Actor, userID, displa
 // ErrBadCredentials hides whether the user exists.
 var ErrBadCredentials = errors.New("SQS-A002 usuario o contraseña incorrectos")
 
+// ErrAccountLocked is returned for an account locked after LockoutAttempts.
+var ErrAccountLocked = errors.New("SQS-A004 cuenta bloqueada por contraseñas incorrectas; en la consola del contenedor: sqsolve admin unlock <usuario>")
+
 // ErrLocked is returned while a login is rate limited.
 type ErrLocked struct{ Until time.Time }
 
@@ -285,6 +286,10 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 		return "", nil, false, ErrLocked{until}
 	}
 	u, uerr := s.UserByName(ctx, username)
+	if uerr == nil && u.LockedAt != nil {
+		s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: username, IP: ip}, "auth.login", "user", u.ID, audit.Denied, map[string]any{"locked": true})
+		return "", nil, false, ErrAccountLocked
+	}
 	hash := dummyHash
 	if uerr == nil {
 		hash = u.hash
@@ -296,9 +301,15 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 				Message: fmt.Sprintf("Muchos intentos fallidos de inicio de sesión desde %s", ip), Data: map[string]any{"ip": ip, "username": username}})
 		}
 		s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: username, IP: ip}, "auth.login", "user", username, audit.Denied, nil)
+		if uerr == nil && !ok && s.countFailure(ctx, u, ip) {
+			return "", nil, false, ErrAccountLocked
+		}
 		return "", nil, false, ErrBadCredentials
 	}
 	s.limiter.success(ip, username)
+	if u.FailedLogins != 0 {
+		s.db.ExecContext(ctx, `UPDATE admin_users SET failed_logins = 0 WHERE id = ?`, u.ID)
+	}
 	token, p, err = s.newSession(ctx, u, ip, ua, u.TOTPEnabled)
 	if err != nil {
 		return "", nil, false, err
@@ -308,6 +319,36 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 		s.audit.Record(ctx, p.Actor(), "auth.login", "user", u.ID, audit.OK, nil)
 	}
 	return token, p, u.TOTPEnabled, nil
+}
+
+// countFailure records a wrong password and, at LockoutAttempts consecutive
+// failures, locks the account and closes its sessions. Only Unlock lifts it.
+func (s *Service) countFailure(ctx context.Context, u *User, ip string) bool {
+	n := u.FailedLogins + 1
+	if n < LockoutAttempts {
+		s.db.ExecContext(ctx, `UPDATE admin_users SET failed_logins = ? WHERE id = ?`, n, u.ID)
+		return false
+	}
+	s.db.ExecContext(ctx, `UPDATE admin_users SET failed_logins = ?, locked_at = ? WHERE id = ?`, n, store.NowT(), u.ID)
+	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, u.ID)
+	s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: u.Username, IP: ip}, "auth.locked", "user", u.ID, audit.OK, map[string]any{"attempts": n})
+	s.ev.Emit(ctx, events.Event{Type: events.AuthLocked, Severity: events.Critical,
+		Message: fmt.Sprintf("La cuenta %q quedó bloqueada tras %d contraseñas incorrectas seguidas; se desbloquea con \"sqsolve admin unlock %s\" en la consola del contenedor", u.Username, n, u.Username),
+		Data:    map[string]any{"username": u.Username, "ip": ip}})
+	return true
+}
+
+// Unlock lifts the lockout of an account and resets its failure count. It is
+// only offered from the container console (ADR 0021).
+func (s *Service) Unlock(ctx context.Context, by audit.Actor, userID string) error {
+	u, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET failed_logins = 0, locked_at = NULL WHERE id = ?`, userID); err != nil {
+		return err
+	}
+	return s.audit.Record(ctx, by, "auth.unlock", "user", userID, audit.OK, map[string]any{"username": u.Username})
 }
 
 func hashToken(t string) string {
@@ -376,7 +417,7 @@ func (s *Service) Session(ctx context.Context, raw, ip string, allowPending bool
 		return nil, ErrMFAPending
 	}
 	u, err := s.UserByID(ctx, userID)
-	if err != nil || u.DisabledAt != nil {
+	if err != nil || u.DisabledAt != nil || u.LockedAt != nil {
 		return nil, ErrNoSession
 	}
 	if now.Sub(store.ParseT(last)) > time.Minute {
@@ -398,33 +439,6 @@ func (s *Service) Logout(ctx context.Context, p *Principal) {
 func (s *Service) LogoutEverywhere(ctx context.Context, p *Principal) {
 	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND id_hash <> ?`, p.User.ID, p.SessionID)
 	s.audit.Record(ctx, p.Actor(), "auth.logout_all", "user", p.User.ID, audit.OK, nil)
-}
-
-// Reauth confirms the password (and second factor if enabled) and refreshes
-// the reauthentication mark.
-func (s *Service) Reauth(ctx context.Context, p *Principal, password, code string) error {
-	now := s.Now()
-	if until := s.limiter.blocked(p.IP, p.User.Username, now); !until.IsZero() {
-		return ErrLocked{until}
-	}
-	u, err := s.UserByID(ctx, p.User.ID)
-	if err != nil {
-		return err
-	}
-	if !CheckPassword(u.hash, password) {
-		s.limiter.fail(p.IP, u.Username, now)
-		s.audit.Record(ctx, p.Actor(), "auth.reauth", "user", u.ID, audit.Denied, nil)
-		return ErrBadCredentials
-	}
-	if u.TOTPEnabled {
-		if err := s.checkSecondFactor(ctx, u, code); err != nil {
-			s.limiter.fail(p.IP, u.Username, now)
-			return err
-		}
-	}
-	s.db.ExecContext(ctx, `UPDATE sessions SET reauth_at = ? WHERE id_hash = ?`, store.T(now), p.SessionID)
-	p.ReauthAt = now
-	return s.audit.Record(ctx, p.Actor(), "auth.reauth", "user", u.ID, audit.OK, nil)
 }
 
 // ErrBadCode is returned for a wrong second factor.

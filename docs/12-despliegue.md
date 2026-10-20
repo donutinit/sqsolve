@@ -62,7 +62,7 @@ Para instalar se cambian las tres rutas, `TZ` y, si hace falta, la IP donde se p
 | `SQSOLVE_PG_UID`, `SQSOLVE_PG_GID` | `999` | Usuario de PostgreSQL en la imagen oficial |
 | `SQSOLVE_BACKUPS_ADOPT` | vacío | `1` permite marcar un volumen de respaldos que ya tiene archivos |
 | `SQSOLVE_FIX_PERMS` | vacío | `1` corrige dueños de forma recursiva en `init` |
-| `SQSOLVE_INSECURE_HTTP` | vacío | Solo desarrollo y pruebas: panel por HTTP |
+| `SQSOLVE_INSECURE_HTTP` | vacío | Solo desarrollo y pruebas (CI): panel por HTTP. En producción el panel es siempre HTTPS (ADR 0021). El cifrado de las conexiones de Resolve no se configura aquí: PostgreSQL siempre ofrece TLS y el modo "Solo TLS" se activa en Ajustes |
 | `SQSOLVE_PG_MEMORY_MB` | `2048` | Memoria que se asume para PostgreSQL al calcular `shared_buffers` |
 | `SQSOLVE_PG_MAX_CONNECTIONS` | `200` | Se escribe en `postgresql.conf` (requiere reiniciar PostgreSQL) |
 | `SQSOLVE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |

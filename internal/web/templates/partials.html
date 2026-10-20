@@ -87,3 +87,60 @@
   <a href="/bibliotecas/{{.Data.L.ID}}?tab=ajustes" {{if eq .Data.Tab "ajustes"}}aria-current="page"{{end}}>Ajustes</a>
   <a href="/bibliotecas/{{.Data.L.ID}}?tab=peligro" {{if eq .Data.Tab "peligro"}}aria-current="page"{{end}} class="dangertab">Zona de peligro</a>
 </nav>{{end}}
+
+{{define "exportcatalog"}}
+<section class="card flush">
+  <div class="cardhead pad"><h2>Proyectos</h2><span class="muted small">{{len .projects}} en la biblioteca</span></div>
+  <table class="table cards-on-mobile">
+    <thead><tr><th>Miniatura</th><th>Proyecto</th><th>Carpeta</th><th>Modificado</th><th></th></tr></thead>
+    <tbody>
+    {{range .projects}}
+      <tr>
+        <td data-label="Miniatura">{{if .Thumb}}<img class="thumb" src="{{jpeg .Thumb}}" alt="" width="96" height="54">{{else}}<span class="muted small">Sin miniatura</span>{{end}}</td>
+        <td data-label="Proyecto">{{.Name}}</td>
+        <td data-label="Carpeta" class="mono small">{{if .Path}}{{.Path}}{{else}}<span class="muted">raíz</span>{{end}}</td>
+        <td data-label="Modificado">{{if .Modified.IsZero}}<span class="muted">Por confirmar</span>{{else}}<time datetime="{{iso .Modified}}" title="{{dt .Modified}}">{{ago .Modified}}</time>{{end}}</td>
+        <td data-label="" class="actions">{{if $.can}}<a class="button ghost small" href="{{$.base}}/proyectos/{{.ID}}">Descargar .drp</a>{{end}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="5" class="muted">Sin proyectos.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>PowerGrades</h2>
+  {{range .power}}
+  <div class="albumhead"><h3>{{if .Name}}{{.Name}}{{else}}<span class="muted">Álbum sin nombre</span>{{end}} <span class="muted small">{{len .Stills}} grados</span></h3>
+    {{if $.can}}<a class="button ghost small" href="{{$.base}}/albumes/{{.ViewID}}">Descargar álbum (.zip)</a>{{end}}</div>
+  {{template "stillgrid" (dict "stills" .Stills "base" $.base "can" $.can)}}
+  {{else}}
+  <p class="muted">Sin álbumes de PowerGrades.</p>
+  {{end}}
+</section>
+
+<section class="card">
+  <h2>Stills por proyecto</h2>
+  {{range .albums}}
+  <details class="more">
+    <summary>{{.ProjectName}}{{if .Name}} · {{.Name}}{{end}} <span class="muted small">{{len .Stills}} stills</span></summary>
+    {{if $.can}}<p><a class="button ghost small" href="{{$.base}}/albumes/{{.ViewID}}">Descargar álbum (.zip)</a></p>{{end}}
+    {{template "stillgrid" (dict "stills" .Stills "base" $.base "can" $.can)}}
+  </details>
+  {{else}}
+  <p class="muted">Sin stills en los proyectos.</p>
+  {{end}}
+</section>
+{{end}}
+
+{{define "stillgrid"}}<ul class="stills">
+  {{range .stills}}<li class="still">
+    {{if .Thumb}}<img src="{{jpeg .Thumb}}" alt="" width="288" height="162">{{else}}<div class="nothumb muted small">Sin miniatura</div>{{end}}
+    <div class="stillmeta"><span class="mono">{{.Label}}</span>{{if .RecTC}} <span class="muted small">{{.RecTC}}</span>{{end}}
+      {{if not .Created.IsZero}}<time class="muted small" datetime="{{iso .Created}}">{{dt .Created}}</time>{{end}}
+      {{if $.can}}<a class="small" href="{{$.base}}/stills/{{.ID}}">.drx</a>{{end}}</div>
+  </li>{{else}}<li class="muted">Sin stills.</li>{{end}}
+</ul>{{end}}
+
+{{define "sslbadge"}}{{if .SSL}}{{template "badge" (dict "tone" "ok" "label" (or .TLSVersion "TLS"))}}{{else if eq .ClientAddr "local"}}{{template "badge" (dict "tone" "info" "label" "Socket local")}}{{else}}{{template "badge" (dict "tone" "warn" "label" "Sin cifrar")}}{{end}}{{end}}

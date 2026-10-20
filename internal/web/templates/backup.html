@@ -9,6 +9,7 @@
     {{if eq $b.Status "ok"}}
       {{if $p.Can "restore.new"}}<a class="button" href="/respaldos/{{$b.ID}}/restaurar">Restaurar</a>{{end}}
       {{if $p.Can "backup.download"}}<a class="button ghost" href="/respaldos/{{$b.ID}}/descargar">Descargar</a>{{end}}
+      <a class="button ghost" href="/respaldos/{{$b.ID}}/exportar">Exportar .drp y .drx</a>
     {{end}}
   </div>
 </div>

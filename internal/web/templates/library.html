@@ -75,8 +75,8 @@
     {{with .Data.Sessions}}
     <section class="card">
       <h2>Conectadas ahora</h2>
-      <div class="scroll-x"><table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Conectada</th></tr></thead><tbody>
-      {{range .}}<tr><td class="mono">{{.User}}</td><td class="mono">{{.ClientAddr}}</td><td>{{.Application}}</td><td>{{ago .Started}}</td></tr>{{end}}
+      <div class="scroll-x"><table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Conectada</th><th>Cifrado</th></tr></thead><tbody>
+      {{range .}}<tr><td class="mono">{{.User}}</td><td class="mono">{{.ClientAddr}}</td><td>{{.Application}}</td><td>{{ago .Started}}</td><td>{{template "sslbadge" .}}</td></tr>{{end}}
       </tbody></table></div>
     </section>
     {{end}}
@@ -128,13 +128,14 @@
     <label class="check"><input type="checkbox" name="enabled" {{if $pol.Enabled}}checked{{end}}> Respaldos automáticos activados</label>
     <fieldset>
       <legend>Cuándo</legend>
+      <label class="radio"><input type="radio" name="preset" value="actividad" {{if $pol.Adaptive}}checked{{end}}> Según actividad: revisa cada <select name="check_minutes" class="tiny" aria-label="Minutos entre revisiones">{{range $m := $.Data.CheckOptions}}<option value="{{$m}}" {{if eq $m $pol.CheckMinutes}}selected{{end}}>{{$m}}</option>{{end}}</select> minutos y respalda solo si hubo cambios desde el último respaldo</label>
       <label class="radio"><input type="radio" name="preset" value="diario"> Diario a la hora <input type="number" name="hour" min="0" max="23" value="2" class="tiny" aria-label="Hora"></label>
       <label class="radio"><input type="radio" name="preset" value="laboral"> Cada 4 horas de 09:00 a 21:00, de lunes a sábado</label>
       <label class="radio"><input type="radio" name="preset" value="cada4"> Cada 4 horas</label>
       <label class="radio"><input type="radio" name="preset" value="cadahora"> Cada hora</label>
-      <label class="radio"><input type="radio" name="preset" value="cron" checked> Expresión cron <input name="cron" value="{{$pol.Cron}}" class="mono" aria-label="Expresión cron"></label>
+      <label class="radio"><input type="radio" name="preset" value="cron" {{if not $pol.Adaptive}}checked{{end}}> Expresión cron <input name="cron" value="{{if $pol.Adaptive}}0 2 * * *{{else}}{{$pol.Cron}}{{end}}" class="mono" aria-label="Expresión cron"></label>
       <label>Zona horaria<input name="timezone" value="{{$pol.Timezone}}" class="mono"></label>
-      <p class="hint">Cron de 5 campos: minuto, hora, día del mes, mes, día de la semana. Ejemplo: <code>30 1 * * *</code> es todos los días a la 01:30.</p>
+      <p class="hint">Según actividad: mientras alguien trabaje en la biblioteca sale un respaldo en cada revisión; si nadie la toca, ninguno. Un respaldo que sigue vigente no cuenta como atrasado. Cron de 5 campos: minuto, hora, día del mes, mes, día de la semana. Ejemplo: <code>30 1 * * *</code> es todos los días a la 01:30.</p>
     </fieldset>
     <fieldset class="row5">
       <legend>Cuántos conservar</legend>
@@ -148,13 +149,14 @@
     <div class="actions"><button type="submit">Guardar</button></div>
   </form>
   {{else}}
-  <p>Programación: <code>{{$pol.Cron}}</code> ({{$pol.Timezone}}). Conserva {{$pol.KeepLast}} últimos, {{$pol.KeepDaily}} diarios, {{$pol.KeepWeekly}} semanales y {{$pol.KeepMonthly}} mensuales.</p>
+  <p>Programación: {{if $pol.Adaptive}}según actividad, revisión cada {{$pol.CheckMinutes}} minutos{{else}}<code>{{$pol.Cron}}</code>{{end}} ({{$pol.Timezone}}). Conserva {{$pol.KeepLast}} últimos, {{$pol.KeepDaily}} diarios, {{$pol.KeepWeekly}} semanales y {{$pol.KeepMonthly}} mensuales.</p>
   {{end}}
 </section>
 <div class="grid2">
-  <section class="card"><h2>Próximas ejecuciones</h2>
+  <section class="card"><h2>{{if $pol.Adaptive}}Próximas revisiones{{else}}Próximas ejecuciones{{end}}</h2>
     <ul>{{range .Data.Upcoming}}<li>{{dt .}}</li>{{else}}<li class="muted">Sin próximas ejecuciones.</li>{{end}}</ul>
     {{with .Data.Schedule}}{{if .LastRunAt}}<p class="muted small">Última: {{dt .LastRunAt}}</p>{{end}}{{end}}
+    {{if $pol.LastCheckAt}}<p class="muted small">Última revisión {{ago $pol.LastCheckAt}}: {{if $pol.LastCheckSame}}sin cambios desde el último respaldo{{else}}hubo cambios{{end}}.</p>{{end}}
     <p class="hint">Cada biblioteca arranca unos minutos después de la hora exacta para no coincidir con las demás.</p>
   </section>
   <section class="card"><h2>Efecto de la retención hoy</h2>
@@ -211,8 +213,8 @@
 <section class="card">
   <h2>Sesiones activas</h2>
   {{if .Data.Sessions}}
-  <div class="scroll-x"><table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Conectada</th><th>Estado</th><th></th></tr></thead><tbody>
-  {{range .Data.Sessions}}<tr><td class="mono">{{.User}}</td><td class="mono">{{.ClientAddr}}</td><td>{{.Application}}</td><td>{{ago .Started}}</td><td>{{.State}}</td>
+  <div class="scroll-x"><table class="table compact"><thead><tr><th>Usuario</th><th>Desde</th><th>Aplicación</th><th>Conectada</th><th>Cifrado</th><th>Estado</th><th></th></tr></thead><tbody>
+  {{range .Data.Sessions}}<tr><td class="mono">{{.User}}</td><td class="mono">{{.ClientAddr}}</td><td>{{.Application}}</td><td>{{ago .Started}}</td><td>{{template "sslbadge" .}}</td><td>{{.State}}</td>
     <td>{{if $p.Can "library.session.terminate"}}<form method="post" action="/bibliotecas/{{$id}}/sesiones/{{.PID}}/cerrar" data-confirm="Resolve perderá esta conexión. ¿Cerrarla?">{{template "csrf" $csrf}}<button class="ghost small danger" type="submit">Cerrar</button></form>{{end}}</td></tr>{{end}}
   </tbody></table></div>
   {{else}}<p class="muted">Nadie conectado.</p>{{end}}

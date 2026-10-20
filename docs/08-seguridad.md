@@ -31,7 +31,7 @@ opcional), contenedores y host (volúmenes).
 
 | ID | Amenaza | Controles |
 |---|---|---|
-| T-01 | Fuerza bruta contra el panel | Argon2id; límite por IP y por cuenta (5 intentos, luego espera exponencial hasta 15 min); TOTP; aviso por evento `auth.bruteforce` |
+| T-01 | Fuerza bruta contra el panel | Argon2id; límite por IP y por cuenta (5 intentos, luego espera exponencial hasta 15 min); a las 10 contraseñas incorrectas seguidas la cuenta se bloquea y solo `sqsolve admin unlock` en la consola del contenedor la levanta (ADR 0021); TOTP opcional; eventos `auth.login_failed_burst` y `auth.locked` |
 | T-02 | Fuerza bruta contra PostgreSQL | Contraseñas de 140 bits; SCRAM; reglas de red; `log_connections` y evento de fallos repetidos leyendo los registros de PostgreSQL (1.1) |
 | T-03 | Robo de sesión | Cookies `Secure`, `HttpOnly`, `SameSite=Strict`; token de sesión de 256 bits guardado como hash; caducidad por inactividad (8 h) y absoluta (7 días); cierre de sesión en todos los dispositivos |
 | T-04 | CSRF | `SameSite=Strict` y token de sincronización en cada formulario y en `hx-headers` |
@@ -40,9 +40,9 @@ opcional), contenedores y host (volúmenes).
 | T-07 | Inyección de comandos | Sin shell; `execx` con lista blanca (`pg_dump`, `pg_restore`, `vacuumdb`, `restic`); argumentos en arreglo; rutas validadas contra el directorio permitido |
 | T-08 | Escalada de una inyección SQL a ejecución de comandos | Rol de control sin superusuario (sin `COPY ... PROGRAM`); el superusuario solo se usa en rutas de código listadas y auditadas |
 | T-09 | Conexión administrativa desde la red | `pg_hba.conf` rechaza `postgres` y `sqsolve_admin` por red; sqsolve usa socket local |
-| T-10 | Escucha en la LAN | TLS en PostgreSQL (cifrado oportunista según PoC-06); panel solo HTTPS; recomendación de VPN fuera de la LAN |
+| T-10 | Escucha en la LAN | TLS en PostgreSQL: cifrado oportunista por defecto (Resolve 21.1.1 negocia TLS 1.3 solo, comprobado el 2026-10-19) y modo "Solo TLS" opcional que pasa `pg_hba.conf` a `hostssl`, con advertencia de que no se sabe cómo lo implementa cada versión de Resolve; la vista de sesiones muestra si cada conexión va cifrada (`pg_stat_ssl`); panel solo HTTPS; recomendación de VPN fuera de la LAN |
 | T-11 | Toma del asistente inicial | Código de instalación de un solo uso impreso en el registro del contenedor; el asistente se cierra al crear el primer administrador |
-| T-12 | Operación destructiva por error o por sesión robada | Confirmación tecleada con el slug; reautenticación de los últimos 5 min; respaldo previo automático; papelera; auditoría; aviso |
+| T-12 | Operación destructiva por error o por sesión robada | Confirmación tecleada con el slug; respaldo previo automático; papelera; auditoría; aviso. Sin reautenticación desde ADR 0021 |
 | T-13 | Lectura de respaldos | Volumen con permisos 0700 del UID de sqsolve; cifrado con age para copias externas; restic cifra siempre |
 | T-14 | Fuga de secretos en registros | Tipo `secret.String` que se imprime como `[redactado]`; manejador de `slog` que redacta claves conocidas; prueba que busca secretos de prueba en toda la salida |
 | T-15 | Hook malicioso o defectuoso | Sin hooks en 1.0; en 1.1, contenedor aparte, sin secretos, sin socket, con tiempo máximo y solo lectura sobre respaldos |
@@ -54,7 +54,7 @@ opcional), contenedores y host (volúmenes).
 
 ## 4. Autenticación del panel
 
-- Usuarios locales. Nombre de usuario, contraseña de 12 caracteres mínimo comprobada contra una
+- Usuarios locales. Nombre de usuario, contraseña de 8 caracteres mínimo comprobada contra una
   lista local de contraseñas comunes (archivo embebido, sin consultas externas).
 - Argon2id con `m=64 MiB, t=3, p=2` y sal de 16 bytes; parámetros guardados en el hash para
   poder subirlos después.
@@ -75,7 +75,7 @@ Roles del panel:
 |---|---|---|---|---|
 | Ver estado, bibliotecas, respaldos, tareas, eventos | Sí | Sí | Sí | Solo sus bibliotecas |
 | Ver datos de conexión (sin contraseña) | Sí | Sí | Sí | Solo sus bibliotecas |
-| Ver contraseña de una biblioteca | No | No | Sí, con reautenticación | Solo la suya, con reautenticación |
+| Ver contraseña de una biblioteca | No | No | Sí (auditado) | Solo la suya (auditado) |
 | Respaldar ahora, verificar | No | Sí | Sí | No |
 | Restaurar como copia, descargar respaldo | No | Sí | Sí | No |
 | Restaurar reemplazando, revertir | No | No | Sí | No |
@@ -122,7 +122,7 @@ que un valor no pueda moverse a otra columna.
 
 Kit de recuperación: archivo `sqsolve-recuperacion-<instalación>.txt` que el asistente obliga a
 descargar, con la clave maestra en base64, la huella del certificado, la versión y los pasos de
-recuperación. Se puede volver a descargar con reautenticación. Sin él, las bibliotecas siguen a
+recuperación. Se puede volver a descargar desde Ajustes. Sin él, las bibliotecas siguen a
 salvo pero hay que rotar sus contraseñas.
 
 ## 7. Red

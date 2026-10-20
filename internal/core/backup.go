@@ -97,11 +97,13 @@ type Backup struct {
 	ResolveVersion  string
 	Pinned          bool
 	SourceDB        string
-	StartedAt       time.Time
-	FinishedAt      *time.Time
-	Error           string
-	ExpiredReason   string
-	DeletedAt       *time.Time
+	// ActivityMark is the pg_stat_database mark of the snapshot (ADR 0022).
+	ActivityMark  string
+	StartedAt     time.Time
+	FinishedAt    *time.Time
+	Error         string
+	ExpiredReason string
+	DeletedAt     *time.Time
 }
 
 // Verified reports whether a verification passed.
@@ -122,7 +124,7 @@ func (b *Backup) Duration() time.Duration {
 
 const backupCols = `id, library_id, job_id, kind, status, verify_level, verify_status, verified_at, verify_detail, file_path, size_bytes, sha256,
 	pg_server_version, pg_dump_version, archive_version, compression, schema_fingerprint, table_count, counts_exact, resolve_version,
-	pinned, source_db, started_at, finished_at, error, expired_reason, deleted_at`
+	pinned, source_db, started_at, finished_at, error, expired_reason, deleted_at, activity_mark`
 
 func scanBackup(row interface{ Scan(...any) error }) (*Backup, error) {
 	var b Backup
@@ -130,7 +132,7 @@ func scanBackup(row interface{ Scan(...any) error }) (*Backup, error) {
 	var started string
 	err := row.Scan(&b.ID, &b.LibraryID, &b.JobID, &b.Kind, &b.Status, &b.VerifyLevel, &b.VerifyStatus, &verified, &b.VerifyDetail, &b.FilePath,
 		&b.SizeBytes, &b.SHA256, &b.PGServerVersion, &b.PGDumpVersion, &b.ArchiveVersion, &b.Compression, &b.Fingerprint, &b.TableCount,
-		&b.CountsExact, &b.ResolveVersion, &b.Pinned, &b.SourceDB, &started, &finished, &b.Error, &b.ExpiredReason, &deleted)
+		&b.CountsExact, &b.ResolveVersion, &b.Pinned, &b.SourceDB, &started, &finished, &b.Error, &b.ExpiredReason, &deleted, &b.ActivityMark)
 	if err != nil {
 		return nil, err
 	}
@@ -239,6 +241,7 @@ type Manifest struct {
 	Server struct {
 		PostgresVersion string `json:"postgres_version"`
 		DatabaseSize    int64  `json:"database_size_bytes"`
+		ActivityMark    string `json:"activity_mark,omitempty"`
 	} `json:"server"`
 	Schema struct {
 		Fingerprint string `json:"fingerprint"`
@@ -423,7 +426,7 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 	var counts map[string]int64
 	var exact = true
 	var fp pg.Fingerprint
-	var serverVersion string
+	var serverVersion, mark string
 	err = step("volcar", func() error {
 		conn, err := s.PG.ConnectDB(ctx, dbName)
 		if err != nil {
@@ -440,6 +443,7 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 			return err
 		}
 		tx.QueryRow(ctx, `SHOW server_version`).Scan(&serverVersion)
+		mark, _ = pg.ActivityMarkFrom(ctx, tx)
 		if i := strings.IndexByte(serverVersion, ' '); i > 0 {
 			serverVersion = serverVersion[:i]
 		}
@@ -528,7 +532,7 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 			SqsolveVersion: Version, InstanceID: s.InstanceID}
 		m.Library.ID, m.Library.Slug, m.Library.DisplayName = l.ID, l.Slug, l.DisplayName
 		m.Format.Tool, m.Format.ToolVersion, m.Format.Format, m.Format.Compression, m.Format.ArchiveVersion = "pg_dump", info.DumpedBy, "custom", info.Compression, info.ArchiveVersion
-		m.Server.PostgresVersion, m.Server.DatabaseSize = serverVersion, dbSize
+		m.Server.PostgresVersion, m.Server.DatabaseSize, m.Server.ActivityMark = serverVersion, dbSize, mark
 		m.Schema.Fingerprint, m.Schema.Tables = fp.Hash, fp.Tables
 		mb, _ := json.MarshalIndent(m, "", "  ")
 		if err := fsx.WriteFileAtomic(manifestPath(abs), append(mb, '\n'), 0o600); err != nil {
@@ -536,8 +540,8 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 		}
 		os.Chmod(abs, 0o600)
 		_, err = s.DB.ExecContext(ctx, `UPDATE backups SET status = 'ok', finished_at = ?, size_bytes = ?, sha256 = ?, pg_server_version = ?, pg_dump_version = ?,
-			archive_version = ?, compression = ?, schema_fingerprint = ?, table_count = ?, counts_exact = ? WHERE id = ?`,
-			store.T(finished), size, sum, serverVersion, info.DumpedBy, info.ArchiveVersion, info.Compression, fp.Hash, fp.Tables, exact, b.ID)
+			archive_version = ?, compression = ?, schema_fingerprint = ?, table_count = ?, counts_exact = ?, activity_mark = ? WHERE id = ?`,
+			store.T(finished), size, sum, serverVersion, info.DumpedBy, info.ArchiveVersion, info.Compression, fp.Hash, fp.Tables, exact, mark, b.ID)
 		logf("Respaldo de %s escrito (%s)", dbName, HumanBytes(size))
 		return err
 	})

@@ -103,12 +103,6 @@ func ScopeAllows(scopes []string, a Action) bool {
 	return false
 }
 
-// DangerousActions require a recent reauthentication in browser sessions.
-var DangerousActions = map[Action]bool{
-	ActLibraryDelete: true, ActLibraryReveal: true, ActRestoreReplace: true, ActRestoreRevert: true,
-	ActUsersManage: true, ActLibraryCredentials: true,
-}
-
 func contains(list []Action, a Action) bool {
 	for _, x := range list {
 		if x == a {

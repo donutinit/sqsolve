@@ -112,7 +112,7 @@ func (a *API) principal(r *http.Request) (*auth.Principal, error) {
 
 type handler func(w http.ResponseWriter, r *http.Request, p *auth.Principal)
 
-func (a *API) guard(action auth.Action, dangerous bool, h handler) http.HandlerFunc {
+func (a *API) guard(action auth.Action, h handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, err := a.principal(r)
 		if err != nil {
@@ -122,10 +122,6 @@ func (a *API) guard(action auth.Action, dangerous bool, h handler) http.HandlerF
 		}
 		if !p.Can(action) {
 			problem(w, r, http.StatusForbidden, errors.New("SQS-A030 el rol o los alcances del token no permiten esta acción"))
-			return
-		}
-		if dangerous && !p.FreshAuth() {
-			problem(w, r, http.StatusForbidden, errors.New("SQS-A007 confirma tu contraseña en el panel antes de esta acción"))
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -145,37 +141,43 @@ func decode(r *http.Request, v any) error {
 // Register adds the routes to mux.
 func (a *API) Register(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/system/health", a.health)
-	m.HandleFunc("GET /api/v1/system/status", a.guard(auth.ActView, false, a.status))
-	m.HandleFunc("GET /api/v1/system/version", a.guard(auth.ActView, false, a.version))
-	m.HandleFunc("GET /api/v1/libraries", a.guard(auth.ActView, false, a.libraries))
-	m.HandleFunc("POST /api/v1/libraries", a.guard(auth.ActLibraryCreate, false, a.libraryCreate))
-	m.HandleFunc("GET /api/v1/libraries/{id}", a.guard(auth.ActView, false, a.library))
-	m.HandleFunc("PATCH /api/v1/libraries/{id}", a.guard(auth.ActLibraryEdit, false, a.libraryPatch))
-	m.HandleFunc("DELETE /api/v1/libraries/{id}", a.guard(auth.ActLibraryDelete, true, a.libraryDelete))
-	m.HandleFunc("POST /api/v1/libraries/{id}/maintenance", a.guard(auth.ActLibraryMaintenance, false, a.maintenance))
-	m.HandleFunc("GET /api/v1/libraries/{id}/connection", a.guard(auth.ActView, false, a.connection))
-	m.HandleFunc("POST /api/v1/libraries/{id}/connection/reveal", a.guard(auth.ActLibraryReveal, true, a.reveal))
-	m.HandleFunc("GET /api/v1/libraries/{id}/sessions", a.guard(auth.ActView, false, a.sessions))
-	m.HandleFunc("GET /api/v1/libraries/{id}/backup-policy", a.guard(auth.ActView, false, a.policyGet))
-	m.HandleFunc("PUT /api/v1/libraries/{id}/backup-policy", a.guard(auth.ActPolicyEdit, false, a.policyPut))
-	m.HandleFunc("GET /api/v1/libraries/{id}/backups", a.guard(auth.ActView, false, a.libraryBackups))
-	m.HandleFunc("POST /api/v1/libraries/{id}/backups", a.guard(auth.ActBackupCreate, false, a.backupCreate))
-	m.HandleFunc("GET /api/v1/libraries/{id}/projects", a.guard(auth.ActView, false, a.projects))
-	m.HandleFunc("GET /api/v1/libraries/{id}/projects/{pid}/export", a.guard(auth.ActLibraryExport, false, a.exportProject))
-	m.HandleFunc("GET /api/v1/libraries/{id}/grades", a.guard(auth.ActView, false, a.grades))
-	m.HandleFunc("GET /api/v1/libraries/{id}/grades/{sid}/export", a.guard(auth.ActLibraryExport, false, a.exportStill))
-	m.HandleFunc("GET /api/v1/libraries/{id}/grades/albums/{vid}/export", a.guard(auth.ActLibraryExport, false, a.exportAlbum))
-	m.HandleFunc("GET /api/v1/backups", a.guard(auth.ActView, false, a.backups))
-	m.HandleFunc("GET /api/v1/backups/{id}", a.guard(auth.ActView, false, a.backup))
-	m.HandleFunc("POST /api/v1/backups/{id}/verify", a.guard(auth.ActBackupVerify, false, a.backupVerify))
-	m.HandleFunc("POST /api/v1/backups/{id}/restore", a.guard(auth.ActRestoreNew, false, a.restore))
-	m.HandleFunc("GET /api/v1/backups/{id}/download", a.guard(auth.ActBackupDownload, false, a.download))
-	m.HandleFunc("GET /api/v1/jobs", a.guard(auth.ActView, false, a.jobsList))
-	m.HandleFunc("GET /api/v1/jobs/{id}", a.guard(auth.ActView, false, a.job))
-	m.HandleFunc("GET /api/v1/jobs/{id}/logs", a.guard(auth.ActView, false, a.jobLogs))
-	m.HandleFunc("POST /api/v1/jobs/{id}/cancel", a.guard(auth.ActJobCancel, false, a.jobCancel))
-	m.HandleFunc("GET /api/v1/events", a.guard(auth.ActView, false, a.eventsList))
-	m.HandleFunc("GET /api/v1/audit", a.guard(auth.ActAuditView, false, a.auditList))
+	m.HandleFunc("GET /api/v1/system/status", a.guard(auth.ActView, a.status))
+	m.HandleFunc("GET /api/v1/system/version", a.guard(auth.ActView, a.version))
+	m.HandleFunc("GET /api/v1/libraries", a.guard(auth.ActView, a.libraries))
+	m.HandleFunc("POST /api/v1/libraries", a.guard(auth.ActLibraryCreate, a.libraryCreate))
+	m.HandleFunc("GET /api/v1/libraries/{id}", a.guard(auth.ActView, a.library))
+	m.HandleFunc("PATCH /api/v1/libraries/{id}", a.guard(auth.ActLibraryEdit, a.libraryPatch))
+	m.HandleFunc("DELETE /api/v1/libraries/{id}", a.guard(auth.ActLibraryDelete, a.libraryDelete))
+	m.HandleFunc("POST /api/v1/libraries/{id}/maintenance", a.guard(auth.ActLibraryMaintenance, a.maintenance))
+	m.HandleFunc("GET /api/v1/libraries/{id}/connection", a.guard(auth.ActView, a.connection))
+	m.HandleFunc("POST /api/v1/libraries/{id}/connection/reveal", a.guard(auth.ActLibraryReveal, a.reveal))
+	m.HandleFunc("GET /api/v1/libraries/{id}/sessions", a.guard(auth.ActView, a.sessions))
+	m.HandleFunc("GET /api/v1/libraries/{id}/backup-policy", a.guard(auth.ActView, a.policyGet))
+	m.HandleFunc("PUT /api/v1/libraries/{id}/backup-policy", a.guard(auth.ActPolicyEdit, a.policyPut))
+	m.HandleFunc("GET /api/v1/libraries/{id}/backups", a.guard(auth.ActView, a.libraryBackups))
+	m.HandleFunc("POST /api/v1/libraries/{id}/backups", a.guard(auth.ActBackupCreate, a.backupCreate))
+	m.HandleFunc("GET /api/v1/libraries/{id}/projects", a.guard(auth.ActView, a.projects))
+	m.HandleFunc("GET /api/v1/libraries/{id}/projects/{pid}/export", a.guard(auth.ActLibraryExport, a.exportProject))
+	m.HandleFunc("GET /api/v1/libraries/{id}/grades", a.guard(auth.ActView, a.grades))
+	m.HandleFunc("GET /api/v1/libraries/{id}/grades/{sid}/export", a.guard(auth.ActLibraryExport, a.exportStill))
+	m.HandleFunc("GET /api/v1/libraries/{id}/grades/albums/{vid}/export", a.guard(auth.ActLibraryExport, a.exportAlbum))
+	m.HandleFunc("GET /api/v1/backups", a.guard(auth.ActView, a.backups))
+	m.HandleFunc("GET /api/v1/backups/{id}", a.guard(auth.ActView, a.backup))
+	m.HandleFunc("POST /api/v1/backups/{id}/verify", a.guard(auth.ActBackupVerify, a.backupVerify))
+	m.HandleFunc("POST /api/v1/backups/{id}/restore", a.guard(auth.ActRestoreNew, a.restore))
+	m.HandleFunc("GET /api/v1/backups/{id}/download", a.guard(auth.ActBackupDownload, a.download))
+	m.HandleFunc("GET /api/v1/backups/{id}/export", a.guard(auth.ActView, a.backupExportStatus))
+	m.HandleFunc("POST /api/v1/backups/{id}/export", a.guard(auth.ActLibraryExport, a.backupExportPrepare))
+	m.HandleFunc("DELETE /api/v1/backups/{id}/export", a.guard(auth.ActLibraryExport, a.backupExportClose))
+	m.HandleFunc("GET /api/v1/backups/{id}/export/projects/{pid}", a.guard(auth.ActLibraryExport, a.backupExportProject))
+	m.HandleFunc("GET /api/v1/backups/{id}/export/grades/{sid}", a.guard(auth.ActLibraryExport, a.backupExportStill))
+	m.HandleFunc("GET /api/v1/backups/{id}/export/grades/albums/{vid}", a.guard(auth.ActLibraryExport, a.backupExportAlbum))
+	m.HandleFunc("GET /api/v1/jobs", a.guard(auth.ActView, a.jobsList))
+	m.HandleFunc("GET /api/v1/jobs/{id}", a.guard(auth.ActView, a.job))
+	m.HandleFunc("GET /api/v1/jobs/{id}/logs", a.guard(auth.ActView, a.jobLogs))
+	m.HandleFunc("POST /api/v1/jobs/{id}/cancel", a.guard(auth.ActJobCancel, a.jobCancel))
+	m.HandleFunc("GET /api/v1/events", a.guard(auth.ActView, a.eventsList))
+	m.HandleFunc("GET /api/v1/audit", a.guard(auth.ActAuditView, a.auditList))
 	m.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		problem(w, r, http.StatusNotFound, errors.New("SQS-C062 ruta de la API desconocida"))
 	})
@@ -432,10 +434,12 @@ func (a *API) sessions(w http.ResponseWriter, r *http.Request, p *auth.Principal
 		Application string    `json:"application"`
 		Started     time.Time `json:"started_at"`
 		State       string    `json:"state"`
+		SSL         bool      `json:"ssl"`
+		TLSVersion  string    `json:"tls_version,omitempty"`
 	}
 	out := []sdto{}
 	for _, s := range ss {
-		out = append(out, sdto{s.PID, s.User, s.ClientAddr, s.Application, s.Started, s.State})
+		out = append(out, sdto{s.PID, s.User, s.ClientAddr, s.Application, s.Started, s.State, s.SSL, s.TLSVersion})
 	}
 	writeJSON(w, 200, map[string]any{"items": out})
 }
@@ -542,7 +546,7 @@ func (a *API) restore(w http.ResponseWriter, r *http.Request, p *auth.Principal)
 	id := r.PathValue("id")
 	switch in.Mode {
 	case "replace":
-		if !p.Can(auth.ActRestoreReplace) || !p.FreshAuth() {
+		if !p.Can(auth.ActRestoreReplace) {
 			problem(w, r, 403, errors.New("SQS-A030 reemplazar requiere el alcance restore o admin"))
 			return
 		}

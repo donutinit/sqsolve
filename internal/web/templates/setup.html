@@ -36,7 +36,8 @@
     </fieldset>
     <fieldset>
       <legend>4. Respaldos por defecto</legend>
-      <label class="radio"><input type="radio" name="preset" value="diario" checked> Diario a las 02:00</label>
+      <label class="radio"><input type="radio" name="preset" value="actividad" checked> Según actividad: cada 15 minutos mientras haya cambios, ninguno si no los hay</label>
+      <label class="radio"><input type="radio" name="preset" value="diario"> Diario a las 02:00</label>
       <label class="radio"><input type="radio" name="preset" value="laboral"> Cada 4 horas entre 09:00 y 21:00, de lunes a sábado</label>
       <label class="radio"><input type="radio" name="preset" value="cada4"> Cada 4 horas, todos los días</label>
       <p class="hint">Zona horaria del servidor: {{.Data.TZ}}. Cada biblioteca puede tener su propia programación después.</p>

@@ -172,11 +172,6 @@ func (s *Server) restoreSubmit(w http.ResponseWriter, r *http.Request) {
 			s.renderError(w, r, p, http.StatusForbidden, "SQS-A030 Tu rol no permite reemplazar una biblioteca.")
 			return
 		}
-		if !p.FreshAuth() {
-			s.flash(w, "info", "Confirma tu contraseña y vuelve a enviar el formulario.")
-			http.Redirect(w, r, "/confirmar?next="+urlq(back+"?modo=reemplazar"), http.StatusSeeOther)
-			return
-		}
 		j, err := s.A.Svc.RestoreReplace(r.Context(), p.Actor(), id, strings.TrimSpace(r.FormValue("confirm")), r.FormValue("terminate") == "on")
 		if err != nil {
 			s.fail(w, r, back+"?modo=reemplazar", err)

@@ -176,7 +176,7 @@ administrador; si reinicias el contenedor antes, sale uno nuevo.
    tu propio certificado en Ajustes.
 2. El asistente pide:
    - el código de instalación;
-   - tu usuario y una contraseña de al menos 12 caracteres;
+   - tu usuario y una contraseña de al menos 8 caracteres;
    - **la dirección que usan las estaciones** para llegar al servidor (su IP en la LAN o un
      nombre). Es la que se muestra en las instrucciones de conexión;
    - el nombre de la instalación (aparece en el panel y en los avisos);
@@ -188,7 +188,7 @@ administrador; si reinicias el contenedor antes, sale uno nuevo.
    en otro servidor recuperas los proyectos pero las estaciones tendrán que usar contraseñas
    nuevas. Lo puedes volver a descargar en Ajustes.
 
-Recomendado: activa el segundo factor (TOTP) en "Cuenta".
+Opcional: segundo factor (TOTP) en "Cuenta". El panel es siempre HTTPS.
 
 ## Bibliotecas y estaciones de Resolve
 
@@ -203,8 +203,8 @@ Recomendado: activa el segundo factor (TOTP) en "Cuenta".
      (PostgreSQL) con la opción **Create**;
    - como nombre de la biblioteca escribe **exactamente el identificador**;
    - en ubicación, la IP o el nombre del servidor (sin puerto);
-   - el usuario y la contraseña que muestra el panel ("Mostrar contraseña" pide tu contraseña
-     del panel si no la escribiste hace poco).
+   - el usuario y la contraseña que muestra el panel ("Mostrar contraseña"; queda en la
+     auditoría).
 3. Resolve crea la base y sus tablas. sqsolve lo detecta solo en unos segundos, cierra la
    ventana, quita el permiso de crear bases y hace el primer respaldo. La biblioteca pasa a
    "Activa".
@@ -234,8 +234,11 @@ pasa por sqsolve).
 
 ## Respaldos
 
-- **Automáticos** según el horario de cada biblioteca (pestaña Programación), con un pequeño
-  desfase aleatorio para que no arranquen todos a la vez. También "Respaldar ahora".
+- **Automáticos según actividad** (por defecto): cada 15 minutos sqsolve revisa si la biblioteca
+  cambió desde el último respaldo y solo entonces respalda. Mientras alguien trabaja sale uno por
+  revisión; si nadie la toca, ninguno, y el último sigue contando como vigente. Si prefieres
+  horas fijas, cada biblioteca acepta una expresión cron (pestaña Programación). Pequeño desfase
+  aleatorio por biblioteca para que no arranquen todas a la vez. También "Respaldar ahora".
 - Cada respaldo es un `pg_dump` en formato custom tomado de una foto consistente de la base,
   con conteo exacto de filas en esa misma foto, suma SHA-256 y un manifiesto JSON al lado.
   Se escribe primero como `.partial` y solo se renombra cuando está completo.
@@ -250,11 +253,14 @@ pasa por sqsolve).
 - **Línea de tiempo de protección**: cada biblioteca es una pista y cada respaldo un marcador
   (alto si pasó la restauración de prueba, medio si pasó suma e índice, punteado sin verificar,
   cruz roja si falló). La franja ámbar marca tiempo sin respaldo verificado (48 horas por
-  defecto).
+  defecto), salvo que la biblioteca no haya cambiado desde el último: entonces sigue protegida.
 - **En disco**:
   `respaldos/libraries/<identificador>/<año>/<mes>/<identificador>_<fecha>_<id>.backup` más su
   `.manifest.json`. Son archivos estándar: se pueden restaurar con `pg_restore` aunque sqsolve no
   exista.
+- **Exportar desde un respaldo**: en la página de cualquier respaldo, "Exportar .drp y .drx"
+  lo restaura en una base temporal y deja descargar proyectos y grados tal como estaban ese día,
+  sin tocar la biblioteca (experimental, hay que activarlo en Ajustes).
 - **Descargar** un respaldo desde su página. **Importar** uno de fuera (de otro servidor, del
   Project Server oficial o de una descarga): súbelo desde "Importar", o cópialo a
   `respaldos/_import/` y elígelo de la lista (mejor para archivos de varios GB; si marcas borrar
@@ -273,8 +279,7 @@ Desde la página de un respaldo, "Restaurar":
 - **Reemplazar la biblioteca actual**: primero hace un respaldo de cómo está ahora, restaura en
   una base aparte, la compara con el manifiesto, espera a que cierren Resolve (o cierra las
   sesiones si lo marcas) e intercambia las bases. La versión anterior se guarda 7 días para
-  **revertir** desde la pestaña Zona de peligro. Pide escribir el identificador y confirmar tu
-  contraseña.
+  **revertir** desde la pestaña Zona de peligro. Pide escribir el identificador.
 
 Si sqsolve o el servidor se caen a media restauración, al arrancar lee el diario de la tarea y
 deja la biblioteca en un estado coherente.
@@ -287,11 +292,17 @@ deja la biblioteca en un estado coherente.
 - **Cambiar contraseña**: las estaciones que la usan tendrán que escribir la nueva.
 - **Reglas de red**: limita desde qué redes se entra a esa biblioteca (por ejemplo
   `192.168.10.0/24`). Sin reglas, se entra desde cualquier dirección que llegue al puerto.
-- **Sesiones**: quién está conectado ahora y desde dónde; puedes cerrar una sesión.
+- **Sesiones**: quién está conectado ahora, desde dónde y si la conexión va cifrada; puedes
+  cerrar una sesión.
+- **Solo TLS** (Ajustes, Seguridad): rechaza las conexiones de Resolve sin cifrar. Resolve usa
+  TLS por sí solo cuando el servidor lo ofrece, y sqsolve siempre lo ofrece; comprobado con
+  Resolve 21.1.1 en Linux. Es la opción recomendada, pero no se sabe cómo lo implementa cada
+  versión de Resolve: antes de activarla revisa que tus estaciones aparezcan como cifradas en
+  Sesiones y prueba después una conexión nueva. Si una estación deja de entrar, desactívala.
 - Los usuarios administrativos de PostgreSQL (`postgres` y `sqsolve_admin`) no aceptan
   conexiones por red, solo por el socket interno.
 - Las contraseñas de las bibliotecas se guardan cifradas con la clave maestra y solo se muestran
-  a quien confirmó su contraseña del panel hace poco; cada vez queda en la auditoría.
+  a administradores; cada vez queda en la auditoría.
 
 ## Usuarios del panel, avisos y API
 
@@ -328,6 +339,7 @@ docker compose exec sqsolve sqsolve restore <id-respaldo> --new <identificador-n
 docker compose exec sqsolve sqsolve admin list
 docker compose exec sqsolve sqsolve admin reset-password <usuario>
 docker compose exec sqsolve sqsolve admin disable-totp <usuario>
+docker compose exec sqsolve sqsolve admin unlock <usuario>         # tras 10 contraseñas incorrectas seguidas
 docker compose exec sqsolve sqsolve catalog rebuild --wait     # recrea el catálogo desde los manifiestos
 docker compose exec sqsolve sqsolve audit verify
 ```
@@ -397,6 +409,7 @@ código `SQS-...` que también aparece en la API.
 | `SQS-B012` | No hay espacio en el disco de respaldos | Libera espacio o ajusta la retención |
 | `SQS-L046` al purgar | El usuario de la biblioteca todavía es dueño de otra base (por ejemplo, una creada con el nombre equivocado) | Revisa esa base y bórrala a mano si no sirve |
 | `SQS-A003` | Demasiados intentos de entrada | Espera el tiempo que indica |
+| `SQS-A004` | Diez contraseñas incorrectas seguidas: la cuenta quedó bloqueada | `sqsolve admin unlock <usuario>` desde la consola del contenedor; el panel no la desbloquea |
 | Perdiste el segundo factor | | `sqsolve admin disable-totp <usuario>` |
 | El panel dice "PostgreSQL sin conexión" | El contenedor `postgres` está detenido o reiniciando | `docker compose ps` y `docker compose logs postgres`; sqsolve se reconecta solo |
 

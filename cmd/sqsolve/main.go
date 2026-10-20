@@ -50,6 +50,7 @@ Uso:
   sqsolve admin create <usuario> [--role admin|operator|viewer]
   sqsolve admin reset-password <usuario>
   sqsolve admin disable-totp <usuario>
+  sqsolve admin unlock <usuario>
   sqsolve library list
   sqsolve backup create <identificador> [--wait]
   sqsolve backup list <identificador>
@@ -330,7 +331,7 @@ func readPassword(prompt string) (string, error) {
 
 func adminCmd(args []string) error {
 	if len(args) < 1 {
-		return errors.New("falta el subcomando: list, create, reset-password, disable-totp")
+		return errors.New("falta el subcomando: list, create, reset-password, disable-totp, unlock")
 	}
 	a, ctx, done, err := openCLI(false)
 	if err != nil {
@@ -393,6 +394,18 @@ func adminCmd(args []string) error {
 			return err
 		}
 		fmt.Println("Segundo factor desactivado.")
+	case "unlock":
+		if len(args) < 2 {
+			return errors.New("uso: sqsolve admin unlock <usuario>")
+		}
+		u, err := a.Auth.UserByName(ctx, args[1])
+		if err != nil {
+			return err
+		}
+		if err := a.Auth.Unlock(ctx, audit.CLI, u.ID); err != nil {
+			return err
+		}
+		fmt.Println("Cuenta desbloqueada; el contador de intentos vuelve a cero.")
 	default:
 		return fmt.Errorf("subcomando desconocido: %s", args[0])
 	}

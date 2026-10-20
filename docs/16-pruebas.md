@@ -125,7 +125,7 @@ Studio); red local; luego sin salida a Internet.
 | 4 | AC-04 | Una persona sin experiencia previa conecta la estación 2 siguiendo solo el panel |
 | 5 | AC-05 | Ambas ven el proyecto; el panel muestra dos estaciones |
 | 6 | AC-06 | Activar colaboración; bloqueo de bins y chat entre estaciones |
-| 7 | AC-07 | Programar cada hora con retención corta durante 72 h; revisar catálogo y retención |
+| 7 | AC-07 | Modo según actividad (ADR 0022) durante una sesión de trabajo de dos horas y una pausa sin actividad; comprobar que salen respaldos mientras hay cambios y ninguno cuando no, y revisar catálogo y retención con una política corta |
 | 8 | AC-08 | Modificar el proyecto; restaurar como copia y abrirla; reemplazar y abrir; revertir |
 | 9 | AC-09 | Reiniciar el host; actualizar a una versión candidata; cortar la energía durante un respaldo |
 | 10 | AC-10 | Repetir 3, 7 y 8 sin salida a Internet |

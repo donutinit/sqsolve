@@ -166,6 +166,17 @@ WHERE datname = $1 AND backend_type = 'client backend';
 Cerrar una sesión: `pg_terminate_backend(pid)` tras confirmar, solo si `usename` es un rol de esa
 biblioteca. Auditado con el usuario, la IP y la aplicación de la sesión cerrada.
 
+Marca de actividad (ADR 0022), para saber si una biblioteca cambió desde su último respaldo sin
+leer sus tablas:
+
+```sql
+SELECT datname, tup_inserted + tup_updated + tup_deleted, COALESCE(stats_reset::text, '')
+FROM pg_stat_database WHERE datname IS NOT NULL;
+```
+
+Dos marcas iguales significan que ninguna fila se escribió entre una y otra. `stats_reset` forma
+parte de la marca para que un reinicio de estadísticas nunca se lea como "sin cambios".
+
 ## 8. Mantenimiento y reglas de conexión
 
 | Acción | SQL |

@@ -1,0 +1,39 @@
+{{define "content"}}
+{{$b := .Data.B}}{{$p := .P}}{{$ws := .Data.Workspace}}
+<div class="pagehead">
+  <div>
+    <h1>Exportar desde el respaldo del {{dt $b.StartedAt}}</h1>
+    <p class="muted">{{with .Data.L}}<a href="/bibliotecas/{{.ID}}">{{.DisplayName}}</a> · {{end}}<a href="/respaldos/{{$b.ID}}">Ver el respaldo</a> · {{kind $b.Kind}}</p>
+  </div>
+  <div class="actions">
+    {{if and .Data.Live ($p.Can "library.export")}}<form method="post" action="/respaldos/{{$b.ID}}/exportar/cerrar">{{template "csrf" $.CSRF}}<button type="submit" class="ghost">Cerrar y borrar la base temporal</button></form>{{end}}
+  </div>
+</div>
+
+<section class="card emphasis">
+  <div class="cardhead"><h2>Proyectos y grados tal como estaban en este respaldo</h2>{{template "badge" (dict "tone" "warn" "label" "Experimental")}}</div>
+  <p>El respaldo se restaura en una base temporal, aparte de la biblioteca, y de ahí salen los <code>.drp</code> y <code>.drx</code>. La biblioteca no se toca. La base temporal se borra al cerrar o dos horas después del último uso. Lee tablas que Blackmagic no documenta: <strong>sin garantía</strong>.</p>
+  {{if .Data.Fingerprint}}
+  <p class="muted small">Esquema del respaldo: {{if .Data.KnownOK}}{{template "badge" (dict "tone" "ok" "label" (printf "Verificado con Resolve %s" .Data.Known.Resolve))}}{{else}}{{template "badge" (dict "tone" "warn" "label" "No verificado con Resolve")}}{{end}}</p>
+  {{end}}
+</section>
+
+{{if not .Data.Enabled}}
+<div class="flash info" role="status">{{.Data.Err}}{{if $p.Can "settings.edit"}} <a href="/ajustes">Ir a Ajustes</a>.{{end}}</div>
+{{else if .Data.Err}}
+<div class="flash error" role="alert">{{.Data.Err}}</div>
+{{else if not .Data.Ready}}
+<section class="card narrow">
+  {{if and $ws (eq $ws.State "preparing") .Data.Live}}
+  <p>{{template "badge" (dict "tone" "run" "label" "Preparando")}} Se está restaurando el respaldo en la base temporal.{{with .Data.Job}} <a href="/tareas/{{.ID}}">Ver la tarea</a>.{{end}}</p>
+  <p class="hint">Recarga esta página cuando la tarea termine.</p>
+  {{else}}
+  {{if and $ws (eq $ws.State "failed")}}<p class="bad">La última preparación falló: {{$ws.Error}}</p>{{end}}
+  <p>Para exportar desde este respaldo hay que restaurarlo primero en una base temporal. Tarda lo mismo que una restauración de prueba.</p>
+  {{if $p.Can "library.export"}}<form method="post" action="/respaldos/{{$b.ID}}/exportar/preparar">{{template "csrf" $.CSRF}}<div class="actions"><button type="submit">Preparar la exportación</button></div></form>{{else}}<p class="muted">Tu rol no permite exportar.</p>{{end}}
+  {{end}}
+</section>
+{{else}}
+{{template "exportcatalog" (dict "base" (printf "/respaldos/%s/exportar" $b.ID) "can" .Data.CanExport "projects" .Data.Projects "power" .Data.PowerGrades "albums" .Data.ProjectAlbums)}}
+{{end}}
+{{end}}

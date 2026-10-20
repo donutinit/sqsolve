@@ -55,6 +55,11 @@ internal/clock               reloj inyectable para pruebas
   versión (16, 17) se seleccionan con una variable.
 
 ### SQS-001 a SQS-010 Ejecutar PoC-01 a PoC-10
+- **Recorte del 2026-10-19:** para la 1.0 se ejecutan PoC-01, 03, 04, 06, 08 y 09, y PoC-02 solo
+  con Resolve 21.1.x y PostgreSQL 18. PoC-05, 07 y 10 y el resto de la matriz pasan a 1.1 y se
+  documentan como REPORTADO. El laboratorio es mininas (sqsolve, PostgreSQL 18) y SQS-020 queda
+  en un compose mínimo solo si alguna PoC lo exige. Lo que no requiere clics en Resolve
+  (roles, bases, respaldos, consultas, la API de scripting de Resolve) lo corre el agente.
 - **Depende de:** SQS-020.
 - **Entregables:** un informe por PoC en `docs/poc/` según `02-pruebas-de-concepto.md`; cambios
   de estado en `01-investigacion.md` §14 y en `14-compatibilidad.md`; ADR nuevos o actualizados
@@ -375,7 +380,10 @@ internal/clock               reloj inyectable para pruebas
 
 ## 8. Versión 0.6: API e interfaz
 
-### SQS-400 Contrato OpenAPI
+Recorte del 2026-10-19: SQS-400, SQS-410 y SQS-520 pasan a 1.1. La 1.0 se queda con la API
+JSON tal como está, la prueba de extremo a extremo por HTTP y las pruebas de plantilla.
+
+### SQS-400 Contrato OpenAPI (1.1)
 - **Referencias:** `10` §1, §2, §3.
 - **Criterios:** [ ] `api/openapi.yaml` 3.1 completo para 1.0 antes de los handlers; [ ] errores
   RFC 9457; [ ] esquemas reutilizables.
@@ -387,7 +395,7 @@ internal/clock               reloj inyectable para pruebas
 - **Criterios comunes:** [ ] autorización por la política única; [ ] idempotencia y `ETag` donde
   aplica; [ ] 202 con tarea para operaciones largas; [ ] pruebas por endpoint.
 
-### SQS-410 Pruebas de contrato
+### SQS-410 Pruebas de contrato (1.1)
 - **Criterios:** [ ] cada respuesta de la batería de integración se valida contra OpenAPI; [ ]
   un endpoint sin especificar hace fallar CI.
 
@@ -412,11 +420,15 @@ internal/clock               reloj inyectable para pruebas
   tareas con progreso; [ ] peligrosas con el patrón de `09` §5; [ ] usable a 360 px; [ ] teclado y
   lector de pantalla en flujos principales; [ ] ambos idiomas.
 
-### SQS-520 Pruebas extremo a extremo
+### SQS-520 Pruebas extremo a extremo con navegador (1.1)
 - **Criterios:** [ ] `chromedp` cubre asistente, crear biblioteca (con Resolve simulado),
   respaldar, restaurar como nueva, reemplazar y revertir, eliminar y recuperar.
 
 ## 9. Versión 0.9 y 1.0
+
+Alcance recortado el 2026-10-19 (decisión de Diego: el plan original estaba sobredimensionado
+para un proyecto de una persona). Se queda lo que valida lo que el código ya asume y lo que hace
+publicable la versión; lo demás pasa a 1.1 y queda anotado en cada tarea.
 
 ### SQS-600 Recuperar instalación existente
 - **Referencias:** `12` §9.
@@ -425,8 +437,8 @@ internal/clock               reloj inyectable para pruebas
   sin Resolve).
 
 ### SQS-601 Kit de recuperación
-- **Criterios:** [ ] descarga obligatoria en el asistente; [ ] redescarga con reautenticación; [ ]
-  contenido de `08` §6.
+- **Criterios:** [ ] descarga obligatoria en el asistente; [ ] redescarga desde Ajustes (sin
+  reautenticación, ADR 0021); [ ] contenido de `08` §6.
 
 ### SQS-602 Paquete de diagnóstico
 - **Referencias:** `13` §6.
@@ -434,25 +446,36 @@ internal/clock               reloj inyectable para pruebas
 
 ### SQS-603 Batería de fallos y recuperación
 - **Referencias:** `16` §4.
-- **Criterios:** [ ] todos los escenarios automatizados en el trabajo nocturno; [ ] invariantes
-  comprobados.
+- **Criterios (recortados):** [ ] los escenarios que ya corren en CI (`test/scenarios.py`:
+  procesos que mueren, PostgreSQL caído, restaurar con sesiones abiertas) pasan en la versión
+  candidata; [ ] invariantes comprobados. El trabajo nocturno con el resto de escenarios pasa a
+  1.1.
 
 ### SQS-604 Revisión de seguridad
-- **Criterios:** [ ] ZAP sin alertas altas; [ ] revisión manual contra `08`; [ ] hallazgos
-  corregidos o registrados con ADR.
+- **Criterios (recortados):** [ ] una corrida local de ZAP baseline contra el panel, sin alertas
+  altas; [ ] revisión manual contra `08` con ADR 0021 ya aplicado; [ ] hallazgos corregidos o
+  registrados con ADR. ZAP nocturno en CI pasa a 1.1.
 
 ### SQS-605 Documentación de usuario y runbooks
 - **Referencias:** `18` §1.
-- **Criterios:** [ ] todos los documentos marcados 0.9 y 1.0; [ ] cada pantalla enlaza su sección;
-  [ ] probados por alguien que no escribió el código.
+- **Criterios (recortados):** [ ] el README es el manual de 1.0 y está al día; [ ] `SECURITY.md`,
+  `CHANGELOG.md` y `CONTRIBUTING.md` existen; [ ] tres runbooks: restaurar y revertir, recuperar
+  una instalación, actualizar sqsolve; [ ] `docs/manual/errores.md` generado a partir de los
+  códigos `SQS-`. Los demás manuales y runbooks pasan a 1.1.
 
 ### SQS-606 Aceptación 1.0
 - **Referencias:** `16` §8.
-- **Criterios:** [ ] AC-01 a AC-11 aprobados y registrados en `docs/aceptacion/1.0.md`.
+- **Criterios (recortados):** [ ] AC-01 a AC-11 en una sola sesión con la estación Linux de Diego
+  y una macOS con Resolve Studio, con el modo según actividad en lugar de las 72 horas de
+  respaldos horarios; [ ] registrados en `docs/aceptacion/1.0.md` con versiones, fechas y
+  salidas de `sqsolve doctor`.
 
 ### SQS-607 Publicación 1.0
 - **Referencias:** `17` §6, §8.
-- **Criterios:** [ ] lista de comprobación completa; [ ] firmas y SBOM verificados por un tercero.
+- **Criterios (recortados):** [ ] lista de comprobación de `17` §8 completa; [ ] imagen firmada
+  con cosign sin clave (identidad del workflow de GitHub) y verificada con `cosign verify`; [ ]
+  SBOM de buildx adjunto; [ ] versión en GitHub con `deploy/compose.yaml` y las notas. Réplica
+  del registro, binarios sueltos y verificación por un tercero pasan a 1.1.
 
 ## 10. Versión 1.1
 
@@ -490,14 +513,17 @@ internal/clock               reloj inyectable para pruebas
 
 | Fase | Tareas | Estado |
 |---|---|---|
-| 0.0 | SQS-020, SQS-001 a SQS-010 | Pendiente: las PoC necesitan estaciones con Resolve |
+| 0.0 | SQS-020, SQS-001 a SQS-010 | Pendiente. Recorte del 2026-10-19: PoC-01, 03, 04, 06, 08, 09 y PoC-02 reducida para 1.0; 05, 07, 10 a 1.1. Laboratorio: mininas y la estación de Diego |
 | 0.1 | SQS-040, 041, 100 a 117, 030, 031 | Implementado (2026-10-18) |
 | 0.2 | SQS-150 a 156 | Implementado (2026-10-18) |
 | 0.3 | SQS-200 a 240 | Implementado (2026-10-18) según la hipótesis del plan; sin validar con Resolve (PoC-01 a 05). E0 queda experimental |
 | 0.4 y 0.5 | SQS-300 a 340 | Implementado (2026-10-18); la restauración vista desde Resolve sin validar (PoC-07, 08) |
-| 0.6 | SQS-400 a 420, 500 a 520 | API, notificaciones e interfaz implementadas (2026-10-18). Pendientes: SQS-400 (OpenAPI), SQS-410 (contrato) y SQS-520 con navegador; hay una prueba de extremo a extremo por HTTP |
-| 0.9 y 1.0 | SQS-600 a 607 | SQS-600, 601 y 602 implementadas (2026-10-18); SQS-603 parcial (`test/scenarios.py` en CI: procesos que mueren, PostgreSQL caído, restaurar con sesiones abiertas); 604 a 607 pendientes |
+| 0.6 | SQS-400 a 420, 500 a 520 | API, notificaciones e interfaz implementadas (2026-10-18). SQS-400, 410 y 520 pasan a 1.1 (recorte del 2026-10-19); hay una prueba de extremo a extremo por HTTP y pruebas de plantilla |
+| 0.9 y 1.0 | SQS-600 a 607 | SQS-600, 601 y 602 implementadas (2026-10-18); SQS-603 cumple el criterio recortado con `test/scenarios.py`; 604 a 607 pendientes con los criterios recortados del 2026-10-19 |
 | 1.1 (parcial) | SQS-720 a 722 | Implementado (2026-10-19) como ADR 0019 Propuesto; validado contra Resolve 21.1.1 |
 | Identidad | ADR 0020 | Implementada (2026-10-19): marca en `docs/identidad`, panel con el imagotipo e íconos, README |
+| Seguridad proporcional | ADR 0021 | Implementada (2026-10-19): sin reautenticación, contraseñas de 8, sesiones largas, bloqueo con `admin unlock` |
+| Respaldo según actividad | ADR 0022 | Implementado (2026-10-19): modo `activity`, compuerta en el programador, marca por respaldo, línea de protección |
+| Exportar desde respaldo | docs/22 §7 | Implementado (2026-10-19): tarea `backup.export`, base temporal, página y API, auditoría |
 
 Los criterios `[ ]` de cada tarea no se marcaron uno por uno en esta pasada; la tabla resume.

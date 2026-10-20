@@ -244,27 +244,6 @@ func (s *Server) page(action auth.Action, h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// dangerous requires a recent reauthentication before running h.
-func (s *Server) dangerous(action auth.Action, h http.HandlerFunc) http.HandlerFunc {
-	return s.page(action, func(w http.ResponseWriter, r *http.Request) {
-		p := principalOf(r)
-		if !p.FreshAuth() {
-			next := r.URL.RequestURI()
-			if r.Method == http.MethodPost {
-				if ref := r.Header.Get("Referer"); ref != "" {
-					if u, err := url.Parse(ref); err == nil && u.Host == r.Host {
-						next = u.RequestURI()
-					}
-				}
-			}
-			s.flash(w, "info", "Confirma tu contraseña para continuar.")
-			http.Redirect(w, r, "/confirmar?next="+url.QueryEscape(next), http.StatusSeeOther)
-			return
-		}
-		h(w, r)
-	})
-}
-
 type flashMsg struct {
 	Kind string `json:"k"`
 	Msg  string `json:"m"`
@@ -425,8 +404,6 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /entrar/codigo", s.totpForm)
 	m.HandleFunc("POST /entrar/codigo", s.totpSubmit)
 	m.HandleFunc("POST /salir", s.page(auth.ActView, s.logout))
-	m.HandleFunc("GET /confirmar", s.page(auth.ActView, s.reauthForm))
-	m.HandleFunc("POST /confirmar", s.page(auth.ActView, s.reauthSubmit))
 
 	m.HandleFunc("GET /{$}", s.page(auth.ActView, s.dashboard))
 	m.HandleFunc("GET /bibliotecas", s.page(auth.ActView, s.libraries))
@@ -439,19 +416,19 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /bibliotecas/{id}/respaldar", s.page(auth.ActBackupCreate, s.libraryBackup))
 	m.HandleFunc("POST /bibliotecas/{id}/mantenimiento", s.page(auth.ActLibraryMaintenance, s.libraryMaintenance))
 	m.HandleFunc("POST /bibliotecas/{id}/ventana", s.page(auth.ActLibraryEdit, s.libraryReopen))
-	m.HandleFunc("POST /bibliotecas/{id}/contrasena/ver", s.dangerous(auth.ActLibraryReveal, s.libraryReveal))
-	m.HandleFunc("POST /bibliotecas/{id}/contrasena/rotar", s.dangerous(auth.ActLibraryCredentials, s.libraryRotate))
-	m.HandleFunc("POST /bibliotecas/{id}/personas", s.dangerous(auth.ActLibraryCredentials, s.libraryAddMember))
-	m.HandleFunc("POST /bibliotecas/{id}/personas/{cid}/revocar", s.dangerous(auth.ActLibraryCredentials, s.libraryRevokeMember))
-	m.HandleFunc("POST /bibliotecas/{id}/redes", s.dangerous(auth.ActLibraryCredentials, s.libraryNetwork))
+	m.HandleFunc("POST /bibliotecas/{id}/contrasena/ver", s.page(auth.ActLibraryReveal, s.libraryReveal))
+	m.HandleFunc("POST /bibliotecas/{id}/contrasena/rotar", s.page(auth.ActLibraryCredentials, s.libraryRotate))
+	m.HandleFunc("POST /bibliotecas/{id}/personas", s.page(auth.ActLibraryCredentials, s.libraryAddMember))
+	m.HandleFunc("POST /bibliotecas/{id}/personas/{cid}/revocar", s.page(auth.ActLibraryCredentials, s.libraryRevokeMember))
+	m.HandleFunc("POST /bibliotecas/{id}/redes", s.page(auth.ActLibraryCredentials, s.libraryNetwork))
 	m.HandleFunc("POST /bibliotecas/{id}/sesiones/{pid}/cerrar", s.page(auth.ActSessionTerminate, s.librarySessionTerminate))
-	m.HandleFunc("GET /bibliotecas/{id}/eliminar", s.dangerous(auth.ActLibraryDelete, s.libraryDeleteForm))
-	m.HandleFunc("POST /bibliotecas/{id}/eliminar", s.dangerous(auth.ActLibraryDelete, s.libraryDeleteSubmit))
+	m.HandleFunc("GET /bibliotecas/{id}/eliminar", s.page(auth.ActLibraryDelete, s.libraryDeleteForm))
+	m.HandleFunc("POST /bibliotecas/{id}/eliminar", s.page(auth.ActLibraryDelete, s.libraryDeleteSubmit))
 	m.HandleFunc("POST /bibliotecas/{id}/recuperar", s.page(auth.ActLibraryDelete, s.libraryUntrash))
-	m.HandleFunc("GET /bibliotecas/{id}/purgar", s.dangerous(auth.ActLibraryDelete, s.libraryPurgeForm))
-	m.HandleFunc("POST /bibliotecas/{id}/purgar", s.dangerous(auth.ActLibraryDelete, s.libraryPurgeSubmit))
-	m.HandleFunc("GET /bibliotecas/{id}/revertir", s.dangerous(auth.ActRestoreRevert, s.libraryRevertForm))
-	m.HandleFunc("POST /bibliotecas/{id}/revertir", s.dangerous(auth.ActRestoreRevert, s.libraryRevertSubmit))
+	m.HandleFunc("GET /bibliotecas/{id}/purgar", s.page(auth.ActLibraryDelete, s.libraryPurgeForm))
+	m.HandleFunc("POST /bibliotecas/{id}/purgar", s.page(auth.ActLibraryDelete, s.libraryPurgeSubmit))
+	m.HandleFunc("GET /bibliotecas/{id}/revertir", s.page(auth.ActRestoreRevert, s.libraryRevertForm))
+	m.HandleFunc("POST /bibliotecas/{id}/revertir", s.page(auth.ActRestoreRevert, s.libraryRevertSubmit))
 	m.HandleFunc("POST /bibliotecas/{id}/recrear", s.page(auth.ActRestoreReplace, s.libraryRecreate))
 	m.HandleFunc("GET /bibliotecas/{id}/exportar", s.page(auth.ActView, s.libraryExport))
 	m.HandleFunc("GET /bibliotecas/{id}/exportar/proyectos/{pid}", s.page(auth.ActLibraryExport, s.libraryExportProject))
@@ -464,8 +441,14 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /respaldos/{id}", s.page(auth.ActView, s.backup))
 	m.HandleFunc("POST /respaldos/{id}/verificar", s.page(auth.ActBackupVerify, s.backupVerify))
 	m.HandleFunc("POST /respaldos/{id}/fijar", s.page(auth.ActBackupPin, s.backupPin))
-	m.HandleFunc("POST /respaldos/{id}/borrar", s.dangerous(auth.ActLibraryDelete, s.backupDelete))
+	m.HandleFunc("POST /respaldos/{id}/borrar", s.page(auth.ActLibraryDelete, s.backupDelete))
 	m.HandleFunc("GET /respaldos/{id}/descargar", s.page(auth.ActBackupDownload, s.backupDownload))
+	m.HandleFunc("GET /respaldos/{id}/exportar", s.page(auth.ActView, s.backupExport))
+	m.HandleFunc("POST /respaldos/{id}/exportar/preparar", s.page(auth.ActLibraryExport, s.backupExportPrepare))
+	m.HandleFunc("POST /respaldos/{id}/exportar/cerrar", s.page(auth.ActLibraryExport, s.backupExportClose))
+	m.HandleFunc("GET /respaldos/{id}/exportar/proyectos/{pid}", s.page(auth.ActLibraryExport, s.backupExportProject))
+	m.HandleFunc("GET /respaldos/{id}/exportar/stills/{sid}", s.page(auth.ActLibraryExport, s.backupExportStill))
+	m.HandleFunc("GET /respaldos/{id}/exportar/albumes/{vid}", s.page(auth.ActLibraryExport, s.backupExportAlbum))
 	m.HandleFunc("GET /respaldos/{id}/restaurar", s.page(auth.ActRestoreNew, s.restoreForm))
 	m.HandleFunc("POST /respaldos/{id}/restaurar", s.page(auth.ActRestoreNew, s.restoreSubmit))
 
@@ -481,24 +464,24 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /ajustes", s.page(auth.ActView, s.settings))
 	m.HandleFunc("POST /ajustes/general", s.page(auth.ActSettingsEdit, s.settingsGeneral))
-	m.HandleFunc("POST /ajustes/certificado", s.dangerous(auth.ActSettingsEdit, s.settingsCert))
-	m.HandleFunc("POST /ajustes/usuarios", s.dangerous(auth.ActUsersManage, s.userCreate))
-	m.HandleFunc("POST /ajustes/usuarios/{id}", s.dangerous(auth.ActUsersManage, s.userUpdate))
-	m.HandleFunc("POST /ajustes/usuarios/{id}/contrasena", s.dangerous(auth.ActUsersManage, s.userPassword))
-	m.HandleFunc("POST /ajustes/usuarios/{id}/totp", s.dangerous(auth.ActUsersManage, s.userDisableTOTP))
+	m.HandleFunc("POST /ajustes/certificado", s.page(auth.ActSettingsEdit, s.settingsCert))
+	m.HandleFunc("POST /ajustes/usuarios", s.page(auth.ActUsersManage, s.userCreate))
+	m.HandleFunc("POST /ajustes/usuarios/{id}", s.page(auth.ActUsersManage, s.userUpdate))
+	m.HandleFunc("POST /ajustes/usuarios/{id}/contrasena", s.page(auth.ActUsersManage, s.userPassword))
+	m.HandleFunc("POST /ajustes/usuarios/{id}/totp", s.page(auth.ActUsersManage, s.userDisableTOTP))
 	m.HandleFunc("POST /ajustes/notificaciones", s.page(auth.ActNotifyManage, s.notifySave))
 	m.HandleFunc("POST /ajustes/notificaciones/{id}/probar", s.page(auth.ActNotifyManage, s.notifyTest))
 	m.HandleFunc("POST /ajustes/notificaciones/{id}/borrar", s.page(auth.ActNotifyManage, s.notifyDelete))
 	m.HandleFunc("POST /ajustes/mantenimiento/{accion}", s.page(auth.ActSettingsEdit, s.maintenanceAction))
-	m.HandleFunc("GET /ajustes/kit", s.dangerous(auth.ActSettingsEdit, s.recoveryKit))
+	m.HandleFunc("GET /ajustes/kit", s.page(auth.ActSettingsEdit, s.recoveryKit))
 	m.HandleFunc("GET /ajustes/diagnostico", s.page(auth.ActDiagnostics, s.diagnostics))
 
 	m.HandleFunc("GET /cuenta", s.page(auth.ActView, s.account))
-	m.HandleFunc("POST /cuenta/contrasena", s.dangerous(auth.ActView, s.accountPassword))
-	m.HandleFunc("POST /cuenta/totp/iniciar", s.dangerous(auth.ActView, s.accountTOTPBegin))
+	m.HandleFunc("POST /cuenta/contrasena", s.page(auth.ActView, s.accountPassword))
+	m.HandleFunc("POST /cuenta/totp/iniciar", s.page(auth.ActView, s.accountTOTPBegin))
 	m.HandleFunc("POST /cuenta/totp/activar", s.page(auth.ActView, s.accountTOTPEnable))
-	m.HandleFunc("POST /cuenta/totp/quitar", s.dangerous(auth.ActView, s.accountTOTPDisable))
-	m.HandleFunc("POST /cuenta/tokens", s.dangerous(auth.ActTokensOwn, s.tokenCreate))
+	m.HandleFunc("POST /cuenta/totp/quitar", s.page(auth.ActView, s.accountTOTPDisable))
+	m.HandleFunc("POST /cuenta/tokens", s.page(auth.ActTokensOwn, s.tokenCreate))
 	m.HandleFunc("POST /cuenta/tokens/{id}/revocar", s.page(auth.ActTokensOwn, s.tokenRevoke))
 	m.HandleFunc("POST /cuenta/sesiones", s.page(auth.ActView, s.logoutEverywhere))
 }

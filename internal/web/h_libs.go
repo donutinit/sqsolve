@@ -135,6 +135,7 @@ func (s *Server) library(w http.ResponseWriter, r *http.Request) {
 	case "programacion":
 		pol, _ := s.A.Svc.Policy(ctx, l.ID)
 		data["Policy"] = pol
+		data["CheckOptions"] = []int{5, 10, 15, 30, 60}
 		data["Upcoming"], _ = scheduler.Upcoming(pol.Cron, pol.Timezone, time.Now(), 5)
 		keep, expire, _ := s.A.Svc.RetentionPreview(ctx, l.ID, pol)
 		data["Keep"], data["Expire"] = len(keep), len(expire)
@@ -204,7 +205,11 @@ func (s *Server) libraryPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	back := "/bibliotecas/" + l.ID + "?tab=programacion"
 	cron := strings.TrimSpace(r.FormValue("cron"))
+	mode, check := core.ModeCron, 15
 	switch r.FormValue("preset") {
+	case "actividad":
+		mode, check = core.ModeActivity, atoi(r.FormValue("check_minutes"), 15)
+		cron = core.ActivityCron(check)
 	case "diario":
 		hh := atoi(r.FormValue("hour"), 2)
 		if hh < 0 || hh > 23 {
@@ -219,7 +224,7 @@ func (s *Server) libraryPolicy(w http.ResponseWriter, r *http.Request) {
 		cron = "0 * * * *"
 	}
 	p := core.Policy{
-		Enabled: r.FormValue("enabled") == "on", Cron: cron, Timezone: s.A.Cfg.Location.String(),
+		Enabled: r.FormValue("enabled") == "on", Mode: mode, CheckMinutes: check, Cron: cron, Timezone: s.A.Cfg.Location.String(),
 		KeepLast: atoi(r.FormValue("keep_last"), 10), KeepDaily: atoi(r.FormValue("keep_daily"), 14),
 		KeepWeekly: atoi(r.FormValue("keep_weekly"), 8), KeepMonthly: atoi(r.FormValue("keep_monthly"), 12),
 		MinVerified: atoi(r.FormValue("min_verified"), 1),

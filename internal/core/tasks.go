@@ -30,6 +30,7 @@ const (
 	JobBackupCreate    = "backup.create"
 	JobBackupVerify    = "backup.verify"
 	JobBackupImport    = "backup.import"
+	JobBackupExport    = "backup.export"
 	JobRestoreNew      = "restore.new"
 	JobRestoreReplace  = "restore.replace"
 	JobRestoreRevert   = "restore.revert"
@@ -60,6 +61,7 @@ func (s *Service) Register() {
 	j.Register(jobs.Spec{Type: JobLibraryPurge, Title: "Purgar biblioteca", Priority: 40, Lock: jobs.LockWrite, Run: s.runPurge})
 	j.Register(jobs.Spec{Type: JobBackupCreate, Title: "Respaldar", Priority: 50, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runBackupCreate})
 	j.Register(jobs.Spec{Type: JobBackupVerify, Title: "Verificar respaldo", Priority: 30, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runVerify})
+	j.Register(jobs.Spec{Type: JobBackupExport, Title: "Preparar exportación desde respaldo", Priority: 40, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runBackupExport})
 	j.Register(jobs.Spec{Type: JobBackupImport, Title: "Importar respaldo", Priority: 60, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runImport})
 	j.Register(jobs.Spec{Type: JobRestoreNew, Title: "Restaurar como biblioteca nueva", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Cancellable: true, Run: s.runRestoreNew})
 	j.Register(jobs.Spec{Type: JobRestoreReplace, Title: "Restaurar reemplazando", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRestoreReplace})
@@ -76,7 +78,7 @@ func (s *Service) Register() {
 	j.Register(jobs.Spec{Type: JobUpgradeWindow, Title: "Ventana de actualización de Resolve", Priority: 95, Run: s.runUpgradeWindow})
 
 	sc := s.Sched
-	sc.RegisterKind(ScheduleBackup, scheduler.Kind{JobType: JobBackupCreate, Jitter: true, Title: "respaldo"})
+	sc.RegisterKind(ScheduleBackup, scheduler.Kind{JobType: JobBackupCreate, Jitter: true, Title: "respaldo", Gate: s.BackupGate})
 	sc.RegisterKind(ScheduleVerify, scheduler.Kind{JobType: JobBackupVerify, Jitter: true, Title: "verificación"})
 	for kind, jt := range systemSchedules {
 		sc.RegisterKind(kind, scheduler.Kind{JobType: jt.job, Title: jt.title})
@@ -300,6 +302,9 @@ func (s *Service) runHousekeeping(ctx context.Context, r *jobs.Run) error {
 	if n, err := s.Events.Purge(ctx, s.now().Add(-180*24*time.Hour)); err == nil && n > 0 {
 		r.Infof("Se borraron %d eventos antiguos", n)
 	}
+	if n := s.PurgeExportWorkspaces(ctx); n > 0 {
+		r.Infof("Se cerraron %d exportaciones desde respaldo vencidas", n)
+	}
 	if broken, n, err := s.Audit.Verify(ctx); err == nil {
 		if broken != 0 {
 			s.Events.Emit(ctx, events.Event{Type: events.AuditChainBroken, Severity: events.Critical,
@@ -326,6 +331,10 @@ func (s *Service) CheckStale(ctx context.Context) error {
 			continue
 		}
 		b, _ := s.LatestVerified(ctx, l.ID)
+		if b != nil && s.now().Sub(b.StartedAt) > time.Duration(hours)*time.Hour && s.UnchangedSince(ctx, l) != nil {
+			// Old but still current: nothing changed since it was taken.
+			continue
+		}
 		if b == nil || s.now().Sub(b.StartedAt) > time.Duration(hours)*time.Hour {
 			s.Events.Emit(ctx, events.Event{Type: events.BackupStale, Severity: events.Warning, LibraryID: l.ID,
 				Message: fmt.Sprintf("%q no tiene un respaldo verificado en las últimas %d horas", l.DisplayName, hours)})

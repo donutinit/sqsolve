@@ -88,13 +88,15 @@ func (s *Service) Reconcile(ctx context.Context, interrupted []*jobs.Job) []stri
 	// 3. Auxiliary databases nobody owns any more.
 	if dbs, err := s.PG.Databases(ctx); err == nil {
 		for _, d := range dbs {
-			if strings.HasPrefix(d.Name, "sqsolve_verify_") || strings.Contains(d.Name, "__restore_") {
+			if strings.HasPrefix(d.Name, "sqsolve_verify_") || strings.HasPrefix(d.Name, "sqsolve_export_") || strings.Contains(d.Name, "__restore_") {
 				if err := s.PG.DropDatabase(ctx, d.Name); err == nil {
 					note("se borró la base auxiliar %s", d.Name)
 				}
 			}
 		}
 	}
+
+	s.DB.ExecContext(ctx, `UPDATE export_workspaces SET state = 'closed' WHERE state IN ('preparing', 'ready')`)
 
 	// 4. Libraries stuck in transient states.
 	libs, _ := s.Libraries(ctx, ListOptions{})

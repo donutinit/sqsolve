@@ -46,7 +46,7 @@ func (s *Service) AuditExport(ctx context.Context, by audit.Actor, l *Library, s
 // ExportStatus maps an export error to an HTTP status.
 func ExportStatus(err error) int {
 	switch {
-	case errors.Is(err, ErrExportsDisabled):
+	case errors.Is(err, ErrExportsDisabled), errors.Is(err, ErrExportNotReady):
 		return 409
 	case errors.Is(err, drp.ErrNotFound):
 		return 404

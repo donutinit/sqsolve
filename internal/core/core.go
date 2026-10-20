@@ -42,6 +42,7 @@ type Service struct {
 	InstanceID string
 	Now        func() time.Time
 
+	activity activityCache
 	hbaMu    sync.Mutex
 	stableMu sync.Mutex
 	stable   map[string]int
@@ -70,7 +71,7 @@ type Settings struct {
 func DefaultSettings(tz string) Settings {
 	return Settings{
 		DefaultPolicy: Policy{
-			Enabled: true, Cron: "0 2 * * *", Timezone: tz,
+			Enabled: true, Mode: ModeActivity, CheckMinutes: 15, Cron: ActivityCron(15), Timezone: tz,
 			KeepLast: 10, KeepDaily: 14, KeepWeekly: 8, KeepMonthly: 12, MinVerified: 1,
 		},
 		InitWindowMinutes:   60,
@@ -95,6 +96,9 @@ func (s *Service) Settings(ctx context.Context) Settings {
 	}
 	if cur.DefaultPolicy.Cron == "" {
 		cur.DefaultPolicy = def.DefaultPolicy
+	}
+	if cur.DefaultPolicy.Adaptive() && cur.DefaultPolicy.CheckMinutes == 0 {
+		cur.DefaultPolicy.CheckMinutes = 15
 	}
 	if cur.InitWindowMinutes <= 0 {
 		cur.InitWindowMinutes = def.InitWindowMinutes

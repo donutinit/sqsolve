@@ -42,6 +42,10 @@ type Kind struct {
 	JobType string
 	Jitter  bool
 	Title   string
+	// Gate, when set, is asked before enqueueing a due run. A false answer
+	// skips this run without a job and moves on to the next one; the reason
+	// is only logged.
+	Gate func(ctx context.Context, target string) (run bool, reason string)
 }
 
 // ErrInvalidCron is returned for bad expressions.
@@ -249,10 +253,16 @@ func (s *Scheduler) fire(ctx context.Context, sc *Schedule, now time.Time) {
 		return
 	}
 	jobID := sc.LastJobID
+	run, why := true, ""
+	if k.Gate != nil {
+		run, why = k.Gate(ctx, sc.TargetID)
+	}
 	if sc.NextRunAt != nil && now.Sub(*sc.NextRunAt) > sc.MisfireWindow {
 		s.ev.Emit(ctx, events.Event{Type: events.BackupMissed, Severity: events.Error, LibraryID: sc.TargetID,
 			Message: fmt.Sprintf("Se perdió la ejecución programada de %s del %s (el servidor estaba detenido)", k.Title, sc.NextRunAt.In(loc).Format("2006-01-02 15:04")),
 			Data:    map[string]any{"kind": sc.Kind, "due": sc.NextRunAt}})
+	} else if !run {
+		s.log.Debug("programación omitida", "kind", sc.Kind, "target", sc.TargetID, "reason", why)
 	} else {
 		lib := ""
 		if k.Jitter {

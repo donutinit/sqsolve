@@ -4,6 +4,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -104,13 +105,23 @@ func (s *Server) exportDownload(w http.ResponseWriter, r *http.Request, kind, id
 		return
 	}
 	defer sess.Close(ctx)
+	name, data, info, err := buildExport(ctx, sess, l.Slug, kind, id)
+	if err != nil {
+		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
+		return
+	}
+	s.A.Svc.AuditExport(ctx, p.Actor(), l, sess, kind, strings.ToLower(id), info)
+	serveAttachment(w, name, data)
+}
+
+// buildExport produces one download (project, still or album) from an open
+// session; slug prefixes the file names.
+func buildExport(ctx context.Context, sess *drp.Session, slug, kind, id string) (name string, data []byte, info *drp.ExportInfo, err error) {
 	var buf bytes.Buffer
-	var info *drp.ExportInfo
-	var name string
 	switch kind {
 	case "project":
 		if info, err = sess.ExportProject(ctx, id, &buf); err == nil {
-			name = l.Slug + "_" + drp.SafeName(info.Name, "proyecto") + ".drp"
+			name = slug + "_" + drp.SafeName(info.Name, "proyecto") + ".drp"
 		}
 	case "still":
 		if info, err = sess.ExportStill(ctx, id, &buf); err == nil {
@@ -118,15 +129,122 @@ func (s *Server) exportDownload(w http.ResponseWriter, r *http.Request, kind, id
 		}
 	default:
 		if info, err = sess.ExportAlbum(ctx, id, &buf); err == nil {
-			name = l.Slug + "_" + drp.SafeName(info.Name, "album") + ".zip"
+			name = slug + "_" + drp.SafeName(info.Name, "album") + ".zip"
 		}
 	}
+	return name, buf.Bytes(), info, err
+}
+
+// Export from a backup (docs 22 §7): the same catalog and downloads, read
+// from the temporary database of a prepared workspace.
+
+func (s *Server) backupExport(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	b, l := s.backupOr404(w, r)
+	if b == nil {
+		return
+	}
+	data := map[string]any{"B": b, "L": l, "Enabled": true, "CanExport": principalOf(r).Can(auth.ActLibraryExport),
+		"Projects": []drp.Project{}, "PowerGrades": []exportAlbum{}, "ProjectAlbums": []exportAlbum{}}
+	data["Workspace"], _ = s.A.Svc.BackupExportWorkspace(ctx, b.ID)
+	if ws, _ := data["Workspace"].(*core.ExportWorkspace); ws != nil && ws.JobID != "" {
+		data["Job"], _ = s.A.Jobs.Get(ctx, ws.JobID)
+	}
+	sess, ws, err := s.A.Svc.OpenBackupExport(ctx, b.ID)
+	data["Live"] = ws.Live(time.Now())
+	if err != nil {
+		if !errors.Is(err, core.ErrExportNotReady) {
+			data["Err"] = humanError(err)
+			data["Enabled"] = !errors.Is(err, core.ErrExportsDisabled)
+		}
+		s.render(w, r, "backup_export", "Exportar desde respaldo", "respaldos", data)
+		return
+	}
+	defer sess.Close(ctx)
+	data["Ready"] = true
+	data["Fingerprint"], data["Known"], data["KnownOK"] = sess.Fingerprint, sess.Known, sess.KnownOK
+	projects, err := sess.Projects(ctx)
+	if err == nil {
+		var albums []drp.Album
+		if albums, err = sess.Albums(ctx); err == nil {
+			data["PowerGrades"], data["ProjectAlbums"] = s.exportAlbums(albums)
+		}
+	}
+	if err != nil {
+		data["Err"] = humanError(err)
+	}
+	if projects != nil {
+		data["Projects"] = projects
+	}
+	s.render(w, r, "backup_export", "Exportar desde respaldo", "respaldos", data)
+}
+
+func (s *Server) backupExportPrepare(w http.ResponseWriter, r *http.Request) {
+	b, _ := s.backupOr404(w, r)
+	if b == nil {
+		return
+	}
+	back := "/respaldos/" + b.ID + "/exportar"
+	_, j, err := s.A.Svc.PrepareBackupExport(r.Context(), principalOf(r).Actor(), b.ID)
+	if err != nil {
+		s.fail(w, r, back, err)
+		return
+	}
+	if j != nil && !j.State.Finished() {
+		s.ok(w, r, "/tareas/"+j.ID, "Preparando el respaldo para exportar; vuelve a esta página cuando termine.")
+		return
+	}
+	s.ok(w, r, back, "")
+}
+
+func (s *Server) backupExportClose(w http.ResponseWriter, r *http.Request) {
+	b, _ := s.backupOr404(w, r)
+	if b == nil {
+		return
+	}
+	if err := s.A.Svc.CloseBackupExport(r.Context(), principalOf(r).Actor(), b.ID); err != nil {
+		s.fail(w, r, "/respaldos/"+b.ID+"/exportar", err)
+		return
+	}
+	s.ok(w, r, "/respaldos/"+b.ID, "Se cerró la exportación y se borró la base temporal.")
+}
+
+func (s *Server) backupExportProject(w http.ResponseWriter, r *http.Request) {
+	s.backupExportDownload(w, r, "project", r.PathValue("pid"))
+}
+
+func (s *Server) backupExportStill(w http.ResponseWriter, r *http.Request) {
+	s.backupExportDownload(w, r, "still", r.PathValue("sid"))
+}
+
+func (s *Server) backupExportAlbum(w http.ResponseWriter, r *http.Request) {
+	s.backupExportDownload(w, r, "album", r.PathValue("vid"))
+}
+
+func (s *Server) backupExportDownload(w http.ResponseWriter, r *http.Request, kind, id string) {
+	ctx := r.Context()
+	b, l := s.backupOr404(w, r)
+	if b == nil {
+		return
+	}
+	p := principalOf(r)
+	sess, _, err := s.A.Svc.OpenBackupExport(ctx, b.ID)
 	if err != nil {
 		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
 		return
 	}
-	s.A.Svc.AuditExport(ctx, p.Actor(), l, sess, kind, strings.ToLower(id), info)
-	serveAttachment(w, name, buf.Bytes())
+	defer sess.Close(ctx)
+	slug := "respaldo"
+	if l != nil {
+		slug = l.Slug
+	}
+	name, data, info, err := buildExport(ctx, sess, slug+"_"+b.StartedAt.UTC().Format("20060102T1504"), kind, id)
+	if err != nil {
+		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
+		return
+	}
+	s.A.Svc.AuditBackupExport(ctx, p.Actor(), b, sess, kind, strings.ToLower(id), info)
+	serveAttachment(w, name, data)
 }
 
 // serveAttachment sends bytes as a download with an ASCII name and the

@@ -76,8 +76,8 @@ func init() {
 
 // ValidatePassword enforces the minimum policy.
 func ValidatePassword(pw, username string) error {
-	if utf8.RuneCountInString(pw) < 12 {
-		return fmt.Errorf("%w: usa al menos 12 caracteres", ErrWeakPassword)
+	if utf8.RuneCountInString(pw) < 8 {
+		return fmt.Errorf("%w: usa al menos 8 caracteres", ErrWeakPassword)
 	}
 	if utf8.RuneCountInString(pw) > 256 {
 		return fmt.Errorf("%w: máximo 256 caracteres", ErrWeakPassword)
@@ -93,7 +93,7 @@ func ValidatePassword(pw, username string) error {
 	for _, r := range pw {
 		distinct[r] = true
 	}
-	if len(distinct) < 5 {
+	if len(distinct) < 4 {
 		return fmt.Errorf("%w: tiene muy pocos caracteres distintos", ErrWeakPassword)
 	}
 	return nil

@@ -42,7 +42,7 @@
     <fieldset {{if not ($p.Can "settings.edit")}}disabled{{end}}>
       <legend>Seguridad</legend>
       <label class="check"><input type="checkbox" name="maintenance_db" {{if $st.MaintenanceDBAccess}}checked{{end}}> Permitir que los usuarios de biblioteca entren a la base <code>postgres</code> (Resolve la usa al crear bibliotecas)</label>
-      <label class="check"><input type="checkbox" name="require_tls" {{if $st.RequireTLS}}checked{{end}}> Exigir TLS en las conexiones de Resolve (solo si comprobaste que tu versión de Resolve usa TLS, PoC-06)</label>
+      <label class="check"><input type="checkbox" name="require_tls" {{if $st.RequireTLS}}checked{{end}}> <span><strong>Solo TLS</strong>: rechazar las conexiones de Resolve que no vengan cifradas (<code>hostssl</code> en <code>pg_hba.conf</code>). Es la opción recomendada, pero no se sabe cómo implementa TLS cada versión de Resolve: úsala con cuidado. Antes de activarla, comprueba en Sesiones de cada biblioteca que tus estaciones aparecen como cifradas, y después prueba una conexión nueva desde Resolve. Si una estación deja de entrar, desmárcala.</span></label>
       <label class="check"><input type="checkbox" name="totp_required" {{if $st.TOTPRequiredAdmins}}checked{{end}}> Segundo factor obligatorio para administradores</label>
     </fieldset>
     <fieldset {{if not ($p.Can "settings.edit")}}disabled{{end}}>
@@ -74,7 +74,7 @@
   <div class="scroll-x"><table class="table compact cards-on-mobile"><thead><tr><th>Usuario</th><th>Rol</th><th>Segundo factor</th><th>Último acceso</th><th>Cambios</th></tr></thead><tbody>
   {{range .Data.Users}}
   <tr>
-    <td data-label="Usuario"><strong>{{.Username}}</strong>{{if .DisplayName}}<br><span class="muted small">{{.DisplayName}}</span>{{end}}{{if .DisabledAt}} {{template "badge" (dict "tone" "off" "label" "Desactivado")}}{{end}}</td>
+    <td data-label="Usuario"><strong>{{.Username}}</strong>{{if .DisplayName}}<br><span class="muted small">{{.DisplayName}}</span>{{end}}{{if .DisabledAt}} {{template "badge" (dict "tone" "off" "label" "Desactivado")}}{{end}}{{if .LockedAt}} {{template "badge" (dict "tone" "bad" "label" "Bloqueada")}}{{end}}</td>
     <td data-label="Rol">{{.Role.Label}}</td>
     <td data-label="Segundo factor">{{if .TOTPEnabled}}Sí <form method="post" action="/ajustes/usuarios/{{.ID}}/totp" class="inline-form" data-confirm="La cuenta de {{.Username}} quedará protegida solo con la contraseña. ¿Quitar su segundo factor?">{{template "csrf" $.CSRF}}<button class="ghost small danger" type="submit">Quitar</button></form>{{else}}No{{end}}</td>
     <td data-label="Último acceso">{{if .LastLoginAt}}{{ago .LastLoginAt}}{{else}}nunca{{end}}</td>

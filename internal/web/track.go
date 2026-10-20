@@ -131,7 +131,9 @@ func (s *Server) track(ctx context.Context, l *core.Library, days int) Track {
 		}
 		cursor = v
 	}
-	if live && now.Sub(cursor) > stale {
+	// An old backup that still matches the data is current, not late (ADR 0022).
+	unchanged := live && now.Sub(cursor) > stale && s.A.Svc.UnchangedSince(ctx, l) != nil
+	if live && now.Sub(cursor) > stale && !unchanged {
 		addGap(cursor.Add(stale), now)
 	}
 	t.GapHours = int(gapTotal.Hours())
@@ -147,16 +149,19 @@ func (s *Server) track(ctx context.Context, l *core.Library, days int) Track {
 		t.Tone = "off"
 	case last.IsZero():
 		t.Tone = "bad"
-	case now.Sub(last) > stale:
+	case now.Sub(last) > stale && !unchanged:
 		t.Tone = "bad"
 	case failCount > 0 || len(t.Gaps) > 0:
 		t.Tone = "warn"
 	default:
 		t.Tone = "ok"
 	}
-	if last.IsZero() {
+	switch {
+	case last.IsZero():
 		t.LastAgo = "sin respaldo verificado"
-	} else {
+	case unchanged:
+		t.LastAgo = humanAgo(now.Sub(last)) + ", sin cambios"
+	default:
 		t.LastAgo = humanAgo(now.Sub(last))
 	}
 	t.Summary = fmt.Sprintf("%s: %d respaldos verificados y %d fallidos en %d días; último verificado %s", l.Slug, okCount, failCount, days, t.LastAgo)

@@ -157,6 +157,14 @@ Con `ssl = on`, revisar `pg_stat_ssl` para cada conexión de Resolve. Luego camb
 "prefer" sin verificar certificado, se documenta que el cifrado protege contra escucha pasiva
 pero no contra suplantación, y la recomendación de VPN para accesos fuera de la LAN se mantiene.
 
+**Resultado parcial (2026-10-19).** Resolve Studio 21.1.1 en Linux contra sqsolve 0.1.4
+(PostgreSQL 18.6, certificado autofirmado de `sqsolve-init`, `ssl_min_protocol_version =
+TLSv1.2`, `pg_hba` con líneas `host` y `scram-sha-256`): la sesión de Resolve sale en
+`pg_stat_ssl` con `ssl = t`, TLSv1.3 y `TLS_AES_256_GCM_SHA384`, sin configurar nada en la
+estación. Confirma el modo "prefer" sin verificación de certificado. Pendiente: `hostssl`
+obligatorio (ajuste `RequireTLS`) y `TLSv1.3` mínimo, que exigen una conexión nueva desde
+Resolve.
+
 ## PoC-07. Colaboración y tráfico
 
 **Preguntas.** ¿Qué tráfico genera la colaboración? ¿Funciona con la versión gratuita de 21?

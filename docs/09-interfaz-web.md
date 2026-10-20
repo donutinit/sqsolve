@@ -16,7 +16,9 @@ de color.**
 - **Elemento distintivo: la línea de tiempo de protección.** Cada biblioteca es una pista,
   como en una línea de tiempo de edición. Cada respaldo es un marcador: alto y sólido si pasó la
   restauración de prueba, medio si pasó suma e índice, punteado si no se verificó, una cruz roja
-  si falló. Una franja ámbar marca el tiempo sin respaldo verificado reciente. La línea fina de
+  si falló. Una franja ámbar marca el tiempo sin respaldo verificado reciente, salvo cuando la
+  biblioteca no cambió desde el último verificado (ADR 0022): entonces la insignia dice "hace N
+  días, sin cambios" y no hay franja. La línea fina de
   la derecha es "ahora". Aparece en el panel (14 días), en la lista de bibliotecas y en la
   pestaña de respaldos (30 días), siempre con leyenda y descripción accesible.
 - **Tipografía del sistema** para la interfaz y monoespaciada para valores técnicos
@@ -94,7 +96,7 @@ respaldo con su verificación, versión detectada. Filtros por estado. Botón "N
 **Detalle**, pestañas:
 
 - **Conexión**: tarjeta con los cuatro valores para Resolve (nombre sugerido, ubicación,
-  usuario, contraseña oculta con botón "Mostrar" que pide reautenticación), cada uno con botón de
+  usuario, contraseña oculta con botón "Mostrar", auditado), cada uno con botón de
   copiar; instrucciones paso a paso por sistema (Windows, macOS, Linux) con capturas de
   referencia propias; puertos que deben abrir las estaciones para colaborar; descarga de
   `.resolvedbkey` si el módulo está activo, marcada "Experimental".
@@ -198,7 +200,7 @@ después por biblioteca.
 - **Operaciones largas**: siempre una tarea; la página muestra progreso por SSE y se puede salir
   y volver. Nunca un botón que bloquea esperando.
 - **Peligro**: color de error solo en el botón final, consecuencias con datos reales,
-  confirmación tecleada para irreversibles, reautenticación si pasaron más de 5 min.
+  confirmación tecleada para irreversibles; sin reautenticación (ADR 0021).
 - **Formularios**: validación en el servidor siempre; el error vuelve como aviso al inicio de
   la página con su código y el envío no borra lo escrito.
 - **Vacíos**: cada lista vacía explica qué es y ofrece la acción principal ("Aún no hay

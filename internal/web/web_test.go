@@ -252,6 +252,30 @@ func TestPanelEndToEnd(t *testing.T) {
 	}
 	b.page("/respaldos/" + bid[1])
 	b.page("/respaldos/" + bid[1] + "/restaurar")
+	// Export from a backup: prepare restores into a temporary database, the
+	// page then shows the exporter's verdict (its schema check here), and
+	// closing drops the database.
+	if pg := b.page("/respaldos/" + bid[1] + "/exportar"); !strings.Contains(pg, "Preparar la exportación") {
+		t.Fatalf("backup export page before preparing:\n%s", pg[:min(len(pg), 800)])
+	}
+	if st, _, body := b.do("GET", "/respaldos/"+bid[1]+"/exportar/proyectos/x", nil); st != http.StatusConflict || !strings.Contains(body, "SQS-E007") {
+		t.Fatalf("download before preparing: %d", st)
+	}
+	_, ploc, _ := b.do("POST", "/respaldos/"+bid[1]+"/exportar/preparar", url.Values{"csrf": {tok}})
+	if !strings.HasPrefix(ploc, "/tareas/") {
+		t.Fatalf("prepare redirect: %s", ploc)
+	}
+	waitJob(t, a, strings.TrimPrefix(ploc, "/tareas/"))
+	if pg := b.page("/respaldos/" + bid[1] + "/exportar"); !strings.Contains(pg, "SQS-E001") || !strings.Contains(pg, "Cerrar y borrar") {
+		i := strings.Index(pg, "SQS-E")
+		t.Fatalf("backup export page after preparing: %s", pg[max(0, i-200):min(len(pg), i+300)])
+	}
+	if st, _, _ := b.do("GET", "/respaldos/"+bid[1]+"/exportar/stills/zzz", nil); st != http.StatusUnprocessableEntity {
+		t.Fatalf("download from workspace without Resolve's schema: %d", st)
+	}
+	if _, cloc, _ := b.do("POST", "/respaldos/"+bid[1]+"/exportar/cerrar", url.Values{"csrf": {tok}}); cloc != "/respaldos/"+bid[1] {
+		t.Fatalf("close redirect: %s", cloc)
+	}
 
 	// Restore as a new library through the panel.
 	_, rj, _ := b.do("POST", "/respaldos/"+bid[1]+"/restaurar", url.Values{"csrf": {tok}, "mode": {"nueva"}, "slug": {"boda_copia"}, "name": {"Copia"}})

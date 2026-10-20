@@ -45,8 +45,9 @@ con Resolve real**: no lo extiendas ni lo des por bueno hasta que la PoC lo conf
   `internal/execx`. Nada de `sh -c`. Contraseñas por `PGPASSFILE` temporal, nunca en argumentos.
 - Cancelar una tarea solo manda señales a procesos hijos que lanzó esa misma tarea. Nunca
   `pkill`, nunca señales a PIDs ajenos (en pruebas, simula `os.Process`).
-- Secretos: nunca en logs, nunca en variables de entorno de larga vida, nunca en respuestas de
-  la API sin reautenticación. El manejador de `slog` redacta campos marcados como secretos.
+- Secretos: nunca en logs, nunca en variables de entorno de larga vida; en el panel y la API solo
+  a quien tiene el permiso, con entrada en la auditoría (sin reautenticación, ADR 0021). El
+  manejador de `slog` redacta campos marcados como secretos.
 - Escrituras de archivos importantes: archivo `.partial`, `fsync`, `rename`, `fsync` del
   directorio (`internal/fsx`).
 
