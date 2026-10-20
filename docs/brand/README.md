@@ -138,3 +138,10 @@ seven navigation icons exactly as they are pasted into `internal/web/templates/l
 The files in this folder follow the documentation license of the project (CC BY-SA 4.0,
 [ADR 0001](../adr/0001-license.md)). Bricolage Grotesque is used under the SIL Open Font License
 1.1: the SVG files contain letter outlines, not the font.
+
+## Screenshots
+
+`screenshots/` holds the panel captures used by the README (dashboard, a library's Connection
+tab and the Backups catalog). They come from a real installation, rendered at 1440 px wide with
+a device scale of 2 and then downscaled to 1600 px. Retake them after any change to the panel
+so the README never shows an old interface.
