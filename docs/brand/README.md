@@ -139,7 +139,7 @@ The files in this folder follow the documentation license of the project (CC BY-
 [ADR 0001](../adr/0001-license.md)). Bricolage Grotesque is used under the SIL Open Font License
 1.1: the SVG files contain letter outlines, not the font.
 
-## Screenshots
+## 11. Screenshots
 
 `screenshots/` holds the panel captures used by the README (dashboard, a library's Connection
 tab and the Backups catalog). They come from a real installation, rendered at 1440 px wide with
