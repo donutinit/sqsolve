@@ -19,11 +19,14 @@
 El nombre junta **SQ**L (PostgreSQL) y Re**solve**. Se pronuncia como se lee y se escribe siempre
 en minúsculas.
 
-> Estado: **versión preliminar (0.x)**. Bibliotecas, accesos, respaldos, restauración, panel y
-> API están implementados y probados contra PostgreSQL 18, pero la interacción con DaVinci
-> Resolve todavía no se valida con estaciones reales (pruebas de concepto en
-> [`docs/02-pruebas-de-concepto.md`](docs/02-pruebas-de-concepto.md)). No lo uses con proyectos
-> de clientes hasta que esas pruebas pasen.
+> Estado: **1.0**. Probado contra PostgreSQL 18 y con DaVinci Resolve Studio 21.1.1 en Linux:
+> creación de bibliotecas desde Resolve, TLS, respaldos verificados, restauración como copia y
+> por reemplazo con Resolve abierto, y recuperación completa de la instalación desde los
+> respaldos y el kit ([`docs/aceptacion/1.0.md`](docs/aceptacion/1.0.md),
+> [`docs/poc`](docs/poc)). Sin probar todavía: Resolve en macOS y Windows, colaboración entre dos
+> estaciones, el intercambio de archivos con el "Backup" y "Restore" del propio Resolve y las
+> credenciales por persona. Si dependes de alguna de esas cosas, compruébala con una biblioteca
+> de prueba antes de poner proyectos de clientes.
 
 ## Por qué existe
 
@@ -141,8 +144,8 @@ Copia [`deploy/compose.yaml`](deploy/compose.yaml) y cambia solo esto:
    todas igual).
 2. `TZ`, tu zona horaria (por ejemplo `America/Mexico_City`). Los horarios de respaldo usan esta
    zona.
-3. La versión de la imagen en `x-sqsolve`. Con `0.1` recibes cada arreglo de la serie 0.1 y
-   TrueNAS te avisa con "Update available"; con una versión exacta (`0.1.1`) nada cambia hasta
+3. La versión de la imagen en `x-sqsolve`. Con `1.0` recibes cada arreglo de la serie 1.0 y
+   TrueNAS te avisa con "Update available"; con una versión exacta (`1.0.0`) nada cambia hasta
    que tú la cambies. No uses `edge`: es lo último de `main`, sin publicarse como versión.
 4. Si el puerto 5432 ya está ocupado en el host (pasa en Synology), publícalo solo en la IP de
    la LAN: `"192.168.1.10:5432:5432"`.
@@ -356,7 +359,7 @@ docker compose exec sqsolve sqsolve audit verify
 
 1. Antes, haz un respaldo de todo (o confirma en el panel que todo tiene un verificado
    reciente).
-2. Con la etiqueta `0.1` basta con bajar la imagen nueva; con una versión exacta, primero
+2. Con la etiqueta `1.0` basta con bajar la imagen nueva; con una versión exacta, primero
    cámbiala en el compose. Luego:
 
 ```
@@ -364,7 +367,7 @@ docker compose pull
 docker compose up -d
 ```
 
-En TrueNAS, con `0.1`, la app muestra "Update available" cuando sale un arreglo y el botón
+En TrueNAS, con `1.0`, la app muestra "Update available" cuando sale un arreglo y el botón
 Update hace lo mismo que esos dos comandos. TrueNAS compara las imágenes con el registro una
 vez al día, así que el aviso puede tardar hasta 24 horas; para no esperar, desde la consola del
 NAS: `sudo midclt call app.image.op.check_update` para forzar la revisión, o directamente

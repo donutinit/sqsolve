@@ -41,6 +41,9 @@ func (s *Service) Trash(ctx context.Context, by audit.Actor, id, confirm string)
 	}
 	switch l.State {
 	case StateActive, StateMaintenance, StateAwaitingInit, StateInitExpired:
+	case StateMissing:
+		// After recovering an installation, a library nobody wants back has no
+		// database to back up: it goes to the trash as a catalog entry only.
 	default:
 		return nil, fmt.Errorf("SQS-L041 no se puede eliminar una biblioteca en estado %s", l.State.Label())
 	}
@@ -73,6 +76,9 @@ func (s *Service) runTrash(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 		for _, role := range roles {
+			if ok, _ := s.PG.RoleExists(ctx, role); !ok {
+				continue // gone with the server (state "missing")
+			}
 			if err := s.PG.SetRoleLogin(ctx, role, false); err != nil {
 				return err
 			}
@@ -252,6 +258,9 @@ func (s *Service) runPurge(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 		for i := len(creds) - 1; i >= 0; i-- {
+			if ok, _ := s.PG.RoleExists(ctx, creds[i].PGRole); !ok {
+				continue
+			}
 			if err := s.PG.DropRole(ctx, creds[i].PGRole); err != nil {
 				return err
 			}

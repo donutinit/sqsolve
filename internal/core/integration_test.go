@@ -484,3 +484,35 @@ func TestRecreateMissingKeepsPassword(t *testing.T) {
 		t.Fatalf("recreated library has %d rows", n)
 	}
 }
+
+// TestTrashAndPurgeMissingLibrary: after recovering an installation, a library
+// nobody wants back can be trashed and purged although its database and roles
+// are gone (SQS-L041 used to block it).
+func TestTrashAndPurgeMissingLibrary(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, _ := e.createActive("sobrante")
+	e.firstBackup(l)
+	e.svc.PG.DropDatabase(ctx, l.DBName)
+	e.svc.PG.DropRole(ctx, l.OwnerRole)
+	e.svc.Reconcile(ctx, nil)
+	if l, _ = e.svc.Library(ctx, l.ID); l.State != core.StateMissing {
+		t.Fatalf("state %s", l.State)
+	}
+	j, err := e.svc.Trash(ctx, admin, l.ID, l.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(j, jobs.Succeeded)
+	if l, _ = e.svc.Library(ctx, l.ID); l.State != core.StateTrashed || l.TrashDB != "" {
+		t.Fatalf("after trash: %s %q", l.State, l.TrashDB)
+	}
+	j, err = e.svc.Purge(ctx, admin, l.ID, l.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(j, jobs.Succeeded)
+	if l, err = e.svc.Library(ctx, l.ID); err == nil && l.State == core.StateTrashed {
+		t.Fatalf("still in the trash: %+v", l)
+	}
+}

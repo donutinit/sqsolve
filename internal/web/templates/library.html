@@ -269,7 +269,7 @@
   <div class="dz-item"><div><h3>Revertir la última restauración</h3><p>Vuelve al estado anterior al {{dt $l.UpdatedAt}}. Disponible hasta {{dt $l.PrevExpiresAt}}.</p></div>
     <a class="button warn" href="/bibliotecas/{{$id}}/revertir">Revertir</a></div>
   {{end}}
-  {{if and ($p.Can "library.delete") (or (eq $l.State "active") (eq $l.State "maintenance") (eq $l.State "awaiting_init") (eq $l.State "init_expired"))}}
+  {{if and ($p.Can "library.delete") (or (eq $l.State "active") (eq $l.State "maintenance") (eq $l.State "awaiting_init") (eq $l.State "init_expired") (eq $l.State "missing"))}}
   <div class="dz-item"><div><h3>Eliminar</h3><p>Hace un respaldo final, la mueve a la papelera durante {{.Data.Settings.TrashDays}} días y luego la borra del servidor. Sus respaldos se conservan.</p></div>
     <a class="button danger" href="/bibliotecas/{{$id}}/eliminar">Eliminar</a></div>
   {{end}}

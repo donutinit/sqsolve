@@ -18,7 +18,7 @@ Blackmagic declara compatible a nivel de biblioteca.
 
 | Versión | Nivel | Base de la decisión |
 |---|---|---|
-| 21.1.x | Soportado (pendiente de PoC-01, 02, 04) | Blackmagic declara bibliotecas en PostgreSQL 13+ y trae 18 [01 §4]. Exportación experimental verificada con 21.1.1 el 2026-10-19 (`22` §6). TLS: 21.1.1 en Linux negocia TLS 1.3 con `sslmode=prefer`, acepta el certificado autofirmado y conecta con `hostssl` obligatorio (2026-10-19, `docs/poc/poc-06-tls.md`); macOS y Windows sin probar |
+| 21.1.x | Soportado en Linux (PoC-01 E1, 03, 04 parcial, 06, 08 y 09 del 2026-10-19); macOS y Windows esperados, sin probar | Blackmagic declara bibliotecas en PostgreSQL 13+ y trae 18 [01 §4]. Exportación experimental verificada con 21.1.1 el 2026-10-19 (`22` §6). TLS: 21.1.1 en Linux negocia TLS 1.3 con `sslmode=prefer`, acepta el certificado autofirmado y conecta con `hostssl` obligatorio (2026-10-19, `docs/poc/poc-06-tls.md`); macOS y Windows sin probar |
 | 21.0.x | Esperado | Misma familia; se recomienda actualizar a 21.1.x |
 | 20.3.2 | Soportado si PoC-02 pasa con PostgreSQL 18 | Bibliotecas compatibles con 21 según Blackmagic [01 §6] |
 | 19.x, 18.x | Esperado como máximo, sin pruebas | Usaban PostgreSQL 13; sin garantía con 18 |

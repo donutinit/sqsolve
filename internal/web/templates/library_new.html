@@ -9,7 +9,7 @@
     <fieldset>
       <legend>Cómo se inicializa</legend>
       <label class="radio"><input type="radio" name="strategy" value="resolve" {{if ne .Data.Strategy "precreate"}}checked{{end}}> <span><strong>Desde Resolve</strong> (recomendado). sqsolve prepara el usuario y abre una ventana de una hora; en una estación eliges "Create" y Resolve crea la base con su propia estructura.</span></label>
-      <label class="radio"><input type="radio" name="strategy" value="precreate" {{if eq .Data.Strategy "precreate"}}checked{{end}}> <span><strong>Base vacía</strong> (experimental). sqsolve crea la base y en Resolve se usa "Connect". Pendiente de comprobar con cada versión de Resolve (PoC-01).</span></label>
+      <label class="radio"><input type="radio" name="strategy" value="precreate" {{if eq .Data.Strategy "precreate"}}checked{{end}}> <span><strong>Base vacía</strong> (no funciona con Resolve 21.1: al conectar la marca "incompatible" en vez de inicializarla, PoC-01 del 2026-10-19). Solo para pruebas.</span></label>
     </fieldset>
     <label>Notas <span class="muted">(opcional: cliente, rutas de medios, convenciones)</span><textarea name="notes" rows="3">{{.Data.Notes}}</textarea></label>
     {{if not .Data.Host}}<div class="flash info" role="status">Falta la dirección que usan las estaciones. <a href="/ajustes">Defínela en Ajustes</a> para que las instrucciones salgan completas.</div>{{end}}

@@ -21,10 +21,10 @@ fecha, versiones exactas, pasos, resultados y la decisión tomada.
 
 | PoC | Tema | Prioridad | Bloquea |
 |---|---|---|---|
-| PoC-01 | Ciclo de vida de una biblioteca y privilegios mínimos | Crítica | SQS-200 a SQS-230 (bibliotecas) |
+| PoC-01 | Ciclo de vida de una biblioteca y privilegios mínimos | Crítica | SQS-200 a SQS-230 (bibliotecas). **Hecha en parte el 2026-10-19** (`docs/poc/poc-01-ciclo-de-vida.md`): E1 confirmada, E0 no funciona con 21.1.1; pendientes rol miembro y dueño `sqsolve_admin` |
 | PoC-02 | Matriz de versiones Resolve × PostgreSQL | Crítica | ADR 0006, `14-compatibilidad.md` |
 | PoC-03 | Huella de esquema y detección de actualizaciones | Alta | SQS-240. **Hecha en parte el 2026-10-19** (`docs/poc/poc-03-huella.md`): estable con el uso; falta una actualización real de Resolve |
-| PoC-04 | Formato de respaldo y restauración cruzada | Crítica | SQS-300 a SQS-340 (respaldos) |
+| PoC-04 | Formato de respaldo y restauración cruzada | Crítica | SQS-300 a SQS-340 (respaldos). **Hecha en parte el 2026-10-19** (`docs/poc/poc-04-respaldo.md`): Resolve abre bibliotecas restauradas por sqsolve; su propio Backup y Restore siguen sin probar |
 | PoC-05 | Llaves `.resolvedbkey` | Media | SQS-610 (módulo experimental) |
 | PoC-06 | TLS y SCRAM desde Resolve | Alta | Valores por defecto de `pg_hba.conf`. **Hecha el 2026-10-19** (`docs/poc/poc-06-tls.md`): Resolve 21.1.1 Linux cifra solo y conecta con `hostssl` obligatorio |
 | PoC-07 | Colaboración y tráfico de red | Alta | Documentación para editores |

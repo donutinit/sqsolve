@@ -5,6 +5,18 @@ toman de aquí (`.github/workflows/release.yml`).
 
 ## [Sin publicar]
 
+## [1.0.0] 2026-10-19
+
+- Primera versión estable. Alcance y evidencia en `docs/aceptacion/1.0.md` y `docs/poc`.
+- La estrategia "Base vacía" (E0) queda marcada como no compatible con Resolve 21.1: al
+  conectar, Resolve la declara incompatible en vez de inicializarla (PoC-01).
+- El README dice qué está probado y qué no.
+- Una biblioteca en "Sin base en el servidor" (tras recuperar una instalación) ya se puede
+  eliminar y purgar; antes solo se podía recrear (`SQS-L041`).
+
+Actualizar: igual que la 0.1.x, con la etiqueta `1.0` en `x-sqsolve` (`docker compose pull` y
+`up -d`, o Update en TrueNAS). Sin migraciones respecto a la 0.1.6. Volver atrás: imagen `0.1.6`.
+
 ## [0.1.6] 2026-10-19
 
 - Firma de la imagen con cosign sin clave y publicación de cada versión en GitHub con el compose

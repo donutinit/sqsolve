@@ -513,13 +513,13 @@ publicable la versión; lo demás pasa a 1.1 y queda anotado en cada tarea.
 
 | Fase | Tareas | Estado |
 |---|---|---|
-| 0.0 | SQS-020, SQS-001 a SQS-010 | Hechas el 2026-10-19 contra mininas con la API de scripting de Resolve: PoC-06, 08 y 09, y PoC-03 en su mitad "estable con el uso" (`docs/poc/`). Pendientes con clics en Resolve: PoC-01, 04 y la mitad de 03 (actualizar). Recorte: 05, 07, 10 y la matriz completa de 02 a 1.1 |
+| 0.0 | SQS-020, SQS-001 a SQS-010 | Hechas el 2026-10-19 contra mininas con la API de scripting de Resolve: PoC-06, 08 y 09, y PoC-03 en su mitad "estable con el uso" (`docs/poc/`). PoC-01 y 04 hechas en parte el mismo día (E1 confirmada, E0 descartada, Resolve abre bibliotecas restauradas); pendientes con clics en Resolve: dueño `sqsolve_admin`, rol miembro, Backup y Restore propios de Resolve, y la mitad de 03 (actualizar). Recorte: 05, 07, 10 y la matriz completa de 02 a 1.1 |
 | 0.1 | SQS-040, 041, 100 a 117, 030, 031 | Implementado (2026-10-18) |
 | 0.2 | SQS-150 a 156 | Implementado (2026-10-18) |
 | 0.3 | SQS-200 a 240 | Implementado (2026-10-18) según la hipótesis del plan; sin validar con Resolve (PoC-01 a 05). E0 queda experimental |
 | 0.4 y 0.5 | SQS-300 a 340 | Implementado (2026-10-18); la restauración vista desde Resolve sin validar (PoC-07, 08) |
 | 0.6 | SQS-400 a 420, 500 a 520 | API, notificaciones e interfaz implementadas (2026-10-18). SQS-400, 410 y 520 pasan a 1.1 (recorte del 2026-10-19); hay una prueba de extremo a extremo por HTTP y pruebas de plantilla |
-| 0.9 y 1.0 | SQS-600 a 607 | SQS-600, 601 y 602 implementadas (2026-10-18); SQS-603 cumple el criterio recortado con `test/scenarios.py`; SQS-604 hecha el 2026-10-19 (`docs/08` §10); SQS-605 hecha salvo `docs/aceptacion`; SQS-607 lista en CI (firma y release), pendiente de la primera etiqueta `v1.0.0`; SQS-606 pendiente: la sesión de aceptación con dos estaciones |
+| 0.9 y 1.0 | SQS-600 a 607 | SQS-600, 601 y 602 implementadas (2026-10-18); SQS-603 cumple el criterio recortado con `test/scenarios.py`; SQS-604 hecha el 2026-10-19 (`docs/08` §10); SQS-605 hecha salvo `docs/aceptacion`; SQS-607 lista en CI (firma y release), pendiente de la primera etiqueta `v1.0.0`; SQS-606 hecha en parte el 2026-10-19 (`docs/aceptacion/1.0.md`): AC-01, 02, 03, 07, 08, 11 y el reinicio de AC-09 pasan contra mininas; AC-04, 05, 06, 10 sin hacer por decisión de Diego |
 | 1.1 (parcial) | SQS-720 a 722 | Implementado (2026-10-19), ADR 0019 Aceptado como experimental en 1.0; validado contra Resolve 21.1.1 |
 | Identidad | ADR 0020 | Implementada (2026-10-19): marca en `docs/identidad`, panel con el imagotipo e íconos, README |
 | Seguridad proporcional | ADR 0021 | Implementada (2026-10-19): sin reautenticación, contraseñas de 8, sesiones largas, bloqueo con `admin unlock` |
