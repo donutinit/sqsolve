@@ -89,49 +89,77 @@
 </nav>{{end}}
 
 {{define "exportcatalog"}}
+{{$cat := .cat}}
+<nav class="tabs" aria-label="Export views">
+  <a href="{{.base}}" {{if eq $cat.View "projects"}}aria-current="page"{{end}}>Projects <span class="muted small">{{$cat.TotalProjects}}</span></a>
+  <a href="{{.base}}?view=stills" {{if eq $cat.View "stills"}}aria-current="page"{{end}}>Stills <span class="muted small">{{$cat.TotalStills}}</span></a>
+</nav>
+<form method="get" class="filters" role="search">
+  <input type="hidden" name="view" value="{{$cat.View}}">
+  <label>Search<input type="search" name="q" value="{{$cat.Query}}" placeholder="{{if eq $cat.View "projects"}}Project or folder{{else}}Project, album or still{{end}}"></label>
+  <button type="submit" class="ghost">Filter</button>
+  {{if or $cat.Query $cat.Project}}<a class="button ghost" href="{{.base}}{{if eq $cat.View "stills"}}?view=stills{{end}}">Clear</a>{{end}}
+</form>
+
+{{if eq $cat.View "projects"}}
 <section class="card flush">
-  <div class="cardhead pad"><h2>Projects</h2><span class="muted small">{{len .projects}} in the library</span></div>
+  <div class="cardhead pad"><h2>Projects</h2><span class="muted small">{{if $cat.Query}}{{len $cat.Projects}} of {{$cat.TotalProjects}} match{{else}}{{$cat.TotalProjects}} in the library{{end}}</span></div>
   <table class="table cards-on-mobile">
-    <thead><tr><th>Thumbnail</th><th>Project</th><th>Folder</th><th>Modified</th><th></th></tr></thead>
+    <thead><tr><th>Thumbnail</th><th>Project</th><th>Folder</th><th>Modified</th><th>Stills</th><th></th></tr></thead>
     <tbody>
-    {{range .projects}}
+    {{range $cat.Projects}}
       <tr>
         <td data-label="Thumbnail">{{if .Thumb}}<img class="thumb" src="{{jpeg .Thumb}}" alt="" width="96" height="54">{{else}}<span class="muted small">No thumbnail</span>{{end}}</td>
         <td data-label="Project">{{.Name}}</td>
         <td data-label="Folder" class="mono small">{{if .Path}}{{.Path}}{{else}}<span class="muted">root</span>{{end}}</td>
         <td data-label="Modified">{{if .Modified.IsZero}}<span class="muted">To be confirmed</span>{{else}}<time datetime="{{iso .Modified}}" title="{{dt .Modified}}">{{ago .Modified}}</time>{{end}}</td>
+        <td data-label="Stills">{{if .Stills}}<a href="{{$.base}}?view=stills&project={{.ID}}">{{.Stills}} {{if eq .Stills 1}}still{{else}}stills{{end}}</a>{{else}}<span class="muted">0</span>{{end}}</td>
         <td data-label="" class="actions">{{if $.can}}<a class="button ghost small" href="{{$.base}}/projects/{{.ID}}">Download .drp</a>{{end}}</td>
       </tr>
     {{else}}
-      <tr><td colspan="5" class="muted">No projects.</td></tr>
+      <tr><td colspan="6" class="muted">{{if $cat.Query}}No projects match "{{$cat.Query}}".{{else}}No projects.{{end}}</td></tr>
     {{end}}
     </tbody>
   </table>
 </section>
 
+{{else if $cat.Project}}
+<section class="card">
+  <div class="cardhead"><h2>Stills of {{if $cat.ProjectName}}{{$cat.ProjectName}}{{else}}<span class="muted">an unknown project</span>{{end}}</h2><a href="{{.base}}?view=stills">All stills</a></div>
+  {{range $cat.ProjectAlbums}}
+  <div class="albumhead"><h3>{{if .Name}}{{.Name}}{{else}}<span class="muted">Unnamed album</span>{{end}} <span class="muted small">{{len .Stills}} stills</span></h3>
+    {{if $.can}}<a class="button ghost small" href="{{$.base}}/albums/{{.ViewID}}">Download album (.zip)</a>{{end}}</div>
+  {{template "stillgrid" (dict "stills" .Stills "base" $.base "can" $.can)}}
+  {{else}}
+  <p class="muted">No stills in this project.</p>
+  {{end}}
+</section>
+
+{{else}}
 <section class="card">
   <h2>PowerGrades</h2>
-  {{range .power}}
+  {{range $cat.PowerGrades}}
   <div class="albumhead"><h3>{{if .Name}}{{.Name}}{{else}}<span class="muted">Unnamed album</span>{{end}} <span class="muted small">{{len .Stills}} grades</span></h3>
     {{if $.can}}<a class="button ghost small" href="{{$.base}}/albums/{{.ViewID}}">Download album (.zip)</a>{{end}}</div>
   {{template "stillgrid" (dict "stills" .Stills "base" $.base "can" $.can)}}
   {{else}}
-  <p class="muted">No PowerGrade albums.</p>
+  <p class="muted">{{if $cat.Query}}No PowerGrade albums match "{{$cat.Query}}".{{else}}No PowerGrade albums.{{end}}</p>
   {{end}}
 </section>
 
 <section class="card">
   <h2>Stills by project</h2>
-  {{range .albums}}
-  <details class="more">
+  {{range $cat.ProjectAlbums}}
+  <details class="more" {{if $cat.Open}}open{{end}}>
     <summary>{{.ProjectName}}{{if .Name}} · {{.Name}}{{end}} <span class="muted small">{{len .Stills}} stills</span></summary>
     {{if $.can}}<p><a class="button ghost small" href="{{$.base}}/albums/{{.ViewID}}">Download album (.zip)</a></p>{{end}}
     {{template "stillgrid" (dict "stills" .Stills "base" $.base "can" $.can)}}
   </details>
   {{else}}
-  <p class="muted">No stills in the projects.</p>
+  <p class="muted">{{if $cat.Query}}No project albums match "{{$cat.Query}}".{{else}}No stills in the projects.{{end}}</p>
   {{end}}
 </section>
+{{end}}
 {{end}}
 
 {{define "stillgrid"}}<ul class="stills">

@@ -5,6 +5,14 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+## [1.1.2] 2026-10-20
+
+- The export catalog shows Projects and Stills as separate views, each with a search box, and
+  every project links to its own stills: a library with hundreds of projects no longer needs a
+  long scroll to download a `.drx`.
+
+Upgrade: same as 1.1.0. No migrations. Rollback: image `1.1.1`.
+
 ## [1.1.1] 2026-10-20
 
 - Fix: the role name in the panel sidebar (Administrator, Operator, Viewer) and the notes of a

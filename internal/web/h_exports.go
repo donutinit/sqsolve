@@ -49,6 +49,21 @@ func (s *Server) exportAlbums(albums []drp.Album) (power, byProject []exportAlbu
 	return power, byProject
 }
 
+// exportCatalog reads the projects and albums of an open export session and
+// applies the view and search of the request (the catalog comes back with
+// whatever was read before an error, and the page shows the message instead).
+func (s *Server) exportCatalog(ctx context.Context, r *http.Request, sess *drp.Session) (exportCatalog, error) {
+	var power, byProject []exportAlbum
+	projects, err := sess.Projects(ctx)
+	if err == nil {
+		var albums []drp.Album
+		if albums, err = sess.Albums(ctx); err == nil {
+			power, byProject = s.exportAlbums(albums)
+		}
+	}
+	return buildExportCatalog(r.URL.Query(), projects, power, byProject), err
+}
+
 func (s *Server) libraryExport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	l := s.libraryOr404(w, r)
@@ -66,17 +81,10 @@ func (s *Server) libraryExport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer sess.Close(ctx)
 	data["Fingerprint"], data["Known"], data["KnownOK"] = sess.Fingerprint, sess.Known, sess.KnownOK
-	projects, err := sess.Projects(ctx)
-	if err == nil {
-		var albums []drp.Album
-		if albums, err = sess.Albums(ctx); err == nil {
-			data["PowerGrades"], data["ProjectAlbums"] = s.exportAlbums(albums)
-		}
-	}
+	data["Catalog"], err = s.exportCatalog(ctx, r, sess)
 	if err != nil {
 		data["Err"] = humanError(err)
 	}
-	data["Projects"] = projects
 	s.render(w, r, "library_export", l.DisplayName, "libraries", data)
 }
 
@@ -144,8 +152,7 @@ func (s *Server) backupExport(w http.ResponseWriter, r *http.Request) {
 	if b == nil {
 		return
 	}
-	data := map[string]any{"B": b, "L": l, "Enabled": true, "CanExport": principalOf(r).Can(auth.ActLibraryExport),
-		"Projects": []drp.Project{}, "PowerGrades": []exportAlbum{}, "ProjectAlbums": []exportAlbum{}}
+	data := map[string]any{"B": b, "L": l, "Enabled": true, "CanExport": principalOf(r).Can(auth.ActLibraryExport)}
 	data["Workspace"], _ = s.A.Svc.BackupExportWorkspace(ctx, b.ID)
 	if ws, _ := data["Workspace"].(*core.ExportWorkspace); ws != nil && ws.JobID != "" {
 		data["Job"], _ = s.A.Jobs.Get(ctx, ws.JobID)
@@ -163,18 +170,9 @@ func (s *Server) backupExport(w http.ResponseWriter, r *http.Request) {
 	defer sess.Close(ctx)
 	data["Ready"] = true
 	data["Fingerprint"], data["Known"], data["KnownOK"] = sess.Fingerprint, sess.Known, sess.KnownOK
-	projects, err := sess.Projects(ctx)
-	if err == nil {
-		var albums []drp.Album
-		if albums, err = sess.Albums(ctx); err == nil {
-			data["PowerGrades"], data["ProjectAlbums"] = s.exportAlbums(albums)
-		}
-	}
+	data["Catalog"], err = s.exportCatalog(ctx, r, sess)
 	if err != nil {
 		data["Err"] = humanError(err)
-	}
-	if projects != nil {
-		data["Projects"] = projects
 	}
 	s.render(w, r, "backup_export", "Export from backup", "backups", data)
 }

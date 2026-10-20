@@ -17,6 +17,6 @@
 <div class="flash error" role="alert">{{.Data.Err}}</div>
 {{else}}
 
-{{template "exportcatalog" (dict "base" (printf "/libraries/%s/export" $id) "can" .Data.CanExport "projects" .Data.Projects "power" .Data.PowerGrades "albums" .Data.ProjectAlbums)}}
+{{template "exportcatalog" (dict "base" (printf "/libraries/%s/export" $id) "can" .Data.CanExport "cat" .Data.Catalog)}}
 {{end}}
 {{end}}

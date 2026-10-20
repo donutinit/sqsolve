@@ -34,6 +34,6 @@
   {{end}}
 </section>
 {{else}}
-{{template "exportcatalog" (dict "base" (printf "/backups/%s/export" $b.ID) "can" .Data.CanExport "projects" .Data.Projects "power" .Data.PowerGrades "albums" .Data.ProjectAlbums)}}
+{{template "exportcatalog" (dict "base" (printf "/backups/%s/export" $b.ID) "can" .Data.CanExport "cat" .Data.Catalog)}}
 {{end}}
 {{end}}

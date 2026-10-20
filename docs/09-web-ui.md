@@ -107,9 +107,11 @@ its verification, detected version. Filters by state. "New library" button.
   connection limit.
 - **Activity**: active sessions with a terminate button; library events; fingerprint history.
 - **Export** (experimental, only if the setting is on): notice "Experimental: no guarantee" and
-  the fingerprint state ("verified with Resolve 21.1.1" or "not verified"); table of projects
-  with thumbnail, folder, name, modified and "Download .drp"; PowerGrade albums and each
-  project's albums with thumbnails, ".drx" per still and "Download album (.zip)". See `22` §7.
+  the fingerprint state ("verified with Resolve 21.1.1" or "not verified"); two views with a
+  search box: Projects (table with thumbnail, name, folder, modified, still count linking to
+  the project's stills, and "Download .drp") and Stills (PowerGrade albums and each project's
+  albums, collapsed, with thumbnails, ".drx" per still and "Download album (.zip)"). See `22`
+  §7.
 - **Settings**: display name, notes (free text for media paths, client, etc.), declared Resolve
   version, save as template.
 - **Danger zone**: maintenance, delete. Differentiated background and an explanation of each

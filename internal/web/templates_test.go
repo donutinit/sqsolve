@@ -37,23 +37,48 @@ func renderPage(t *testing.T, name string, data map[string]any) string {
 func TestLibraryExportPageWithStills(t *testing.T) {
 	l := &core.Library{ID: "01M5A5X0JZQYHV8GE4H1PK6VG9", Slug: "apolo", DisplayName: "Apolo", State: core.StateActive}
 	still := exportStill{Still: drp.Still{ID: "ab12cd", Label: "0001", RecTC: "01:00:00:00"}, Created: time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)}
-	data := func(can bool) map[string]any {
+	projects := []drp.Project{{ID: "p1", Name: "Short"}, {ID: "p2", Name: "Long feature"}}
+	power := []exportAlbum{{Album: drp.Album{ViewID: "v1", Name: "Looks"}, Stills: []exportStill{still}}}
+	byProject := []exportAlbum{{Album: drp.Album{ViewID: "v2", ProjectID: "p1", ProjectName: "Short"}, Stills: []exportStill{still}}}
+	data := func(can bool, query string) map[string]any {
+		q, _ := url.ParseQuery(query)
 		return map[string]any{
 			"L": l, "Tab": "export", "Enabled": true, "CanExport": can,
-			"Projects":      []drp.Project{{ID: "p1", Name: "Short"}},
-			"PowerGrades":   []exportAlbum{{Album: drp.Album{ViewID: "v1", Name: "Looks"}, Stills: []exportStill{still}}},
-			"ProjectAlbums": []exportAlbum{{Album: drp.Album{ViewID: "v2", ProjectID: "p1", ProjectName: "Short"}, Stills: []exportStill{still}}},
+			"Catalog": buildExportCatalog(q, projects, power, byProject),
 		}
 	}
 	link := `href="/libraries/01M5A5X0JZQYHV8GE4H1PK6VG9/export/stills/ab12cd"`
-	out := renderPage(t, "library_export", data(true))
+	// The projects view: the view switch with the totals, a search box, the
+	// still count of each project linking to its stills, and no .drx links.
+	out := renderPage(t, "library_export", data(true, ""))
+	for _, want := range []string{`href="/libraries/01M5A5X0JZQYHV8GE4H1PK6VG9/export?view=stills" >Stills <span class="muted small">2</span>`, `Projects <span class="muted small">2</span>`, `name="q"`, `?view=stills&project=p1">1 still</a>`, `Long feature`, `/export/projects/p2"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("projects view lacks %s", want)
+		}
+	}
+	if strings.Contains(out, link) || strings.Contains(out, "PowerGrades") {
+		t.Error("projects view shows stills")
+	}
+	// A search narrows the table and says so.
+	out = renderPage(t, "library_export", data(true, "q=long"))
+	if !strings.Contains(out, "1 of 2 match") || strings.Contains(out, `data-label="Project">Short<`) || !strings.Contains(out, `value="long"`) {
+		t.Error("search did not narrow the projects")
+	}
+	// The stills view: both albums with their .drx links, collapsed.
+	out = renderPage(t, "library_export", data(true, "view=stills"))
 	if n := strings.Count(out, link); n != 2 {
 		t.Errorf("with permission: %d .drx links, want 2 (one per album)", n)
 	}
-	if !strings.Contains(out, "01:00:00:00") || !strings.Contains(out, "0001") {
-		t.Error("still label and timecode missing")
+	if !strings.Contains(out, "01:00:00:00") || !strings.Contains(out, "0001") || !strings.Contains(out, `<details class="more" >`) {
+		t.Error("still label, timecode or collapsed album missing")
 	}
-	out = renderPage(t, "library_export", data(false))
+	// Narrowed to one project: its name in the heading, the album expanded
+	// as a plain section, no PowerGrades.
+	out = renderPage(t, "library_export", data(true, "project=p1"))
+	if !strings.Contains(out, "Stills of Short") || strings.Contains(out, "PowerGrades") || strings.Count(out, link) != 1 || !strings.Contains(out, `?view=stills">All stills</a>`) {
+		t.Error("project narrowing wrong")
+	}
+	out = renderPage(t, "library_export", data(false, "view=stills"))
 	if strings.Contains(out, link) || strings.Contains(out, "/export/albums/") || strings.Contains(out, "/export/projects/") {
 		t.Error("without permission the download links must not appear")
 	}

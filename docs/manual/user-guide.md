@@ -281,6 +281,10 @@ opening Resolve. It reads tables Blackmagic does not document: **no guarantee**.
 file into Resolve before trusting it. Details in
 [22-project-and-grade-export.md](../22-project-and-grade-export.md).
 
+The catalog has two views, Projects and Stills, each with a search box. In Projects, the still
+count of a row takes you straight to that project's stills, expanded; in Stills, search by
+project, album or still label and the matching albums open on their own.
+
 ## Console
 
 Inside the container (actions are recorded in the audit log with actor "console"):

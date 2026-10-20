@@ -154,14 +154,24 @@ Resolve 21.1.1 (`21.1.1.0010`), `DbPrjVer` 17.
 ## 7. UI, API and permissions
 
 **Export** tab in the library detail, with the notice "Experimental: no guarantee" and the
-fingerprint status: "verified with Resolve 21.1.1" or "not verified". Table of projects with
-thumbnail, folder, name, modification date and a "Download .drp" button. PowerGrade albums and
-those of each project with their thumbnails, a ".drx" button per still and "Download album
-(.zip)".
+fingerprint status: "verified with Resolve 21.1.1" or "not verified". A library can hold
+hundreds of projects, so the catalog shows one view at a time, each with a search box:
+
+- **Projects**: table with thumbnail, name, folder, modification date, how many stills the
+  project has and a "Download .drp" button. The still count links to the stills of that project
+  alone.
+- **Stills**: PowerGrade albums and the album of each project, collapsed, with their
+  thumbnails, a ".drx" button per still and "Download album (.zip)". Narrowed to one project
+  the albums come expanded; a search that leaves five project albums or fewer expands them too.
+
+Query string: `view=projects|stills` (projects by default), `q=` (case-insensitive substring of
+the project name or folder, or of the album name, project name or still label), and
+`project=<id>`, which narrows the stills view to that project. The same applies to the export
+from a backup.
 
 | Web route | Action |
 |---|---|
-| `GET /libraries/{id}/export` | Tab |
+| `GET /libraries/{id}/export` | Tab; `?view=`, `?q=` and `?project=` as above |
 | `GET /libraries/{id}/export/projects/{pid}` | `.drp` download |
 | `GET /libraries/{id}/export/stills/{sid}` | `.drx` download |
 | `GET /libraries/{id}/export/albums/{vid}` | `.zip` download |
