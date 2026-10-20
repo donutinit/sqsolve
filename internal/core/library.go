@@ -339,7 +339,7 @@ func (s *Service) runLibraryCreate(ctx context.Context, r *jobs.Run) error {
 			s.PG.DropRole(c, l.OwnerRole)
 		}
 		s.DB.ExecContext(c, `UPDATE library_credentials SET revoked_at = ? WHERE library_id = ?`, store.NowT(), l.ID)
-		s.DB.ExecContext(c, `UPDATE libraries SET state = 'purged', purged_at = ?, notes = notes || ? WHERE id = ?`, store.NowT(), "\n[creación fallida] "+cause.Error(), l.ID)
+		s.DB.ExecContext(c, `UPDATE libraries SET state = 'purged', purged_at = ?, notes = notes || ? WHERE id = ?`, store.NowT(), "\n[creation failed] "+cause.Error(), l.ID)
 		s.SyncHBA(c)
 		return cause
 	}

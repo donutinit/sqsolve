@@ -165,7 +165,7 @@ def main():
     rc, out = dc("exec", "-T", "sqsolve", "sqsolve", "doctor")
     check("doctor without failures", rc == 0, out)
     # The folders are 0700 and belong to the service user, not to the runner.
-    find = ["find", os.path.join(WORK, "respaldos"), "-name", "*.backup"]
+    find = ["find", os.path.join(WORK, "backups"), "-name", "*.backup"]
     if subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0:
         find = ["sudo", "-n"] + find
     files = subprocess.run(find, capture_output=True, text=True).stdout.split()

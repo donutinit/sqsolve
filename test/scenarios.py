@@ -226,18 +226,18 @@ def fresh():
     shutil.rmtree(BASE_DIR, ignore_errors=True)
     os.makedirs(BASE_DIR)
     r = subprocess.run(["go", "build", "-o", BIN, "./cmd/sqsolve"], cwd=REPO, capture_output=True, text=True)
-    if not check("compila", r.returncode == 0, r.stderr):
+    if not check("builds", r.returncode == 0, r.stderr):
         sys.exit(1)
     rc, out = cli("init")
     check("init on empty volumes", rc == 0, out)
     rc2, out2 = cli("init")
-    check("init es idempotente", rc2 == 0 and "generad" not in out2, out2)
+    check("init is idempotent", rc2 == 0 and "generad" not in out2, out2)
     pwfile = f"{BASE_DIR}/pg/sqsolve/superuser_password"
     r = subprocess.run(["initdb", "-D", ENV["SQSOLVE_PG_DATA_DIR"], "-U", "postgres", f"--pwfile={pwfile}", "--auth=scram-sha-256",
                         "--encoding=UTF8", "--locale-provider=builtin", "--builtin-locale=C.UTF-8"], capture_output=True, text=True)
     check("initdb like the official image", r.returncode == 0, r.stderr[-400:])
     check("PostgreSQL starts with the generated configuration", start_pg(), open(f"{BASE_DIR}/postgres.log").read()[-800:])
-    check("sqsolve arranca y queda listo", start_sq(), open(f"{BASE_DIR}/sqsolve.log").read()[-1500:])
+    check("sqsolve starts and is ready", start_sq(), open(f"{BASE_DIR}/sqsolve.log").read()[-1500:])
     m = re.search(r"installation code:\s+([A-Z0-9]{5}-[A-Z0-9]{5})", open(f"{BASE_DIR}/sqsolve.log").read())
     check("the log shows the installation code", m is not None)
     return m.group(1) if m else ""
@@ -456,13 +456,13 @@ def s_import(lp, bid):
                 f"{BASE_DIR}/backups/_import/copied.backup")
     st, loc, _ = post_multipart("/backups/import", [("csrf", tok), ("library", libid), ("file", "copied.backup"), ("delete", "on")], [("upload", "", b"")])
     state, jb = wait_job(job_id(loc), 300)
-    check("importar un archivo copiado a _import (y moverlo)", state == "succeeded" and not os.path.exists(f"{BASE_DIR}/backups/_import/copied.backup"), state)
+    check("import a file copied to _import (and move it)", state == "succeeded" and not os.path.exists(f"{BASE_DIR}/backups/_import/copied.backup"), state)
 
 def s_cli():
     rc, out = cli("doctor")
     check("doctor without failures", rc == 0, out)
     rc, out = cli("library", "list")
-    check("library list", rc == 0 and "ACTIVA" in out.upper(), out)
+    check("library list", rc == 0 and "ACTIVE" in out.upper(), out)
     rc, out = cli("audit", "verify")
     check("audit log intact", rc == 0, out)
     rc, out = cli("admin", "create", "operator1", "--role", "operator", stdin="another long password 1234\n")
@@ -472,8 +472,8 @@ def s_cli():
 
 def s_restart_all():
     stop_sq(); stop_pg()
-    check("PostgreSQL arranca otra vez", start_pg())
-    check("sqsolve arranca otra vez", start_sq())
+    check("PostgreSQL starts again", start_pg())
+    check("sqsolve starts again", start_sq())
     st, b, path = page("/")
     check("the session is still valid after restart", st == 200 and "/login" not in path, path)
     refresh_token()

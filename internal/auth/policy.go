@@ -12,15 +12,15 @@ const (
 	RoleViewer   Role = "viewer"
 )
 
-// Label in Spanish.
+// Label is the role name shown in the panel.
 func (r Role) Label() string {
 	switch r {
 	case RoleAdmin:
-		return "Administrador"
+		return "Administrator"
 	case RoleOperator:
-		return "Operador"
+		return "Operator"
 	case RoleViewer:
-		return "Lector"
+		return "Viewer"
 	}
 	return string(r)
 }

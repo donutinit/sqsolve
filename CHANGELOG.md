@@ -5,6 +5,14 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+## [1.1.1] 2026-10-20
+
+- Fix: the role name in the panel sidebar (Administrator, Operator, Viewer) and the notes of a
+  library whose creation failed were still in Spanish.
+- README with screenshots of the panel.
+
+Upgrade: same as 1.1.0. No migrations. Rollback: image `1.1.0`.
+
 ## [1.1.0] 2026-10-20
 
 - The whole project moves to English, the only supported language: web panel, URLs, CLI, error

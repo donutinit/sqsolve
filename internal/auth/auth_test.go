@@ -74,6 +74,15 @@ func TestTOTPVectors(t *testing.T) {
 	}
 }
 
+func TestRoleLabels(t *testing.T) {
+	want := map[Role]string{RoleAdmin: "Administrator", RoleOperator: "Operator", RoleViewer: "Viewer", Role("other"): "other"}
+	for r, label := range want {
+		if got := r.Label(); got != label {
+			t.Errorf("%s: got %q want %q", r, got, label)
+		}
+	}
+}
+
 func TestPolicyMatrix(t *testing.T) {
 	for _, a := range AllActions {
 		if !RoleAllows(RoleAdmin, a) {

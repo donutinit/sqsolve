@@ -105,7 +105,7 @@ func (s *Service) Reconcile(ctx context.Context, interrupted []*jobs.Job) []stri
 		case StateProvisioning:
 			if db, _ := s.PG.Database(ctx, l.DBName); db == nil {
 				s.PG.DropRole(ctx, l.OwnerRole)
-				s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'purged', purged_at = ?, notes = notes || ? WHERE id = ?`, store.NowT(), "\n[creación interrumpida]", l.ID)
+				s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'purged', purged_at = ?, notes = notes || ? WHERE id = ?`, store.NowT(), "\n[creation interrupted]", l.ID)
 				note("creation of %s interrupted; rolled back", l.Slug)
 			}
 		case StateRestoring:
