@@ -5,11 +5,16 @@ toman de aquí (`.github/workflows/release.yml`).
 
 ## [Sin publicar]
 
+## [0.1.6] 2026-10-19
+
 - Firma de la imagen con cosign sin clave y publicación de cada versión en GitHub con el compose
   y estas notas.
 - `SECURITY.md`, `CONTRIBUTING.md`, runbooks y `docs/manual/errores.md`.
-- Cabeceras `Strict-Transport-Security` (con HTTPS) y `Cross-Origin-Resource-Policy` en el panel, tras la revisión con ZAP.
+- Cabeceras `Strict-Transport-Security` (con HTTPS) y `Cross-Origin-Resource-Policy` en el panel,
+  tras la revisión con ZAP.
 - Informes de PoC-03, 06, 08 y 09 en `docs/poc`; ADR 0019 aceptado como experimental.
+
+Actualizar: igual que la 0.1.5. Sin migraciones.
 
 ## [0.1.5] 2026-10-19
 

@@ -35,6 +35,14 @@ Identificadores y comentarios de código en inglés; documentación, interfaz y 
 en español, con comillas rectas y sin rayas. Nada de datos inventados: si falta un dato, "Por
 confirmar". Commits de una línea, sin trailers.
 
+## Publicar una versión
+
+1. En `CHANGELOG.md`, mueve lo de "Sin publicar" a una sección `## [X.Y.Z] AAAA-MM-DD` con los
+   pasos de actualización y de vuelta atrás. El release de GitHub toma sus notas de ahí; sin esa
+   sección sale vacío.
+2. Etiqueta `vX.Y.Z` y push: el CI publica la imagen firmada y el release con el compose.
+3. Verifica la firma como dice `docs/17` §6 y actualiza la instalación de prueba.
+
 ## Cómo proponer un cambio
 
 1. Una rama por tarea (`sqs-NNN-nombre-corto` si viene de `docs/21-tareas.md`).
