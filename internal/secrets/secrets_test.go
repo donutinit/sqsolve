@@ -63,7 +63,14 @@ func TestBoxRoundTripAndAAD(t *testing.T) {
 	if _, err := other.Open(sealed, "library_credentials.password_enc.01X"); !errors.Is(err, ErrDecrypt) {
 		t.Fatal("other key opened it")
 	}
-	tampered := sealed[:len(sealed)-2] + "AA"
+	// Change one character inside the authentication tag (the last character may carry only
+	// padding bits that the decoder ignores), always to a different value.
+	i := len(sealed) - 10
+	c := byte('A')
+	if sealed[i] == 'A' {
+		c = 'B'
+	}
+	tampered := sealed[:i] + string(c) + sealed[i+1:]
 	if _, err := b.Open(tampered, "library_credentials.password_enc.01X"); err == nil {
 		t.Fatal("tampered value opened")
 	}

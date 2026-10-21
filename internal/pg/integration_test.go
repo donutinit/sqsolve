@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/donutinit/sqsolve/internal/pg"
 	"github.com/donutinit/sqsolve/internal/pgconf"
@@ -107,7 +108,14 @@ func TestLibraryRoleLifecycle(t *testing.T) {
 	}
 	ac.Close(ctx)
 
-	sessions, err := cl.Sessions(ctx, "client_x")
+	// The backend of the connection just closed leaves pg_stat_activity a moment later.
+	var sessions []pg.Session
+	for i := 0; i < 50; i++ {
+		if sessions, err = cl.Sessions(ctx, "client_x"); err != nil || len(sessions) == 1 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	if err != nil || len(sessions) != 1 || sessions[0].User != "client_x" || sessions[0].ClientAddr != "127.0.0.1" {
 		t.Fatalf("sessions %+v %v", sessions, err)
 	}

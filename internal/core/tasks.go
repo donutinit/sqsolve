@@ -53,14 +53,16 @@ const (
 )
 
 // Register adds every job type and schedule kind. Retryable marks the
-// idempotent, non-destructive types (docs 11 §11); Action is the permission
-// (an action of internal/auth) that starts the operation, also needed to
-// cancel or retry its job. System jobs are for administrators.
+// idempotent, non-destructive types (docs 11 §11); Reconcile marks the types
+// whose interrupted jobs reconciliation settles from their journal (docs 11
+// §8); Action is the permission (an action of internal/auth) that starts the
+// operation, also needed to cancel or retry its job. System jobs are for
+// administrators.
 func (s *Service) Register() {
 	j := s.Jobs
 	const admin = "settings.edit"
 	j.Register(jobs.Spec{Type: JobLibraryCreate, Title: "Create library", Priority: 90, Lock: jobs.LockWrite, Action: "library.create", Run: s.runLibraryCreate})
-	j.Register(jobs.Spec{Type: JobLibraryDelete, Title: "Move to trash", Priority: 90, Lock: jobs.LockWrite, Heavy: true, Action: "library.delete", Run: s.runTrash})
+	j.Register(jobs.Spec{Type: JobLibraryDelete, Title: "Move to trash", Priority: 90, Lock: jobs.LockWrite, Heavy: true, Reconcile: true, Action: "library.delete", Run: s.runTrash})
 	j.Register(jobs.Spec{Type: JobLibraryUntrash, Title: "Restore from trash", Priority: 90, Lock: jobs.LockWrite, Action: "library.delete", Run: s.runUntrash})
 	j.Register(jobs.Spec{Type: JobLibraryPurge, Title: "Purge library", Priority: 40, Lock: jobs.LockWrite, Action: "library.delete", Run: s.runPurge})
 	j.Register(jobs.Spec{Type: JobBackupCreate, Title: "Back up", Priority: 50, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Retryable: true, Action: "backup.create", Run: s.runBackupCreate})
@@ -68,9 +70,9 @@ func (s *Service) Register() {
 	j.Register(jobs.Spec{Type: JobBackupExport, Title: "Prepare export from backup", Priority: 40, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Retryable: true, Action: "library.export", Run: s.runBackupExport})
 	j.Register(jobs.Spec{Type: JobBackupImport, Title: "Import backup", Priority: 60, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Retryable: true, Action: "backup.import", Run: s.runImport})
 	j.Register(jobs.Spec{Type: JobRestoreNew, Title: "Restore as a new library", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Cancellable: true, Action: "restore.new", Run: s.runRestoreNew})
-	j.Register(jobs.Spec{Type: JobRestoreReplace, Title: "Restore by replacing", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Action: "restore.replace", Run: s.runRestoreReplace})
-	j.Register(jobs.Spec{Type: JobRestoreRevert, Title: "Revert restore", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Action: "restore.revert", Run: s.runRevert})
-	j.Register(jobs.Spec{Type: JobRestoreRecreate, Title: "Recreate from backup", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Action: "restore.replace", Run: s.runRecreate})
+	j.Register(jobs.Spec{Type: JobRestoreReplace, Title: "Restore by replacing", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Reconcile: true, Action: "restore.replace", Run: s.runRestoreReplace})
+	j.Register(jobs.Spec{Type: JobRestoreRevert, Title: "Revert restore", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Reconcile: true, Action: "restore.revert", Run: s.runRevert})
+	j.Register(jobs.Spec{Type: JobRestoreRecreate, Title: "Recreate from backup", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Reconcile: true, Action: "restore.replace", Run: s.runRecreate})
 	j.Register(jobs.Spec{Type: JobRetention, Title: "Apply retention", Priority: 20, Retryable: true, Action: admin, Run: s.runRetentionAll})
 	j.Register(jobs.Spec{Type: JobVerifyAll, Title: "Verify latest backups", Priority: 30, Retryable: true, Action: admin, Run: s.runVerifyAll})
 	j.Register(jobs.Spec{Type: JobVacuum, Title: "Optimize libraries", Priority: 10, Heavy: true, Cancellable: true, Retryable: true, Action: admin, Run: s.runVacuum})

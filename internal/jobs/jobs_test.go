@@ -45,6 +45,20 @@ func waitState(t *testing.T, m *Manager, id string, want State) *Job {
 	return nil
 }
 
+// waitEvents waits until n events of the type are stored: finish writes the job's state
+// before it emits its event, so a test that saw the state may not see the event yet.
+func waitEvents(t *testing.T, m *Manager, typ string, n int) []events.Event {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		evs, err := m.ev.List(context.Background(), events.Filter{TypePrefix: typ})
+		if err == nil && len(evs) >= n || time.Now().After(deadline) {
+			return evs
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestRunStepsLogsResult(t *testing.T) {
 	m, _ := newManager(t)
 	m.Register(Spec{Type: "t.ok", Run: func(ctx context.Context, r *Run) error {

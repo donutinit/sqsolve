@@ -186,6 +186,8 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-R056` | ... is not a previous state of ...; it was not dropped |
 | `SQS-R057` | the job journal could not be written, so nothing was locked: ... |
 | `SQS-R058` | the job journal could not be written, so the database was not created: ... |
+| `SQS-R090` | ... is named by an interrupted job that reconciliation at startup has not settled yet; it was kept |
+| `SQS-R091` | could not tell whether an interrupted job pending reconciliation names ..., so it was kept: ... |
 | `SQS-S001` | the volume has no sqsolve marker |
 | `SQS-S002` | unreadable marker in ...: ... |
 | `SQS-S003` | the backups volume ... belongs to another installation (...); this one is .... |

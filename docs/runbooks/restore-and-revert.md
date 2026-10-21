@@ -41,6 +41,13 @@ back): nothing was dropped. The library shows "No database on the server" and th
 the database holding the original (`<identifier>__prev_<mark>`). Use section C: Revert puts it
 back under the library's name.
 
+If Activity shows a "reconciliation pending" warning (`library.reconcile_pending`) after a
+restart: sqsolve was stopped during a restore, revert, delete or recreate and could not settle
+it at start. Nothing was changed or deleted: the library keeps its state (usually "Restoring")
+and the databases the warning lists are kept. Fix what the warning names (for example close the
+session that refused the rename) and restart sqsolve; every start tries again. Expected: the
+warning stops and the library is Active (or in the trash, for a delete).
+
 If the log says "Could not back up the previous state": the replacement worked, but the
 previous version is only covered by the pre-restore backup. It is kept (not deleted when it
 expires) until a backup of it succeeds; fix the cause (usually space on the backups volume)

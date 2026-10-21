@@ -272,12 +272,40 @@ before the lock and before each rename), the databases that exist are observed:
 | No | Yes | No | Anomalous: rename `__prev` to `slug`, give back the earlier previous state in the catalog, reopen, mark failed and critical alert |
 
 No case drops `slug` or `slug__prev_mark`. For a revert, the "restored" column is the `__prev`
-being brought back. If the databases cannot be checked, or a rename fails, the swap is left as
-it is. After that, reconciliation applies to every library the access its state promises
-(ADR 0024), so a library locked by a cut during a delete or a revert is usable again. A library
-still `restoring` goes back to the state its swap journal recorded (`maintenance` stays
-`maintenance`, closed to its roles; otherwise `active`), or becomes `missing` with a
-`library.missing` event when its database is not on the server.
+being brought back. A swap is settled when a row of the table applied, or when `slug` and
+`slug__prev_mark` are not on the server and no rename was planned yet (journaled while restoring
+the copy) or none of its databases is left: the library then becomes `missing` and the copy, if
+any, is a leftover the sweep drops. If the databases cannot be checked, a rename fails, or only
+the database the swap was bringing in is left after a rename was planned (no row covers it), the
+swap is not settled: nothing is changed and the job stays pending reconciliation (§8), so every
+start tries it again. Until then:
+
+- the library keeps its state and its access as the cut left them (usually `restoring`);
+- the sweep of `__restore_*` databases keeps every database the journal names: the restored copy
+  may be the half of the swap needed to finish it by hand. A `__prev` it names is never dropped
+  either (`SQS-R090`, §7.4);
+- every start writes a note and a `library.reconcile_pending` warning event that says why the
+  swap is not settled and which databases are kept.
+
+To settle it, fix the cause (for example close the session that refuses the rename) or bring the
+databases by hand to a row of the table, and restart sqsolve.
+
+A journal tried again at a later start (also one an earlier start settled but could not record
+as settled) never undoes what was done with the library since. It is settled without changing
+anything when a newer restore, revert, delete or recreate of the library succeeded or is itself
+pending, and, for a swap, when the library is no longer `restoring`: a pending swap always leaves
+it `restoring`, which every other operation refuses, so a library in any other state moved on
+(for example it was put in maintenance or moved to the trash). A delete or a recreate tried
+again only acts on the state the library has then (§7.7, §7.8). If the pending jobs themselves
+cannot be read, reconciliation keeps every `__restore_*` database, leaves every library that is
+`restoring` as it is, forgets no previous state, and raises a `library.reconcile_pending`
+warning without a library; every start tries again.
+
+After that, reconciliation applies to every library without a pending journal the access its
+state promises (ADR 0024), so a library locked by a cut during a delete or a revert is usable
+again. A library still `restoring` goes back to the state its swap journal recorded
+(`maintenance` stays `maintenance`, closed to its roles; otherwise `active`), or becomes
+`missing` with a `library.missing` event when its database is not on the server.
 
 ### 7.4 Revert
 
@@ -303,6 +331,19 @@ dump and closed again). If neither is possible it is kept, the job logs `SQS-R05
   without dropping anything if it cannot be backed up;
 - orphan `__prev` databases owned by the library's role that no row points to (left by older
   versions or by a cut), once older than the retention for previous states.
+
+None of them drops a `__prev` that the journal of a restore or revert still pending
+reconciliation names (§7.3): it is kept with `SQS-R090` and a `library.prev_kept` warning until
+a start settles that journal. If the pending jobs or their journals cannot be read, the `__prev`
+is kept too (`SQS-R091`).
+
+At every start, reconciliation forgets a previous state whose database is no longer on the
+server (for example after a revert of a `missing` library cut after its rename, which leaves the
+library adopted with its former `__prev`): it clears `prev_db_name` only if it still names that
+database, with a note, so Revert is no longer offered just to fail with `SQS-R031`. An invalid
+database still holds the name and keeps it; a check that fails, a library with a pending journal
+(a swap records its previous state before the rename that creates it) or pending jobs that
+cannot be read change nothing.
 
 These backups are of kind `pre_restore` (protected 30 days by retention) and record the
 `__prev` name as their source database, so they never count as the activity reference of the
@@ -359,18 +400,21 @@ tracked, with a warning in the job log).
 
 At every start, reconciliation looks at a database with the name of a `missing` library and the
 library's role as owner before adopting it: it connects and reads its structure. A database that
-does not accept connections (a `__prev`, which sqsolve closes, put back under the name by a
-revert cut after its rename; or one closed by a version before ADR 0024) is opened for this check
-only, like the backup of a closed previous state: a `missing` library has no lines in
-`pg_hba.conf`, so only `sqsolve_admin` reaches it. It is closed again if it is not adopted. Only
-a database with tables, or an empty one of a library that never had tables (not used by Resolve
-yet), returns the library to `active` with its normal access, a `library.found` event and its
-lines in `pg_hba.conf`. A database that is empty while the library had tables (for example a
-recreate cut during `pg_restore` whose drop also failed), or that cannot be inspected, is neither
-adopted nor dropped: it is kept, because it may hold data of the library, and the library stays
-`missing`, with a note in the reconciliation log and a warning `library.missing` event that says
-why. An invalid database (a `DROP DATABASE` cut halfway) counts as no database, with a note:
-PostgreSQL can no longer open it and only allows dropping it.
+does not accept connections (a `__prev`, which sqsolve closes, put back under the name by a revert
+cut after its rename; or one closed by a version before ADR 0024) is opened for this check only,
+like the backup of a closed previous state: a `missing` library has no lines in `pg_hba.conf`, so
+only `sqsolve_admin` reaches it. A database that is not adopted always ends closed to connections,
+also when the check is cut by an error, and one found open (a check cut by a hard kill leaves it
+open, or it was opened by hand) is closed again after its check at every start; this is reversible
+and harmless, because a `missing` library has no lines in `pg_hba.conf`. Only a database with
+tables, or an empty one of a library that never had tables (not used by Resolve yet), returns the
+library to `active` with its normal access, a `library.found` event and its lines in `pg_hba.conf`.
+A database that is empty while the library had tables (for example a recreate cut during
+`pg_restore` whose drop also failed), or that cannot be inspected, is neither adopted nor dropped:
+it is kept, because it may hold data of the library, and the library stays `missing`, with a note in
+the reconciliation log and a warning `library.missing` event that says why. An invalid database (a
+`DROP DATABASE` cut halfway) counts as no database, with a note: PostgreSQL can no longer open it
+and only allows dropping it.
 
 Recreate refuses a name that is taken (`SQS-R052`), so look at a database that was kept before
 doing anything with it. Its size is on the Health page. From the server console,
@@ -380,7 +424,8 @@ file `db/sqsolve/superuser_password` on the host); `\l+ <slug>` shows its size a
 accepts connections. If it does not, `ALTER DATABASE <slug> ALLOW_CONNECTIONS true;` opens it,
 then `\c <slug>` and `\dt+` list its tables and their sizes; close it again afterwards with
 `ALTER DATABASE <slug> ALLOW_CONNECTIONS false;` (workstations cannot reach it while the library
-is `missing`, because it has no `pg_hba.conf` lines). sqsolve checks it again at every start.
+is `missing`, because it has no `pg_hba.conf` lines; if you forget, sqsolve closes it at its next
+start). sqsolve checks it again at every start.
 
 Right before creating the database the job checks again that the name is free and journals
 that it is about to create it; after the comparison it journals that the database is verified.
@@ -391,9 +436,10 @@ be recreated again. Without this, the empty database would be adopted as an acti
 the cut came after `pg_restore` committed but before the comparison, the database has tables: it
 is kept and adopted as active without the comparison (it is the restored backup; a test restore
 of that backup can be run by hand). If the check cannot finish (the database cannot be reached
-or inspected, or the drop fails), the database is kept and the library is left `missing` with a
-note for that start; the next start checks it like any database that comes back (above). If the
-journal itself cannot be written, the job stops with `SQS-R058` before creating anything.
+or inspected, or the drop fails), the database is kept, the library is left as it is (`missing`)
+with a note and a `library.reconcile_pending` warning, and the job stays pending reconciliation:
+every start runs the same check again until it finishes (§8). If the journal itself cannot be
+written, the job stops with `SQS-R058` before creating anything.
 
 ### 7.8 Delete, recover and purge
 
@@ -405,9 +451,14 @@ undone, if the journal of the move cannot be written); until the rename to
 its state (`LOGIN` for active credentials, database open; `NOLOGIN` in maintenance). Sessions of
 a superuser cannot be closed by `sqsolve_admin`: that is logged, and if one is still connected
 the rename fails with `SQS-L052` and the lock is undone. After a cut, reconciliation undoes the
-lock only when it could check that the database was not moved; if the check fails, nothing is
-changed until the next start. Recover from the trash re-validates the state (`SQS-L042`), the
-identifier (`SQS-L043`) and that the trash database still exists (`SQS-L051`).
+lock only when it could check that the database was not moved, and completes the move to the
+trash when it finds the database under its trash name. If the check fails, or the move it finds
+cannot be recorded in the catalog, nothing is changed and the job stays pending reconciliation:
+the library keeps its state and its lock (it is not reported `missing` while its data sits under
+the trash name), a `library.reconcile_pending` warning says so, and every start tries again until
+the library ends `trashed` with its trash database or gets its access back (§8). Recover from the
+trash re-validates the state (`SQS-L042`), the identifier (`SQS-L043`) and that the trash
+database still exists (`SQS-L051`).
 
 ## 8. Failures and interruptions
 
@@ -421,8 +472,11 @@ identifier (`SQS-L043`) and that the trash database still exists (`SQS-L051`).
 | Cut during restore before the swap | `__restore_*` without a live job | Drop it; the active one was not touched |
 | Cut during the swap | Journal | Table in §7.3 |
 | Cut during the lock of a delete or a revert | Journal written before the lock | The lock is undone; reconciliation applies to every library the access of its state (ADR 0024) |
-| Cut during a recreate before its comparison | Journal written before creating the database | Cut during `pg_restore`: the empty database it created is dropped and the library stays `missing`. Cut after `pg_restore` committed: the database has tables and is kept and adopted without the comparison. Check not finished: kept, library left `missing` for that start (§7.7) |
-| A database with the name of a `missing` library is on the server | Reconciliation at every start connects and reads its structure (a database closed to connections is opened for the check and closed again if it is not adopted) | Adopted (`active`, `library.found`) only when it has tables or the library never had any; otherwise kept, neither adopted nor dropped, warning `library.missing` (§7.7) |
+| Cut during a recreate before its comparison | Journal written before creating the database | Cut during `pg_restore`: the empty database it created is dropped and the library stays `missing`. Cut after `pg_restore` committed: the database has tables and is kept and adopted without the comparison. Check not finished: kept, library left `missing`, tried again at every start (§7.7) |
+| A journal that reconciliation cannot settle (a check fails, a rename or a catalog write is refused, a swap state no rule covers) | The interrupted restore, revert, delete or recreate stays pending reconciliation; the 90-day job purge keeps it | Nothing is changed: the library keeps its state and access, the databases its journal names are kept (the `__restore_*` sweep skips them, a `__prev` is kept with `SQS-R090`, or `SQS-R091` when the pending jobs cannot be read), note and warning `library.reconcile_pending` at every start; every start tries again until it is settled, and a journal whose library moved on since is settled without changes (§7.3, §7.7, §7.8) |
+| The jobs pending reconciliation cannot be read | Reading them at a start fails | Every `__restore_*` database is kept, libraries left `restoring` stay so, no previous state is forgotten; warning `library.reconcile_pending` without a library; tried again at every start (§7.3) |
+| A database with the name of a `missing` library is on the server | Reconciliation at every start connects and reads its structure (a database closed to connections is opened for the check) | Adopted (`active`, `library.found`) only when it has tables or the library never had any; otherwise kept, neither adopted nor dropped, closed to connections (also when found open), warning `library.missing` (§7.7) |
+| The previous state of a library is no longer on the server | Reconciliation at every start | `prev_db_name` cleared with a note, unless an invalid database holds the name, the check fails or the library has a pending journal (§7.4) |
 | Disk full | Preflight or `pg_dump` write error | Delete `.partial`, `SQS-B012`, alert; backups outside retention are never deleted to make room |
 | Backups volume missing | Marker | Do not write; critical `storage.volume_missing`; backup jobs fail with `SQS-S001` |
 | PostgreSQL down | Connection fails | Retries waiting 30 s, 2 min, 5 min; then `failed` with `SQS-P001` |
@@ -517,7 +571,8 @@ stateDiagram-v2
   panic in the dispatcher or the scheduler is logged, recorded as a critical
   `system.internal_error` event and the loop goes on; a schedule that panics moves on to its
   next run.
-- Job and log history: 90 days by default.
+- Job and log history: 90 days by default. An interrupted restore, revert, delete or recreate
+  that reconciliation has not settled yet is kept past that until it is settled (§8).
 
 ## 12. Default maintenance jobs
 

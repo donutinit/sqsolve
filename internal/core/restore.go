@@ -410,6 +410,17 @@ type swapJournal struct {
 	PrevExpiresBefore string `json:"prev_expires_before,omitempty"`
 }
 
+// names lists the databases the journal names.
+func (j swapJournal) names() []string {
+	var out []string
+	for _, n := range []string{j.Live, j.Prev, j.Restored} {
+		if n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // before is the state the library goes back to when the swap is undone or
 // completed: maintenance stays maintenance, anything else is active.
 func (j swapJournal) before() State {

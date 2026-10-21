@@ -253,9 +253,11 @@ current library stays where it is as the previous version, so only the restored 
 space; keep in mind that both use the disk until the previous version expires.
 
 If sqsolve or the server die mid-restore, at start the job journal is read and the library is
-left in a consistent state. If the swap ever stops halfway and the original cannot be put back
-under its name (error `SQS-R053`), the library shows "No database on the server" and its Revert
-puts the original back.
+left in a consistent state. If that start cannot settle it (PostgreSQL not answering yet, a
+rename refused), nothing is changed or deleted, a "reconciliation pending" warning in Activity
+says why, and every start tries again. If the swap ever stops halfway and the original cannot be
+put back under its name (error `SQS-R053`), the library shows "No database on the server" and
+its Revert puts the original back.
 
 ## Access and security per library
 

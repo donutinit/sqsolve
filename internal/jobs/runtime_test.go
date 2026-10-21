@@ -259,7 +259,7 @@ func TestPanicInJobIsReportedInEnglish(t *testing.T) {
 	if j.ErrorCode != "SQS-X999" || j.ErrorDetail != "SQS-X999 internal error: oops" {
 		t.Fatalf("%s %q", j.ErrorCode, j.ErrorDetail)
 	}
-	evs, _ := m.ev.List(ctx, events.Filter{TypePrefix: events.JobFailed})
+	evs := waitEvents(t, m, events.JobFailed, 1)
 	if len(evs) != 1 || evs[0].Data["job_type"] != "t.panic" {
 		t.Fatalf("failed event %+v", evs)
 	}

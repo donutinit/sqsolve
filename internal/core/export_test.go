@@ -33,6 +33,13 @@ func SetExportEnqueuedHook(f func(jobID string)) (restore func()) {
 	return func() { hookExportEnqueued.Store(nil) }
 }
 
+// SetAdoptionCheckHook runs f when reconciliation has opened the database of
+// a missing library for its adoption check. The returned function removes it.
+func SetAdoptionCheckHook(f func(db string)) (restore func()) {
+	hookAdoptionCheck.Store(&f)
+	return func() { hookAdoptionCheck.Store(nil) }
+}
+
 // SetDBVolumeFree makes the restore space check see free bytes on the
 // database volume.
 func SetDBVolumeFree(free uint64) (restore func()) {

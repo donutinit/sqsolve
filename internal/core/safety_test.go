@@ -893,8 +893,8 @@ func restoreParams(t *testing.T, raw []byte) core.RestoreParams {
 func (e *env) interruptedJob(id, typ, libraryID, step, data string) {
 	e.t.Helper()
 	now := store.NowT()
-	if _, err := e.svc.DB.ExecContext(e.ctx, `INSERT INTO jobs(id, type, library_id, state, scheduled_for, created_at, created_by_type) VALUES (?, ?, ?, 'running', ?, ?, 'user')`,
-		id, typ, libraryID, now, now); err != nil {
+	if _, err := e.svc.DB.ExecContext(e.ctx, `INSERT INTO jobs(id, type, library_id, state, scheduled_for, created_at, started_at, created_by_type) VALUES (?, ?, ?, 'running', ?, ?, ?, 'user')`,
+		id, typ, libraryID, now, now, now); err != nil {
 		e.t.Fatal(err)
 	}
 	if _, err := e.svc.DB.ExecContext(e.ctx, `INSERT INTO job_steps(job_id, seq, name, state, started_at, data) VALUES (?, 1, ?, 'running', ?, ?)`, id, step, now, data); err != nil {
@@ -987,8 +987,24 @@ func TestReconcileInterruptedRecreateKeepsWhatItCannotProve(t *testing.T) {
 	if ev, _ := e.svc.Events.Latest(ctx, "library.found", closed.ID); ev != nil {
 		t.Fatal("library.found for a database the recreate check could not inspect")
 	}
-	if !strings.Contains(notes, "rc_closed: could not inspect rc_closed, left by an interrupted recreate") || !strings.Contains(notes, "rc_closed: left without a database") {
+	if !strings.Contains(notes, "rc_closed: could not inspect rc_closed, left by an interrupted recreate") ||
+		!strings.Contains(notes, "rc_closed: the interrupted job J3 is not settled; its state and access are left as they are; the next start tries again") {
 		t.Fatalf("notes do not report the undecided check:\n%s", notes)
+	}
+	if e.pendingFlag("J3") != 1 || e.pendingFlag("J4") != 0 || e.pendingFlag("J5") != 0 {
+		t.Fatal("only the undecided recreate stays pending")
+	}
+	// It is checked again at the next start: once it can be inspected, the
+	// empty database the recreate created is dropped and the job is settled.
+	if err := e.svc.PG.SetAllowConnections(ctx, closed.DBName, true); err != nil {
+		t.Fatal(err)
+	}
+	notes = e.start()
+	if got := e.lib(closed.ID); got.State != core.StateMissing || e.db(closed.DBName) != nil {
+		t.Fatalf("at the next start: state %s, database kept %v\n%s", got.State, e.db(closed.DBName) != nil, notes)
+	}
+	if e.pendingFlag("J3") != 0 {
+		t.Fatal("the recreate settled at the next start is still pending")
 	}
 }
 

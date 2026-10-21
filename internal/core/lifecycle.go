@@ -421,10 +421,14 @@ func (s *Service) sweepOrphanPrev(ctx context.Context, r *jobs.Run, l *Library, 
 
 // dropPrevDB drops a previous-state database of l only when a verified backup
 // of that database itself exists (backupID, taken after its swap) or can be
-// taken now. A database that no longer exists counts as dropped.
+// taken now. A database that no longer exists counts as dropped. One that the
+// journal of a job still pending reconciliation names is never dropped.
 func (s *Service) dropPrevDB(ctx context.Context, r *jobs.Run, l *Library, name, backupID string) error {
 	if name == l.DBName || !strings.HasPrefix(name, l.Slug+"__prev_") {
 		return fmt.Errorf("SQS-R056 %s is not a previous state of %s; it was not dropped", name, l.Slug)
+	}
+	if err := s.notNamedByPendingJournal(ctx, name); err != nil {
+		return err
 	}
 	d, err := s.PG.Database(ctx, name)
 	if err != nil {

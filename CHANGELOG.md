@@ -38,6 +38,13 @@ Fixes from the audit of 2026-10-20 (stability and long-term operation).
     be backed up. `sqsolve_admin` has 3 reserved connection slots.
   - Trash and previous-version retention are capped at 3650 days (a larger value overflowed
     and purged at once).
+- Reconciliation: an interrupted restore, revert, delete or recreate that the start after a cut
+  cannot settle is tried again at every start until it is settled, and the job purge keeps it
+  meanwhile. Until then its library keeps its state and access, nothing its journal names is
+  dropped (`SQS-R090` for a previous version) and a `library.reconcile_pending` warning says
+  why; a journal tried again never undoes what was done with the library since. A database
+  checked for adoption always ends closed when it is not adopted, and a reference to a previous
+  version whose database is gone is forgotten.
 - Volumes and startup (ADR 0023): the db and app volumes now carry a marker like the backups
   volume. `init` refuses an empty or foreign db or app volume, refuses swapped mounts, and never
   marks an empty backups folder on an installation that already has an identity. A problem with
@@ -78,6 +85,9 @@ Fixes from the audit of 2026-10-20 (stability and long-term operation).
   second meanings of `SQS-B033`, `SQS-B034` and `SQS-C010`, and `make check` now fails on a
   code with two messages. API problems point at `/docs/errors/<code>`.
 - All remaining Spanish strings in the interface and logs are now in English.
+- Security: the image is built with Go 1.27.3, which fixes GO-2026-6809 (`crypto/x509`
+  certificate verification, used by sqsolve's HTTPS and SMTP clients). The 1.1.2 image was built
+  with Go 1.27.2. The new CI scan of the binary inside the image found it.
 
 Upgrade: with the `1.1` tag, `docker compose pull` and `docker compose up -d` (TrueNAS:
 Update). Recommended, from the new `deploy/compose.yaml`: the `x-logging` block with

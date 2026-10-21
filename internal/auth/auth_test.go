@@ -167,8 +167,10 @@ func TestLoginSessionCSRFAndLockout(t *testing.T) {
 	if _, err := s.Session(ctx, raw, "", false); !errors.Is(err, ErrNoSession) {
 		t.Fatal("idle session accepted")
 	}
-	s.Now = time.Now
-	// Lockout after 5 failures, for the user from any IP.
+	// Lockout after 5 failures, for the user from any IP. The clock stands still so the
+	// limiter's wait cannot run out while slow hashes (under -race and load) are computed.
+	frozen := time.Now()
+	s.Now = func() time.Time { return frozen }
 	for i := 0; i < 5; i++ {
 		s.Login(ctx, "diego", "wrong", "10.0.0.9", "")
 	}

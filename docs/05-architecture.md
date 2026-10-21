@@ -204,7 +204,9 @@ step is recorded before it runs so that it can be completed or reverted after a 
 4. Reconcile: running jobs become "interrupted"; delete orphaned `.partial` files; drop
    `sqsolve_verify_*` and `__restore_*` databases without a live job; complete or revert
    half-done swaps according to their journal; remove `CREATEDB` from expired windows;
-   regenerate `pg_hba.conf` from the catalog and reload.
+   regenerate `pg_hba.conf` from the catalog and reload. A journal that cannot be settled
+   stays pending and is tried again at every start; until then its library is left as it is and
+   nothing its journal names is dropped (docs 11 §7.3, §8).
 5. Start the scheduler (with the misfire policy) and the HTTP server.
 
 ## 7. Configuration

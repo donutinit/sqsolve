@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime/debug"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -84,6 +85,11 @@ type Spec struct {
 	// again with their original parameters. Destructive types are started
 	// again from the page that asks for their confirmation.
 	Retryable bool
+	// Reconcile marks the destructive types whose interrupted jobs startup
+	// reconciliation settles from their journal (docs 11 §8): such a job
+	// stays pending, listed by PendingReconciliation at every start and kept
+	// by Purge, until Reconciled is called.
+	Reconcile bool
 	// Action is the permission (an action name of internal/auth) needed to
 	// cancel or retry a job of this type. Empty means administrators only.
 	Action string
@@ -560,14 +566,20 @@ func (m *Manager) Retry(ctx context.Context, id string, by audit.Actor) (*Job, e
 }
 
 // MarkInterrupted turns running jobs left by a previous process into
-// interrupted ones and returns them (for reconciliation).
+// interrupted ones and returns them (for reconciliation). Those of a type
+// marked Reconcile also become pending until Reconciled is called.
 func (m *Manager) MarkInterrupted(ctx context.Context) ([]*Job, error) {
 	running, err := m.List(ctx, Filter{States: []State{Running}, Limit: 500})
 	if err != nil {
 		return nil, err
 	}
 	for _, j := range running {
-		m.db.ExecContext(ctx, `UPDATE jobs SET state = 'interrupted', finished_at = ?, error_code = 'SQS-J010', error_detail = 'The process stopped while the job was running' WHERE id = ?`, store.NowT(), j.ID)
+		pending := 0
+		if m.specs[j.Type].Reconcile {
+			pending = 1
+		}
+		m.db.ExecContext(ctx, `UPDATE jobs SET state = 'interrupted', finished_at = ?, error_code = 'SQS-J010', error_detail = 'The process stopped while the job was running', reconcile_pending = ? WHERE id = ?`,
+			store.NowT(), pending, j.ID)
 		m.db.ExecContext(ctx, `UPDATE job_steps SET state = 'interrupted', finished_at = ? WHERE job_id = ? AND state = 'running'`, store.NowT(), j.ID)
 		m.ev.Emit(ctx, events.Event{Type: events.JobInterrupted, Severity: events.Warning, LibraryID: j.LibraryID, JobID: j.ID,
 			Message: fmt.Sprintf("The job %q was interrupted by a restart", m.Title(j.Type)), Data: map[string]any{"job_type": j.Type}})
@@ -576,9 +588,66 @@ func (m *Manager) MarkInterrupted(ctx context.Context) ([]*Job, error) {
 	return running, nil
 }
 
-// Purge deletes finished jobs older than before.
+// PendingReconciliation returns the interrupted jobs that reconciliation has
+// not settled yet, oldest first: the ones MarkInterrupted marked now and the
+// ones earlier starts could not settle.
+func (m *Manager) PendingReconciliation(ctx context.Context) ([]*Job, error) {
+	rows, err := m.db.QueryContext(ctx, `SELECT `+jobCols+` FROM jobs WHERE reconcile_pending = 1 ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Job
+	for rows.Next() {
+		j, err := m.scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// NewerJob returns the ID of a job of one of types on the library of j that
+// started after j and either succeeded or is itself pending reconciliation:
+// the library moved on and the journal of j no longer describes it. It
+// returns "" when there is none.
+func (m *Manager) NewerJob(ctx context.Context, j *Job, types ...string) (string, error) {
+	if j.LibraryID == "" || len(types) == 0 {
+		return "", nil
+	}
+	q := `SELECT id FROM jobs WHERE library_id = ? AND id <> ? AND (state = 'succeeded' OR reconcile_pending = 1) AND type IN (?` +
+		strings.Repeat(", ?", len(types)-1) + `)`
+	args := []any{j.LibraryID, j.ID}
+	for _, t := range types {
+		args = append(args, t)
+	}
+	if j.StartedAt != nil {
+		q += ` AND started_at > ?`
+		args = append(args, store.T(*j.StartedAt))
+	} else {
+		q += ` AND id > ?`
+		args = append(args, j.ID)
+	}
+	var id string
+	err := m.db.QueryRowContext(ctx, q+` ORDER BY started_at DESC, id DESC LIMIT 1`, args...).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// Reconciled records that reconciliation settled job id: later starts no
+// longer try it and Purge may delete it.
+func (m *Manager) Reconciled(ctx context.Context, id string) error {
+	_, err := m.db.ExecContext(ctx, `UPDATE jobs SET reconcile_pending = 0 WHERE id = ? AND reconcile_pending = 1`, id)
+	return err
+}
+
+// Purge deletes finished jobs older than before, except the ones still
+// pending reconciliation: their journal is what the next start needs.
 func (m *Manager) Purge(ctx context.Context, before time.Time) (int64, error) {
-	res, err := m.db.ExecContext(ctx, `DELETE FROM jobs WHERE state IN ('succeeded', 'failed', 'cancelled', 'interrupted') AND finished_at < ?`, store.T(before))
+	res, err := m.db.ExecContext(ctx, `DELETE FROM jobs WHERE state IN ('succeeded', 'failed', 'cancelled', 'interrupted') AND finished_at < ? AND reconcile_pending = 0`, store.T(before))
 	if err != nil {
 		return 0, err
 	}
