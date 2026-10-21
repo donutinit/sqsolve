@@ -10,7 +10,9 @@
   `authorization`, `cookie` come out as `[redacted]`. Automatic test: the integration suite is
   run with marked secrets and each one is searched for in the entire output.
 - HTTP requests: one line per request with method, path (without query), status, duration and
-  user; `debug` level for static resources.
+  user; static resources and the health probes (`/healthz`, `/readyz`,
+  `/api/v1/system/health`), which Docker and uptime monitors call every few seconds, are not
+  logged.
 
 ## 2. Events and audit log
 
@@ -26,24 +28,62 @@ All three are queried and filtered in the interface and exported as JSON Lines.
 
 | Endpoint | Authentication | What it responds |
 |---|---|---|
-| `GET /healthz` | No | `200` if the process is serving (for the Docker `healthcheck` via `sqsolve healthcheck`) |
-| `GET /readyz` | No | `200` if SQLite is open and the volumes have a marker; `503` with a list of failures without sensitive details |
-| `GET /api/v1/system/health` | No | Same as `readyz` plus PostgreSQL state |
+| `GET /healthz` | No | `200` if the process is serving (liveness, for the Docker `healthcheck` via `sqsolve healthcheck`) |
+| `GET /readyz` | No | `200` if PostgreSQL was reached, reconciled and answers, and the backups volume carries this installation's marker; `503` with a list of failures without sensitive details |
+| `GET /api/v1/system/health` | No | JSON for uptime monitors: `503` when anything is critical (see below) |
 
 PostgreSQL being down does not make `healthz` fail: restarting sqsolve does not fix PostgreSQL
-and would take the panel away.
+and would take the panel away. The monitor starts with sqsolve, before PostgreSQL answers, so a
+PostgreSQL that never comes up still raises `postgres.down` (critical) after 5 minutes.
+
+`GET /api/v1/system/health` shows states and counts only: no paths, library names or
+identifiers.
+
+```
+{
+  "ready": true,                 // as /readyz
+  "postgres": true,
+  "backup_volume": true,         // marker of this installation
+  "postgres_cluster": "ok",      // "changed": another cluster, sqsolve holds (ADR 0023)
+  "status": "ok",                // ok, warning or critical; critical answers 503
+  "backups": {
+    "status": "ok",              // critical when any library is stale
+    "libraries": 4,              // active libraries with an enabled backup schedule
+    "stale": 0,
+    "oldest_verified_age_hours": 20.5,
+    "stale_after_hours": 48      // Settings, the threshold housekeeping uses
+  },
+  "volumes": [
+    {"name": "db", "used_percent": 41.2, "status": "ok"},
+    {"name": "app", "used_percent": 41.2, "status": "ok"},
+    {"name": "backups", "used_percent": 91.0, "status": "critical"}
+  ]
+}
+```
+
+A library is stale when its last verified backup is older than the threshold and the library
+changed since (an untouched library keeps its old backup, ADR 0022), or when it has none and
+exists for longer than the threshold. It is the rule of the `backup.stale` alert, shared in one
+function: a verified backup dated in the future (the clock went back) does not count as recent.
+A volume is `warning` from 80 % and `critical` from 90 % or when it cannot be read. The backup
+part is recomputed at most every 30 seconds, by one reading at a time (concurrent probes share
+it), bounded to 10 seconds and independent of the probe's own timeout; a reading that fails
+answers `critical` for that request and is not cached.
 
 ## 4. Dashboard indicators
 
 | Indicator | Source | Warning | Error |
 |---|---|---|---|
-| PostgreSQL available | `SELECT 1` every 15 s | Latency above 500 ms | No response 3 times in a row |
+| PostgreSQL available | Ping every 5 s, from the start of sqsolve | | First failed check after it answered (`postgres.down`, critical); at startup, no answer in 5 minutes |
+| PostgreSQL cluster | `pg_control_system()` at each start against the stored identifier (ADR 0023) | | Different: `postgres.cluster_changed`, critical; sqsolve holds |
+| PostgreSQL version | `server_version_num` against the bundled `pg_dump --version` | Older minor version than `pg_dump`: update the postgres image digest | Different major version |
 | Total connections | `pg_stat_activity` | 80 % of `max_connections` | 95 % |
-| Space on `pgdata`, `state`, `backups` | `statfs` of each volume (`pgdata` mounted read-only at `/srv/pgdata`, only to measure) | 80 % | 90 % |
+| Space on `db`, `app`, `backups` | `statfs` of each volume (`db` is mounted read-write at `/var/lib/postgresql`, where sqsolve also writes `pg_hba.conf`) | 80 % | 90 %; a volume that cannot be measured: `storage.volume_missing`, critical |
+| Volume markers | `.sqsolve-volume` of each volume | Missing on `db` or `app` (doctor) | Missing or foreign on `backups`: `storage.volume_missing`, critical |
 | Last verified backup per library | Catalog | More than 26 h | More than 48 h |
 | Last L2 verification | Catalog | More than 8 days | Failed |
 | Failed jobs in 24 h | `jobs` | 1 | 3 |
-| Certificates | Files | Less than 30 days | Expired |
+| Certificates | Files, daily; the self-generated panel certificate is renewed first when fewer than 30 days remain | Less than 30 days | Less than 14 days or expired (`tls.expiring` at Error severity) |
 | Audit log integrity | Daily verification | | Broken |
 | Collation version | `pg_database.datcollversion` against the actual one | Different | |
 | Sessions idle in transaction | `pg_stat_activity.state = 'idle in transaction'` for more than 1 h | Yes | |
@@ -88,9 +128,10 @@ names. The interface lists the contents before downloading.
 
 Checks with result `ok`, `warn` or `fail` and a suggestion per failure:
 
-1. Volumes mounted, markers, permissions and space.
+1. Volumes mounted, markers of the three volumes, permissions and space.
 2. Secrets present and with permissions 0400.
-3. Connection over the socket as `sqsolve_admin` and as superuser.
+3. Connection over the socket as `sqsolve_admin` and as superuser; PostgreSQL version against the
+   bundled `pg_dump`; cluster identity (ADR 0023).
 4. The current `pg_hba.conf` matches what the catalog would generate.
 5. Roles and databases match the catalog (orphan databases, orphan roles, libraries without a
    database).

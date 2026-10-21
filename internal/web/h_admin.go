@@ -139,19 +139,53 @@ func (s *Server) settingsGeneral(w http.ResponseWriter, r *http.Request) {
 	s.ok(w, r, "/settings", "Settings saved.")
 }
 
-func readUpload(r *http.Request, field string) ([]byte, error) {
-	f, _, err := r.FormFile(field)
-	if err != nil {
-		return nil, err
+// maxPEM bounds each uploaded certificate or key file.
+const maxPEM = 256 << 10
+
+// readPEMParts reads the "cert" and "key" file parts from the multipart
+// stream that page() left after checking the CSRF part: parsing the form
+// again with FormFile would find the body already consumed (audit Low).
+func readPEMParts(r *http.Request) (cert, key []byte, err error) {
+	mr := multipartOf(r)
+	if mr == nil {
+		return nil, nil, errors.New("not a multipart form")
 	}
-	defer f.Close()
-	return io.ReadAll(io.LimitReader(f, 256<<10))
+	for {
+		part, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		var dst *[]byte
+		switch part.FormName() {
+		case "cert":
+			dst = &cert
+		case "key":
+			dst = &key
+		default:
+			io.Copy(io.Discard, part)
+			continue
+		}
+		b, err := io.ReadAll(io.LimitReader(part, maxPEM+1))
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(b) > maxPEM {
+			return nil, nil, errors.New("file too large")
+		}
+		*dst = b
+	}
+	if len(cert) == 0 || len(key) == 0 {
+		return nil, nil, errors.New("missing file")
+	}
+	return cert, key, nil
 }
 
 func (s *Server) settingsCert(w http.ResponseWriter, r *http.Request) {
-	cert, err1 := readUpload(r, "cert")
-	key, err2 := readUpload(r, "key")
-	if err1 != nil || err2 != nil {
+	cert, key, err := readPEMParts(r)
+	if err != nil {
 		s.fail(w, r, "/settings", errors.New("SQS-C021 upload the certificate and the key in PEM format"))
 		return
 	}
@@ -196,9 +230,23 @@ func (s *Server) userPassword(w http.ResponseWriter, r *http.Request) {
 	s.ok(w, r, back, "Password changed; their sessions were closed.")
 }
 
+// userDisableTOTP removes another user's second factor. While the
+// installation requires it for administrators, an administrator's cannot be
+// removed from the panel; a lost one is reset from the container console
+// (`sqsolve admin disable-totp`), and that account is then sent to enroll
+// again at its next request.
 func (s *Server) userDisableTOTP(w http.ResponseWriter, r *http.Request) {
 	back := "/settings?tab=users"
-	if err := s.A.Auth.DisableTOTP(r.Context(), principalOf(r).Actor(), r.PathValue("id")); err != nil {
+	target, err := s.A.Auth.UserByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, back, err)
+		return
+	}
+	if target.Role == auth.RoleAdmin && s.A.Svc.Settings(r.Context()).TOTPRequiredAdmins {
+		s.fail(w, r, back, auth.ErrTOTPRequired)
+		return
+	}
+	if err := s.A.Auth.DisableTOTP(r.Context(), principalOf(r).Actor(), target.ID); err != nil {
 		s.fail(w, r, back, err)
 		return
 	}
@@ -218,6 +266,11 @@ func (s *Server) notifySave(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.A.Notify.Save(r.Context(), principalOf(r).Actor(), c); err != nil {
 		s.fail(w, r, back, err)
+		return
+	}
+	if warn := s.A.Notify.AddressWarning(r.Context(), c); warn != "" {
+		s.flash(w, "warn", "Channel saved. "+warn)
+		http.Redirect(w, r, back, http.StatusSeeOther)
 		return
 	}
 	s.ok(w, r, back, "Channel saved. Use Test to confirm it arrives.")

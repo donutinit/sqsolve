@@ -220,6 +220,13 @@ recorded in the audit log with type, id, name, files, bytes, fingerprint and the
 - The read runs as `sqsolve_admin` inside a `READ ONLY` transaction with a `statement_timeout` of
   60 s.
 - There is no queued job: the download is synchronous and a large project takes seconds.
+- The file is built in memory and the session (its `REPEATABLE READ` snapshot and the
+  `ACCESS SHARE` locks on the library's tables) is closed before the file is sent, so a slow
+  client does not keep Resolve waiting for a lock. This holds for the panel and the API, for live
+  libraries and exports from a backup.
+- A compressed (zstd) blob may expand to at most 64 MiB; a larger one fails the export with
+  `SQS-E006` (node trees) or a note (folder order), so a crafted blob cannot exhaust sqsolve's
+  memory. The size of the largest blob Resolve writes is To be confirmed with the kit of §6.
 - A new Resolve version that changes the schema turns the feature off with `SQS-E001` until the
   kit of §6 verifies it; one that changes the format without changing the schema is only detected
   with the kit (risk T-16 of `19-risks.md`).

@@ -44,6 +44,17 @@ type Config struct {
 	HeavyJobs      int
 	Location       *time.Location
 	FixPerms       bool
+
+	// Volume identity (ADR 0023). Each adopt variable lets init accept a
+	// volume it would otherwise refuse or leave unmarked; remove it once
+	// the volume carries its marker.
+	BackupsAdopt bool
+	DBAdopt      bool
+	AppAdopt     bool
+	// PGAcceptSystemID accepts a PostgreSQL cluster whose system identifier
+	// differs from the one stored in the control plane. It only matches
+	// that exact cluster, so leaving it set accepts nothing else.
+	PGAcceptSystemID string
 }
 
 // PGConfDir is the directory inside the db volume that sqsolve manages.
@@ -124,6 +135,16 @@ func load(get func(string) string) (*Config, error) {
 	c.Workers = num("SQSOLVE_WORKERS", 2, 1, 16)
 	c.HeavyJobs = num("SQSOLVE_HEAVY_JOBS", 1, 1, 8)
 	c.FixPerms = boolean("SQSOLVE_FIX_PERMS")
+	c.BackupsAdopt = boolean("SQSOLVE_BACKUPS_ADOPT")
+	c.DBAdopt = boolean("SQSOLVE_DB_ADOPT")
+	c.AppAdopt = boolean("SQSOLVE_APP_ADOPT")
+	if v := strings.TrimSpace(get("SQSOLVE_PG_ACCEPT_SYSTEM_ID")); v != "" {
+		if _, err := strconv.ParseUint(v, 10, 64); err != nil {
+			errs = append(errs, &Error{"SQSOLVE_PG_ACCEPT_SYSTEM_ID", "must be the numeric system identifier shown in the event postgres.cluster_changed"})
+		} else {
+			c.PGAcceptSystemID = v
+		}
+	}
 
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":

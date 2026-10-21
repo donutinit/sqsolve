@@ -1,7 +1,7 @@
 # ADR 0018. Three visible volumes
 
 **Status:** Accepted (2026-10-18). Supersedes the volume layout of `12-deployment.md` (six
-volumes) and the location of secrets in ADR 0014.
+volumes) and the location of secrets in ADR 0014. Complemented by ADR 0023 (2026-10-20).
 
 **Context.** Diego asked that the installation not depend on any NAS and asked whether it was
 worth separating database, application and backups. Six volumes (pgdata, pgconf, pgsocket,

@@ -35,7 +35,11 @@
     <section class="card emphasis bad"><h2>The database does not exist on the server</h2>
       <p>This happens when sqsolve is moved to another server or someone deleted the database. Recreate it from its last verified backup; if the master key is the same, workstations keep their password.</p>
       {{with .Data.Last}}<p class="muted">Last verified backup: {{dt .StartedAt}} ({{bytes .SizeBytes}}).</p>{{end}}
-      {{if $p.Can "restore.replace"}}<form method="post" action="/libraries/{{$id}}/recreate">{{template "csrf" $csrf}}<button type="submit">Recreate from the last backup</button></form>{{end}}
+      {{if $p.Can "restore.replace"}}<form method="post" action="/libraries/{{$id}}/recreate" class="form">{{template "csrf" $csrf}}
+        <label>Type <code>{{$l.Slug}}</code> to confirm<input name="confirm" required autocomplete="off" class="mono" data-confirm-match="{{$l.Slug}}"></label>
+        <div class="actions"><button type="submit" data-needs-match>Recreate from the last backup</button></div>
+      </form>{{end}}
+      {{if and $l.PrevDB ($p.Can "restore.revert")}}<p>Its previous state <code>{{$l.PrevDB}}</code> is still on the server: <a href="/libraries/{{$id}}/revert">Revert</a> puts it back under the library's name instead.</p>{{end}}
     </section>
   {{else if eq $l.State "trashed"}}
     <section class="card"><h2>In the trash</h2><p>Nobody can connect. It will be deleted from the server on {{dt $l.PurgeAfter}}; its backups are kept.</p>
@@ -255,7 +259,7 @@
   <h2>Danger zone</h2>
   {{if and ($p.Can "library.maintenance") (eq $l.State "active")}}
   <div class="dz-item">
-    <div><h3>Put in maintenance</h3><p>Blocks new connections. Backups keep working.</p></div>
+    <div><h3>Put in maintenance</h3><p>The library's users cannot open new connections. Open sessions keep working unless you close them. Backups, restores and delete keep working.</p></div>
     <form method="post" action="/libraries/{{$id}}/maintenance" class="form">{{template "csrf" $csrf}}<input type="hidden" name="on" value="1">
       <label class="check"><input type="checkbox" name="terminate"> Also close open sessions</label>
       <button type="submit" class="warn">Put in maintenance</button></form>
@@ -265,7 +269,7 @@
   <div class="dz-item"><div><h3>Reopen connections</h3><p>The library accepts workstations again.</p></div>
     <form method="post" action="/libraries/{{$id}}/maintenance">{{template "csrf" $csrf}}<input type="hidden" name="on" value="0"><button type="submit">Reopen</button></form></div>
   {{end}}
-  {{if and $l.PrevDB ($p.Can "restore.revert")}}
+  {{if and $l.PrevDB ($p.Can "restore.revert") (or (eq $l.State "active") (eq $l.State "maintenance") (eq $l.State "missing"))}}
   <div class="dz-item"><div><h3>Revert the last restore</h3><p>Goes back to the state before {{dt $l.UpdatedAt}}. Available until {{dt $l.PrevExpiresAt}}.</p></div>
     <a class="button warn" href="/libraries/{{$id}}/revert">Revert</a></div>
   {{end}}

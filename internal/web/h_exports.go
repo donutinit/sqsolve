@@ -3,7 +3,6 @@
 package web
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -118,29 +117,21 @@ func (s *Server) exportDownload(w http.ResponseWriter, r *http.Request, kind, id
 		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
 		return
 	}
+	// The session is closed by now: a slow download holds no snapshot or lock.
 	s.A.Svc.AuditExport(ctx, p.Actor(), l, sess, kind, strings.ToLower(id), info)
 	serveAttachment(w, name, data)
 }
 
 // buildExport produces one download (project, still or album) from an open
-// session; slug prefixes the file names.
+// session; slug prefixes the file names. It closes the session (drp.Download)
+// so the snapshot and its locks on the library's tables are released before
+// the file is sent; the callers' deferred Close is then a no-op.
 func buildExport(ctx context.Context, sess *drp.Session, slug, kind, id string) (name string, data []byte, info *drp.ExportInfo, err error) {
-	var buf bytes.Buffer
-	switch kind {
-	case "project":
-		if info, err = sess.ExportProject(ctx, id, &buf); err == nil {
-			name = slug + "_" + drp.SafeName(info.Name, "project") + ".drp"
-		}
-	case "still":
-		if info, err = sess.ExportStill(ctx, id, &buf); err == nil {
-			name = drp.StillFileName(info.Name, strings.ToLower(id))
-		}
-	default:
-		if info, err = sess.ExportAlbum(ctx, id, &buf); err == nil {
-			name = slug + "_" + drp.SafeName(info.Name, "album") + ".zip"
-		}
+	info, data, err = sess.Download(ctx, kind, id)
+	if err != nil {
+		return "", nil, nil, err
 	}
-	return name, buf.Bytes(), info, err
+	return drp.FileName(kind, slug, id, info), data, info, nil
 }
 
 // Export from a backup (docs 22 §7): the same catalog and downloads, read
@@ -241,6 +232,7 @@ func (s *Server) backupExportDownload(w http.ResponseWriter, r *http.Request, ki
 		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
 		return
 	}
+	// The session is closed by now: a slow download holds no snapshot or lock.
 	s.A.Svc.AuditBackupExport(ctx, p.Actor(), b, sess, kind, strings.ToLower(id), info)
 	serveAttachment(w, name, data)
 }

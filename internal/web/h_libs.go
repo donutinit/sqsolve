@@ -426,7 +426,7 @@ func (s *Server) libraryRevertSubmit(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) libraryRecreate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	j, err := s.A.Svc.Recreate(r.Context(), principalOf(r).Actor(), id, r.FormValue("backup"))
+	j, err := s.A.Svc.Recreate(r.Context(), principalOf(r).Actor(), id, r.FormValue("backup"), strings.TrimSpace(r.FormValue("confirm")))
 	if err != nil {
 		s.fail(w, r, "/libraries/"+id, err)
 		return

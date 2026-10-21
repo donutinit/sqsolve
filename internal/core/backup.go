@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -204,9 +205,37 @@ func (s *Service) Backups(ctx context.Context, f BackupFilter) ([]*Backup, error
 }
 
 // LatestVerified returns the newest usable verified backup of a library.
+// Backups of an auxiliary database of the library (a previous state backed
+// up before it is dropped, `<slug>__prev_*`) hold an older state: they only
+// count when the library has no other verified backup.
 func (s *Service) LatestVerified(ctx context.Context, libraryID string) (*Backup, error) {
-	b, err := scanBackup(s.DB.QueryRowContext(ctx, `SELECT `+backupCols+` FROM backups WHERE library_id = ? AND status = 'ok'
-		AND verify_status IN ('l1_ok', 'l2_ok', 'partial') ORDER BY started_at DESC LIMIT 1`, libraryID))
+	return s.latestVerified(ctx, libraryID, time.Time{})
+}
+
+// auxSource reports whether source, the source_db of a backup, is an
+// auxiliary database of the library whose database is dbName (previous
+// state, trash or restore copy: `<db>__...`; slugs cannot contain "__").
+// Imported backups keep their file name there and are not auxiliary.
+func auxSource(dbName, source string) bool {
+	return dbName != "" && strings.HasPrefix(source, dbName+"__")
+}
+
+// latestVerified is LatestVerified ignoring backups dated after notAfter,
+// when it is set: a backup dated in the future (the clock went back) says
+// nothing about how recent the protection is.
+func (s *Service) latestVerified(ctx context.Context, libraryID string, notAfter time.Time) (*Backup, error) {
+	var dbName string
+	s.DB.QueryRowContext(ctx, `SELECT db_name FROM libraries WHERE id = ?`, libraryID).Scan(&dbName)
+	q := `SELECT ` + backupCols + ` FROM backups WHERE library_id = ? AND status = 'ok' AND verify_status IN ('l1_ok', 'l2_ok', 'partial')`
+	args := []any{libraryID}
+	if !notAfter.IsZero() {
+		q += ` AND started_at <= ?`
+		args = append(args, store.T(notAfter))
+	}
+	// Same test as auxSource: auxiliary databases sort last.
+	q += ` ORDER BY (? <> '' AND substr(source_db, 1, length(?) + 2) = ? || '__'), started_at DESC LIMIT 1`
+	args = append(args, dbName, dbName, dbName)
+	b, err := scanBackup(s.DB.QueryRowContext(ctx, q, args...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -256,6 +285,9 @@ type Manifest struct {
 	InstanceID     string           `json:"instance_id"`
 }
 
+// errManifestUnreadable is a manifest whose content is not valid.
+var errManifestUnreadable = errors.New("SQS-B040 unreadable manifest")
+
 // ReadManifest loads the manifest of a backup.
 func ReadManifest(path string) (*Manifest, error) {
 	b, err := os.ReadFile(path)
@@ -264,13 +296,44 @@ func ReadManifest(path string) (*Manifest, error) {
 	}
 	var m Manifest
 	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("SQS-B040 unreadable manifest: %w", err)
+		return nil, fmt.Errorf("%w: %w", errManifestUnreadable, err)
 	}
 	return &m, nil
 }
 
 // Version of sqsolve, set by main.
 var Version = "dev"
+
+// EventVerifySkipped is emitted when a verification could not run.
+const EventVerifySkipped = "backup.verify_skipped"
+
+// EventImportSourceKept is emitted when an import was asked to delete its
+// source but the file in _import changed or was replaced meanwhile.
+const EventImportSourceKept = "backup.import_source_kept"
+
+// Test hooks let the integration tests act exactly where a crash or a
+// concurrent write would. Production code never sets them.
+var (
+	// hookMarkAndSnapshot runs between reading the activity mark of a
+	// backup and exporting its snapshot.
+	hookMarkAndSnapshot atomic.Pointer[func()]
+	// hookImportStaged runs when an imported file sits as .partial in the
+	// library folder, before it is sealed; an error stops the import there,
+	// as a crash would.
+	hookImportStaged atomic.Pointer[func(partial string) error]
+	// hookExportEnqueued runs right after the job of an export from a
+	// backup is enqueued.
+	hookExportEnqueued atomic.Pointer[func(jobID string)]
+	// hookDBVolumeFree replaces the free space measured on the database
+	// volume by the restore space check.
+	hookDBVolumeFree atomic.Pointer[func() uint64]
+)
+
+// importSettle is how long, in nanoseconds, the size of a file in _import
+// must stay the same before it is imported: a file still being copied grows.
+var importSettle atomic.Int64
+
+func init() { importSettle.Store(int64(3 * time.Second)) }
 
 // BackupParams are the parameters of backup.create.
 type BackupParams struct {
@@ -321,6 +384,10 @@ func ParseArchiveHeader(out string) ArchiveInfo {
 	return a
 }
 
+// errNotCustomArchive is a file pg_restore read without finding the header
+// of a custom-format archive.
+var errNotCustomArchive = errors.New("SQS-B041 the file does not look like a pg_dump backup in custom format")
+
 func (s *Service) listArchive(ctx context.Context, path string) (ArchiveInfo, error) {
 	res, err := s.Exec.Run(ctx, execx.Cmd{Name: "pg_restore", Args: []string{"--list", path}, MaxOutput: 1 << 20})
 	if err != nil {
@@ -328,9 +395,118 @@ func (s *Service) listArchive(ctx context.Context, path string) (ArchiveInfo, er
 	}
 	info := ParseArchiveHeader(res.Stdout)
 	if info.Format == "" {
-		return info, errors.New("SQS-B041 the file does not look like a pg_dump backup in custom format")
+		return info, errNotCustomArchive
 	}
 	return info, nil
+}
+
+// readArchiveFully makes pg_restore read every block of an archive, data
+// included, without restoring it anywhere. --list only reads the index at
+// the start, so a file cut short or damaged further on passes it; this does
+// not.
+func (s *Service) readArchiveFully(ctx context.Context, path string) error {
+	_, err := s.Exec.Run(ctx, execx.Cmd{Name: "pg_restore", Args: []string{"--file=" + os.DevNull, path}})
+	if err == nil {
+		return nil
+	}
+	if toolVerdict(ctx, err) {
+		return fmt.Errorf("SQS-B072 the archive is incomplete or damaged: %w", err)
+	}
+	return fmt.Errorf("SQS-B073 the archive could not be read: %w", err)
+}
+
+// toolVerdict reports whether the failure of an external program is its
+// verdict on the input: it started and exited with an error code while the
+// job was still running. A program that could not start, that was killed by
+// a signal or whose job was cancelled gives no verdict.
+func toolVerdict(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, errNotCustomArchive) {
+		return true
+	}
+	var xe *execx.Error
+	return errors.As(err, &xe) && xe.ExitCode > 0
+}
+
+// serverTrouble are pg_restore failures caused by the server or its volume,
+// not by the archive: they give no verdict on a backup. pg_restore prints
+// server errors without their SQLSTATE (it keeps libpq's default error
+// verbosity), so the messages themselves are matched.
+var serverTrouble = []string{
+	// Space, memory and resource limits. "out of shared memory" is the lock
+	// table: --single-transaction holds a lock on every restored relation.
+	"no space left on device", "could not extend file", "disk full", "out of memory", "out of shared memory",
+	"could not resize shared memory", "temp_file_limit",
+	// The server's own storage.
+	"input/output error", "could not write", "read-only transaction",
+	// Connections and sessions.
+	"could not connect", "connection to server", "server closed the connection", "terminating connection",
+	"the database system is", "too many connections", "remaining connection slots", "canceling statement",
+	"deadlock detected", "lock timeout", "password authentication failed", "permission denied", "must be superuser",
+}
+
+// restoreVerdict reports whether a failed test restore says something about
+// the content of the backup rather than about the server.
+func restoreVerdict(ctx context.Context, err error) bool {
+	if !toolVerdict(ctx, err) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, s := range serverTrouble {
+		if strings.Contains(msg, s) {
+			return false
+		}
+	}
+	return true
+}
+
+// Verification outcomes (docs 11 §5). Only a verdict on the content of a
+// backup marks it failed: a checksum that does not match, a manifest or a
+// file gone from a mounted volume, an archive pg_restore refuses to read, a
+// test restore whose content does not load or does not match the manifest.
+// A verification that could not run (no space, cancelled, the server, the
+// volume or a tool unavailable) leaves the verification status as it was,
+// records why in the detail and emits a warning, never backup.verify_failed.
+
+// verifyFailedError is a verdict: the backup is damaged.
+type verifyFailedError struct{ detail string }
+
+func (e *verifyFailedError) Error() string { return "SQS-B020 verification failed: " + e.detail }
+
+// verifyNotRunError is a verification that reached no verdict.
+type verifyNotRunError struct{ cause error }
+
+func (e *verifyNotRunError) Error() string {
+	return "SQS-B070 the verification could not run: " + e.cause.Error()
+}
+
+func (e *verifyNotRunError) Unwrap() error { return e.cause }
+
+func notRunError(cause error) error {
+	var nr *verifyNotRunError
+	if errors.As(cause, &nr) {
+		return nr
+	}
+	return &verifyNotRunError{cause}
+}
+
+// noteVerifyNotRun records a verification that could not run: the detail on
+// the backup (its status stays) and a warning event. It returns the error
+// the caller reports.
+func (s *Service) noteVerifyNotRun(ctx context.Context, b *Backup, jobID string, cause error) error {
+	err := notRunError(cause).(*verifyNotRunError)
+	c := context.WithoutCancel(ctx)
+	s.DB.ExecContext(c, `UPDATE backups SET verify_detail = ? WHERE id = ?`, "The last verification could not run: "+shortErr(err.cause), b.ID)
+	name := b.LibraryID
+	if l, _ := s.Library(c, b.LibraryID); l != nil {
+		name = l.DisplayName
+	}
+	s.Events.Emit(c, events.Event{Type: EventVerifySkipped, Severity: events.Warning, LibraryID: b.LibraryID, JobID: jobID,
+		Message: fmt.Sprintf("The verification of the backup of %q from %s could not run: %s. Its verification status did not change",
+			name, b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"), shortErr(err.cause))})
+	return err
 }
 
 func fileSHA256(path string) (string, int64, error) {
@@ -376,7 +552,19 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 		os.Remove(partial)
 		os.Remove(abs)
 		os.Remove(manifestPath(abs))
-		s.DB.ExecContext(context.WithoutCancel(ctx), `UPDATE backups SET status = 'failed', finished_at = ?, error = ? WHERE id = ?`, store.NowT(), cause.Error(), b.ID)
+		c := context.WithoutCancel(ctx)
+		if ctx.Err() != nil {
+			// Cut by a cancel or by a graceful stop: interrupted, as the
+			// startup recovery marks a backup cut by a crash, and not a
+			// failure to report (the job says how it ended).
+			why := "The backup was cancelled"
+			if errors.Is(context.Cause(ctx), jobs.ErrStopped) {
+				why = "The process stopped during the backup"
+			}
+			s.DB.ExecContext(c, `UPDATE backups SET status = 'interrupted', finished_at = ?, error = ? WHERE id = ?`, store.NowT(), why, b.ID)
+			return nil, cause
+		}
+		s.DB.ExecContext(c, `UPDATE backups SET status = 'failed', finished_at = ?, error = ? WHERE id = ?`, store.NowT(), cause.Error(), b.ID)
 		s.Events.Emit(ctx, events.Event{Type: events.BackupFailed, Severity: events.Error, LibraryID: l.ID, JobID: b.JobID,
 			Message: fmt.Sprintf("Backup of %q failed: %s", l.DisplayName, shortErr(cause))})
 		return nil, cause
@@ -433,6 +621,15 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 			return err
 		}
 		defer conn.Close(context.Background())
+		// The activity mark is read before the snapshot exists, outside the
+		// transaction: a write that lands in between is then in the dump and
+		// not in the mark, so the activity gate backs up once more. In the
+		// other order it would be counted in the mark and missing from the
+		// dump, and the gate would never back it up (ADR 0022).
+		mark, _ = pg.ActivityMarkFrom(ctx, conn)
+		if f := hookMarkAndSnapshot.Load(); f != nil {
+			(*f)()
+		}
 		tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 		if err != nil {
 			return err
@@ -443,7 +640,6 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 			return err
 		}
 		tx.QueryRow(ctx, `SHOW server_version`).Scan(&serverVersion)
-		mark, _ = pg.ActivityMarkFrom(ctx, tx)
 		if i := strings.IndexByte(serverVersion, ' '); i > 0 {
 			serverVersion = serverVersion[:i]
 		}
@@ -551,7 +747,9 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 	if r != nil {
 		r.Progress(90)
 	}
-	err = step("verify_l1", func() error { return s.verifyL1(ctx, b.ID) })
+	// A new backup whose check cannot finish (the job was cancelled) is
+	// discarded with the job, so the check is not announced on its own.
+	err = step("verify_l1", func() error { return s.checkL1(ctx, b.ID, false) })
 	if err != nil {
 		return fail(err)
 	}
@@ -564,39 +762,109 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 }
 
 // verifyL1 checks the SHA-256 against the manifest and reads the archive TOC.
+// A verdict returns *verifyFailedError and marks the backup failed; when the
+// check cannot run it returns *verifyNotRunError, leaves the status as it
+// was and records why.
 func (s *Service) verifyL1(ctx context.Context, id string) error {
-	b, err := s.Backup(ctx, id)
+	return s.checkL1(ctx, id, true)
+}
+
+// checkL1 is verifyL1; with notice false a check that cannot run is not
+// recorded (the caller does, or discards the backup).
+func (s *Service) checkL1(ctx context.Context, id string, notice bool) error {
+	// A local catalog read: done even when the job was just cancelled, so
+	// the outcome can be recorded on the backup.
+	b, err := s.Backup(context.WithoutCancel(ctx), id)
 	if err != nil {
 		return err
 	}
+	if b.Status != BackupOK {
+		return fmt.Errorf("SQS-B021 the backup is not available (%s)", b.Status)
+	}
 	abs := s.AbsPath(b)
-	res := func(status, detail string) error {
-		s.DB.ExecContext(context.WithoutCancel(ctx), `UPDATE backups SET verify_status = ?, verify_level = CASE WHEN ? = 'failed' THEN verify_level ELSE MAX(verify_level, 1) END,
-			verified_at = ?, verify_detail = ? WHERE id = ?`, status, status, store.NowT(), detail, id)
-		if status == VerifyFailed {
-			return fmt.Errorf("SQS-B020 verification failed: %s", detail)
+	verdict := func(detail string) error {
+		s.DB.ExecContext(context.WithoutCancel(ctx), `UPDATE backups SET verify_status = 'failed', verified_at = ?, verify_detail = ? WHERE id = ?`,
+			store.NowT(), detail, id)
+		return &verifyFailedError{detail}
+	}
+	notRun := func(cause error) error {
+		if notice {
+			return s.noteVerifyNotRun(ctx, b, "", cause)
 		}
-		return nil
+		return notRunError(cause)
+	}
+	if err := ctx.Err(); err != nil {
+		return notRun(err)
+	}
+	// Without the marker the volume may not be mounted: a missing file then
+	// says nothing about the backup.
+	if err := s.BackupVolumeOK(); err != nil {
+		return notRun(err)
 	}
 	m, err := ReadManifest(manifestPath(abs))
-	if err != nil {
-		return res(VerifyFailed, "manifest missing or unreadable")
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return verdict("the manifest is missing")
+	case errors.Is(err, errManifestUnreadable):
+		return verdict("the manifest is unreadable")
+	case err != nil:
+		return notRun(fmt.Errorf("could not read the manifest: %w", err))
 	}
 	sum, size, err := fileSHA256(abs)
-	if err != nil {
-		return res(VerifyFailed, "could not read the file: "+err.Error())
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return verdict("the backup file does not exist")
+	case err != nil:
+		return notRun(fmt.Errorf("could not read the file: %w", err))
 	}
 	if sum != m.SHA256 || sum != b.SHA256 || size != m.Size {
-		return res(VerifyFailed, "the SHA-256 checksum does not match the manifest: the file changed or is damaged")
+		return verdict("the SHA-256 checksum does not match the manifest: the file changed or is damaged")
 	}
 	if _, err := s.listArchive(ctx, abs); err != nil {
-		return res(VerifyFailed, err.Error())
+		if toolVerdict(ctx, err) {
+			return verdict(err.Error())
+		}
+		return notRun(err)
 	}
 	status := VerifyL1OK
 	if b.VerifyStatus == VerifyL2OK {
 		status = VerifyL2OK
 	}
-	return res(status, "Checksum and index OK")
+	s.DB.ExecContext(context.WithoutCancel(ctx), `UPDATE backups SET verify_status = ?, verify_level = MAX(verify_level, 1), verified_at = ?, verify_detail = ? WHERE id = ?`,
+		status, store.NowT(), "Checksum and index OK", id)
+	return nil
+}
+
+// restoreSpaceNeed estimates the room a restored copy of b takes on the
+// database volume: the database size recorded in the manifest plus a fifth
+// (indexes being built, WAL), or four times the archive when the manifest
+// does not say.
+func (s *Service) restoreSpaceNeed(b *Backup) int64 {
+	if m, err := ReadManifest(manifestPath(s.AbsPath(b))); err == nil && m.Server.DatabaseSize > 0 {
+		return m.Server.DatabaseSize / 5 * 6
+	}
+	return b.SizeBytes * 4
+}
+
+// checkRestoreSpace refuses to restore b into the database volume when the
+// copy does not fit: every restore (verification, new library, replace,
+// recreate, export workspace) goes through it before creating a database.
+// Only the restored copy needs free space: a replace keeps the live database
+// by renaming it, so it keeps the space it already takes. When the volume
+// cannot be measured the restore is tried anyway.
+func (s *Service) checkRestoreSpace(b *Backup, purpose string) error {
+	need := s.restoreSpaceNeed(b)
+	sp, err := fsx.Statfs(s.Cfg.PGDir)
+	if err != nil {
+		return nil
+	}
+	if f := hookDBVolumeFree.Load(); f != nil {
+		sp.Free = (*f)()
+	}
+	if need > 0 && uint64(need) > sp.Free {
+		return fmt.Errorf("SQS-B022 not enough space on the database volume for %s: %s needed, %s free", purpose, HumanBytes(need), HumanBytes(int64(sp.Free)))
+	}
+	return nil
 }
 
 // HumanBytes formats a size.
@@ -668,7 +936,8 @@ func (s *Service) SetPinned(ctx context.Context, by audit.Actor, id string, pinn
 }
 
 // DeleteBackup removes one backup by hand. The newest verified backup of a
-// live library cannot be deleted.
+// library that can still be restored or recreated (every state but purged:
+// a missing library needs it to be recreated) cannot be deleted.
 func (s *Service) DeleteBackup(ctx context.Context, by audit.Actor, id string) error {
 	b, err := s.Backup(ctx, id)
 	if err != nil {
@@ -680,7 +949,7 @@ func (s *Service) DeleteBackup(ctx context.Context, by audit.Actor, id string) e
 	if b.Pinned {
 		return errors.New("SQS-B033 unpin the backup before deleting it")
 	}
-	if l, err := s.Library(ctx, b.LibraryID); err == nil && (l.Live() || l.State == StateTrashed) {
+	if l, err := s.Library(ctx, b.LibraryID); err == nil && l.State != StatePurged {
 		if latest, _ := s.LatestVerified(ctx, l.ID); latest != nil && latest.ID == b.ID {
 			return errors.New("SQS-B034 it is the most recent verified backup of the library; it cannot be deleted manually")
 		}

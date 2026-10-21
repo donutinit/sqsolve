@@ -3,7 +3,6 @@
 package api
 
 import (
-	"bytes"
 	"errors"
 	"net/http"
 	"strings"
@@ -131,28 +130,13 @@ func (a *API) exportDownload(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		return
 	}
 	defer s.Close(ctx)
-	var buf bytes.Buffer
-	var info *drp.ExportInfo
-	var err error
-	var name string
-	switch kind {
-	case "project":
-		if info, err = s.ExportProject(ctx, id, &buf); err == nil {
-			name = l.Slug + "_" + drp.SafeName(info.Name, "proyecto") + ".drp"
-		}
-	case "still":
-		if info, err = s.ExportStill(ctx, id, &buf); err == nil {
-			name = drp.StillFileName(info.Name, strings.ToLower(id))
-		}
-	default:
-		if info, err = s.ExportAlbum(ctx, id, &buf); err == nil {
-			name = l.Slug + "_" + drp.SafeName(info.Name, "album") + ".zip"
-		}
-	}
+	// Download closes the session before the body is written (docs 22 §9).
+	info, data, err := s.Download(ctx, kind, id)
 	if err != nil {
 		problem(w, r, core.ExportStatus(err), err)
 		return
 	}
+	name := drp.FileName(kind, l.Slug, id, info)
 	a.A.Svc.AuditExport(ctx, p.Actor(), l, s, kind, strings.ToLower(id), info)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ToLower(id)+`"`)
@@ -162,7 +146,7 @@ func (a *API) exportDownload(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		w.Header().Set("X-Sqsolve-Notes", strings.Join(info.Notes, " | "))
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write(buf.Bytes())
+	w.Write(data)
 }
 
 // Export from a backup (docs 22 §7).
@@ -280,28 +264,13 @@ func (a *API) backupExportDownload(w http.ResponseWriter, r *http.Request, p *au
 	if l, _ := a.A.Svc.Library(ctx, b.LibraryID); l != nil {
 		slug = l.Slug
 	}
-	var buf bytes.Buffer
-	var info *drp.ExportInfo
-	var name string
-	prefix := slug + "_" + b.StartedAt.UTC().Format("20060102T1504")
-	switch kind {
-	case "project":
-		if info, err = s.ExportProject(ctx, id, &buf); err == nil {
-			name = prefix + "_" + drp.SafeName(info.Name, "proyecto") + ".drp"
-		}
-	case "still":
-		if info, err = s.ExportStill(ctx, id, &buf); err == nil {
-			name = drp.StillFileName(info.Name, strings.ToLower(id))
-		}
-	default:
-		if info, err = s.ExportAlbum(ctx, id, &buf); err == nil {
-			name = prefix + "_" + drp.SafeName(info.Name, "album") + ".zip"
-		}
-	}
+	// Download closes the session before the body is written (docs 22 §9).
+	info, data, err := s.Download(ctx, kind, id)
 	if err != nil {
 		problem(w, r, core.ExportStatus(err), err)
 		return
 	}
+	name := drp.FileName(kind, slug+"_"+b.StartedAt.UTC().Format("20060102T1504"), id, info)
 	a.A.Svc.AuditBackupExport(ctx, p.Actor(), b, s, kind, strings.ToLower(id), info)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ToLower(id)+`"`)
@@ -311,5 +280,5 @@ func (a *API) backupExportDownload(w http.ResponseWriter, r *http.Request, p *au
 		w.Header().Set("X-Sqsolve-Notes", strings.Join(info.Notes, " | "))
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write(buf.Bytes())
+	w.Write(data)
 }

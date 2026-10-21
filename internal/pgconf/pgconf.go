@@ -65,6 +65,10 @@ func PostgresConf(p Params) string {
 	w("unix_socket_permissions", "0777")
 	w("max_connections", fmt.Sprint(p.MaxConnections))
 	w("superuser_reserved_connections", "5")
+	// Slots for roles with pg_use_reserved_connections (sqsolve_admin, granted
+	// by pg.Bootstrap), so workstations cannot starve backups. Like
+	// max_connections it takes effect when PostgreSQL restarts.
+	w("reserved_connections", "3")
 	w("password_encryption", "scram-sha-256")
 	if p.SSL {
 		w("ssl", "on")

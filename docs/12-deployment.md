@@ -25,6 +25,9 @@ Three visible paths (ADR 0018):
 
 Plus a volume with an internal name for the PostgreSQL socket, with no data.
 
+Each of the three carries a marker `.sqsolve-volume` at its root with the installation it belongs
+to; `sqsolve-init` refuses or leaves alone a folder it cannot identify (ADR 0023, §5).
+
 Suggestion for ZFS (not mandatory): db with `recordsize=16K` and `compression=lz4`; backups with
 `recordsize=1M`. A reservation on the db dataset prevents a disk filled by something else from
 stopping PostgreSQL.
@@ -45,6 +48,26 @@ change (`smoke` job). Services:
 
 To install, change the three paths, `TZ` and, if needed, the IP where 5432 is published.
 
+Decisions of the reference file that are not obvious:
+
+- **Logs rotate.** Every service uses the `json-file` driver with `max-size: 10m` and
+  `max-file: 5` (the `x-logging` block), so a service never keeps more than about 50 MB of
+  container logs. Without it Docker keeps them forever. The history that matters (jobs, events,
+  audit) lives in sqsolve's own catalog, not in these logs.
+- **`init: true` on `sqsolve`.** A minimal init process runs as PID 1, reaps orphaned child
+  processes (a `pg_dump` or `pg_restore` that outlives the job that started it) and passes the
+  stop signal on to sqsolve. It works with the read-only root file system: Docker mounts the init
+  binary from the host.
+- **No resource limits on purpose.** There is no `mem_limit`: a cap makes the kernel kill
+  PostgreSQL in the middle of a large restore, which is the worst moment; PostgreSQL's memory is
+  sized by `SQSOLVE_PG_MEMORY_MB` instead. There is no `pids_limit` either: PostgreSQL starts one
+  process per connection (up to `SQSOLVE_PG_MAX_CONNECTIONS`, 200 by default) plus background and
+  parallel workers, and `pg_restore` runs parallel jobs, so no single value is safe for every
+  studio. An operator who wants a cap should try it with the largest restore they expect.
+- **The PostgreSQL line is literal and pinned by digest.** It is the operator's copy: a new
+  sqsolve release does not change it (section 8.2). CI keeps it equal to the one in the
+  `Dockerfile` and Dependabot proposes new minor versions weekly.
+
 ## 4. Environment variables
 
 | Variable | Default | Use |
@@ -62,8 +85,12 @@ To install, change the three paths, `TZ` and, if needed, the IP where 5432 is pu
 | `SQSOLVE_PG_PORT` | `5432` | PostgreSQL port |
 | `SQSOLVE_PG_LISTEN` | `*` | PostgreSQL `listen_addresses` |
 | `SQSOLVE_PG_UID`, `SQSOLVE_PG_GID` | `999` | PostgreSQL user in the official image |
-| `SQSOLVE_BACKUPS_ADOPT` | empty | `1` allows marking a backups volume that already has files |
-| `SQSOLVE_FIX_PERMS` | empty | `1` fixes owners recursively in `init` |
+| `SQSOLVE_PG_BIN_DIR` | empty | Folder searched first for `pg_dump`, `pg_restore` and `vacuumdb`; empty uses `/usr/lib/postgresql/*/bin` and `PATH`. Only for installations outside the image |
+| `SQSOLVE_BACKUPS_ADOPT` | empty | `true` lets `init` mark a backups folder without a marker: one that has files, or an empty one on an installation that already has an identity (a new disk). Remove it after that start (ADR 0023) |
+| `SQSOLVE_DB_ADOPT` | empty | `true` lets `init` accept a db volume it would refuse (`SQS-S011`, `SQS-S012`, `SQS-S015`). Remove it after that start |
+| `SQSOLVE_APP_ADOPT` | empty | `true` lets `init` start over an empty app volume while db and backups belong to an installation (`SQS-S013`): new secrets and control plane. Remove it after that start |
+| `SQSOLVE_PG_ACCEPT_SYSTEM_ID` | empty | Accepts a PostgreSQL cluster whose system identifier changed (`SQS-S020`); its value is the new identifier shown by the event, the Health page and `sqsolve doctor`, and it accepts only that cluster |
+| `SQSOLVE_FIX_PERMS` | empty | `true` fixes owners recursively in `init` |
 | `SQSOLVE_INSECURE_HTTP` | empty | Development and tests only (CI): panel over HTTP. In production the panel is always HTTPS (ADR 0021). Encryption of Resolve connections is not configured here: PostgreSQL always offers TLS and the "TLS only" mode is turned on in Settings |
 | `SQSOLVE_PG_MEMORY_MB` | `2048` | Memory assumed for PostgreSQL when computing `shared_buffers` |
 | `SQSOLVE_PG_MAX_CONNECTIONS` | `200` | Written to `postgresql.conf` (requires restarting PostgreSQL) |
@@ -75,22 +102,38 @@ To install, change the three paths, `TZ` and, if needed, the IP where 5432 is pu
 
 ## 5. First start
 
-1. `sqsolve-init` (as root, without network): creates the `backups` marker if it does not exist
-   and the volume is empty (if there is content without a marker, it stops with an error so as
-   not to adopt the wrong folder; if the volume already carries another installation's marker
-   and app is empty, it adopts its identity for a recovery); generates missing secrets with
-   `crypto/rand`; generates `postgresql.conf` and an initial `pg_hba.conf`; generates the
-   PostgreSQL TLS certificate (self-signed, ECDSA P-256, 10 years, owned by root with group 999
-   in mode 0640 as PostgreSQL requires); creates the PostgreSQL data folder owned by 999 with
-   mode 0700, and stops with `SQS-C054` if the volume does not keep that mode (NFSv4-type ACL);
-   adjusts owners and permissions; exits.
+1. `sqsolve-init` (as root, without network): checks the identity of the three volumes and marks
+   them (`.sqsolve-volume`, ADR 0023). On a new installation it marks all three. Once the
+   installation has an identity it never marks an empty, unmarked backups folder (an unmounted
+   disk looks like that): it warns `SQS-S014` and goes on, and `sqsolve` refuses to write
+   backups there; a backups folder with foreign files (`SQS-S004`) or another installation's
+   marker (`SQS-S003`) is also only a warning, so PostgreSQL still starts. It stops with a coded
+   error before PostgreSQL could create an empty cluster or sqsolve new secrets: an empty `db`
+   volume when the catalog already exists (`SQS-S012`), a `db` volume of another installation
+   (`SQS-S011`), an empty `app` volume while `db` and `backups` belong to an installation
+   (`SQS-S013`), or a volume of this installation on the path of another one, when the host paths
+   are swapped (`SQS-S019`; on the backups path it is a warning). If `app` is empty and the
+   backups volume carries a marker, it adopts that identity for a recovery. It generates missing
+   secrets with `crypto/rand`; generates
+   `postgresql.conf` and an initial `pg_hba.conf`; generates the PostgreSQL TLS certificate
+   (self-signed, ECDSA P-256, 10 years; key and certificate written as a pair and generated
+   again if one is missing or they do not match; the key belongs to the PostgreSQL user with
+   mode 0600, the certificate is 0644 in a 0755 folder so sqsolve can show its expiry); creates
+   the PostgreSQL data folder owned by 999 with mode 0700, and stops with `SQS-C054` if the
+   volume does not keep that mode (NFSv4-type ACL); adjusts owners and permissions; exits.
 2. `postgres` initializes the cluster the first time with the superuser password.
-3. `sqsolve` creates or repairs `sqsolve_admin` with the superuser over the socket, prints the
-   **installation code** in its log if there is no administrator yet and opens the wizard.
+3. `sqsolve` creates or repairs `sqsolve_admin` with the superuser over the socket, stores the
+   cluster's system identifier at the first connection (ADR 0023), prints the **installation
+   code** in its log if there is no administrator yet and opens the wizard.
 
 The PostgreSQL certificate lasts 10 years because Resolve does not verify it (PoC-06): its job
-is to encrypt, not to identify. The panel's lasts 2 years and sqsolve renews it by itself; the
-administrator can upload their own.
+is to encrypt, not to identify. sqsolve generates the panel's for 2 years and renews it when
+fewer than 30 days remain, at startup and in the daily certificate check, without a restart.
+The administrator can upload their own; sqsolve never renews an uploaded certificate and warns
+30 days before it expires, at Error severity (sent by the notification channels by default) in
+the last 14 days. At startup, `LoadPanelCert` replaces a panel certificate and key that cannot be
+loaded as a pair (unparseable, or a key that does not match) with a self-generated certificate,
+and keeps the old files next to them as `.replaced-<time>` (`SQS-C083` in the log).
 
 ## 6. Platforms
 
@@ -118,25 +161,33 @@ administrator can upload their own.
 
 1. Change the image tag (or `docker compose pull` if a minor version tag such as `1.1` is used).
 2. `docker compose up -d`.
-3. On startup: SQLite `VACUUM INTO` copy, migrations, reconciliation, event `system.upgraded`
-   with the old and new version.
+3. On startup: SQLite `VACUUM INTO` copy in `app/state-backups/`
+   (`sqsolve-before-<migration>-<time>.db`; one per pending migration, so a migration that fails
+   on every start does not fill the volume, and only the newest 5 are kept), migrations,
+   reconciliation, event `system.upgraded` with the old and new version.
 
-Going back: stop, restore the matching SQLite copy from `state/backups/` and use the previous
-image. SQLite migrations never drop columns in a minor version, so going back to the previous
-minor version works without restoring in most cases; the release notes say so.
+Going back: stop, restore the matching SQLite copy from `app/state-backups/` as `sqsolve.db`,
+move `sqsolve.db-wal` and `sqsolve.db-shm` aside together with the replaced database, and use
+the previous image (`docs/runbooks/upgrade.md`). A version does not start on a catalog with a
+migration it does not know (`SQS-X012`), so going back after a migration always needs that copy;
+the release notes say whether a version migrates.
 
 ### 8.2 PostgreSQL minor version
 
-Each sqsolve version pins the digest of a recent PostgreSQL 18 minor version. Upgrading sqsolve
-updates the reference YAML; the administrator applies the image change. Before restarting
-PostgreSQL, the interface offers "back up everything now".
+Each sqsolve release pins the digest of a recent PostgreSQL 18 minor version in
+`deploy/compose.yaml` and the `Dockerfile` (`make pg-image-check`). An installed compose file
+keeps its own digest, so updating sqsolve does not change PostgreSQL. When the release notes
+announce a new minor version, the administrator replaces the `image:` line of the `postgres`
+service (user guide, "Updating"). PostgreSQL restarts, so run "Back up now" on each library
+first.
 
 ### 8.3 PostgreSQL major version (2.0)
 
 By logical migration to a new cluster (ADR 0017): new `pgdata` volume, temporary container with
 the new version, backup and restore of each library with L2 verification, switching the services
 in the YAML, and the old volume intact until the administrator deletes it. Never `pg_upgrade`
-over the data directory in use.
+over the data directory in use. The new cluster has another system identifier: sqsolve holds
+until `SQSOLVE_PG_ACCEPT_SYSTEM_ID` accepts it (ADR 0023).
 
 ## 9. Installation backup and disaster recovery
 

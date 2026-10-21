@@ -4,6 +4,7 @@ package execx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,7 +12,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -77,12 +77,10 @@ func TestChildDiesWithSqsolve(t *testing.T) {
 		helper.Wait()
 		t.Fatal("the fake pg_dump never started")
 	}
-	// Only processes this test started are signalled.
-	t.Cleanup(func() {
-		if alive(child) {
-			syscall.Kill(child, syscall.SIGKILL)
-		}
-	})
+	// Only processes this test started are signalled: the cleanup checks
+	// the start time recorded now before it signals.
+	start := procStart(child)
+	t.Cleanup(func() { killOwn(child, start) })
 	helper.Process.Kill()
 	helper.Wait()
 	for i := 0; i < 50; i++ {
@@ -92,4 +90,66 @@ func TestChildDiesWithSqsolve(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatal("pg_dump kept running after sqsolve died")
+}
+
+// A child of the program that ignores SIGTERM must not outlive Run: once
+// the leader exits, or after the grace period if the leader ignores SIGTERM
+// too, the whole group gets SIGKILL while the leader is still unreaped.
+func TestCancelKillsTheWholeGroup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads /proc")
+	}
+	member := `/bin/sh -c 'trap "" TERM; echo $$ > "$PIDFILE"; exec sleep 300' &
+wait`
+	for _, tc := range []struct {
+		name, leader string
+		min          time.Duration
+	}{
+		{"leader exits on TERM", `trap 'exit 3' TERM`, 0},
+		{"leader ignores TERM", `trap '' TERM`, time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := fakeBin(t, "vacuumdb", tc.leader+"\n"+member)
+			r.GracePeriod = time.Second
+			pidfile := filepath.Join(t.TempDir(), "member.pid")
+			ctx, cancel := context.WithCancel(context.Background())
+			pid := 0
+			start := ""
+			var cancelled time.Time
+			go func() {
+				for i := 0; i < 100 && pid == 0; i++ {
+					time.Sleep(20 * time.Millisecond)
+					if b, err := os.ReadFile(pidfile); err == nil && strings.HasSuffix(string(b), "\n") {
+						pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+						start = procStart(pid)
+					}
+				}
+				cancelled = time.Now()
+				cancel()
+			}()
+			_, err := r.Run(ctx, Cmd{Name: "vacuumdb", Env: []string{"PIDFILE=" + pidfile}})
+			took := time.Since(cancelled)
+			if pid == 0 {
+				t.Fatal("the group member never started")
+			}
+			// Only processes this test started are signalled: the cleanup
+			// checks the start time recorded when the member was found.
+			if start == "" {
+				t.Fatal("could not read the start time of the group member")
+			}
+			t.Cleanup(func() { killOwn(pid, start) })
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected context.Canceled, got %v", err)
+			}
+			if took < tc.min || took > 5*time.Second {
+				t.Fatalf("Run returned %s after the cancel", took)
+			}
+			for i := 0; i < 20 && alive(pid); i++ {
+				time.Sleep(50 * time.Millisecond)
+			}
+			if alive(pid) {
+				t.Fatal("a member of the group that ignores SIGTERM survived Run")
+			}
+		})
+	}
 }

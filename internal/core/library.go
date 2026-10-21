@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -276,9 +277,9 @@ func (s *Service) SlugAvailable(ctx context.Context, slug string) error {
 	if _, err := s.LibraryBySlug(ctx, slug); err == nil {
 		return fmt.Errorf("SQS-L004 a library with identifier %q already exists", slug)
 	}
-	if db, err := s.PG.Database(ctx, slug); err != nil {
+	if taken, err := s.PG.DatabaseNameTaken(ctx, slug); err != nil {
 		return err
-	} else if db != nil {
+	} else if taken {
 		return fmt.Errorf("SQS-L005 a database %q already exists on the server (you can adopt it from Maintenance)", slug)
 	}
 	if ok, err := s.PG.RoleExists(ctx, slug); err != nil {
@@ -331,11 +332,14 @@ func (s *Service) runLibraryCreate(ctx context.Context, r *jobs.Run) error {
 	if l.State != StateProvisioning {
 		return fmt.Errorf("SQS-L010 the library is not being prepared (%s)", l.State.Label())
 	}
-	createdRole := false
+	createdRole, createdDB := false, false
+	// rollback drops only what this run created.
 	rollback := func(cause error) error {
 		c := context.WithoutCancel(ctx)
-		if createdRole {
+		if createdDB {
 			s.PG.DropDatabase(c, l.DBName)
+		}
+		if createdRole {
 			s.PG.DropRole(c, l.OwnerRole)
 		}
 		s.DB.ExecContext(c, `UPDATE library_credentials SET revoked_at = ? WHERE library_id = ?`, store.NowT(), l.ID)
@@ -380,9 +384,10 @@ func (s *Service) runLibraryCreate(ctx context.Context, r *jobs.Run) error {
 	r.Progress(50)
 	if l.Strategy == StrategyPrecreate {
 		err = r.Step("create_database", func() error {
-			if err := s.PG.CreateDatabase(ctx, l.DBName, l.OwnerRole); err != nil {
+			if err := s.createDatabase(ctx, l.DBName, l.OwnerRole); err != nil {
 				return err
 			}
+			createdDB = true
 			if err := s.PG.SecureDatabase(ctx, l.DBName, []string{l.OwnerRole}); err != nil {
 				return err
 			}
@@ -596,7 +601,7 @@ func (s *Service) UpdateLibrary(ctx context.Context, by audit.Actor, id string, 
 		return errors.New("SQS-L014 notes too long")
 	}
 	if in.ConnLimit != l.ConnLimit && l.Live() {
-		if err := s.PG.SetDatabaseConnLimit(ctx, l.DBName, in.ConnLimit); err != nil {
+		if err := s.applyConnLimit(ctx, l, in.ConnLimit); err != nil {
 			return err
 		}
 	}
@@ -608,7 +613,10 @@ func (s *Service) UpdateLibrary(ctx context.Context, by audit.Actor, id string, 
 	return s.Audit.Record(ctx, by, "library.update", "library", id, audit.OK, map[string]any{"name": name, "resolve_version": rv, "connection_limit": in.ConnLimit})
 }
 
-// SetMaintenance blocks or unblocks connections.
+// SetMaintenance closes or reopens a library to its workstations (ADR 0024):
+// maintenance sets every library role NOLOGIN and keeps the database open, so
+// sqsolve_admin can still back it up, restore it or delete it. Sessions that
+// are already open keep working unless terminate is set (PoC-09).
 func (s *Service) SetMaintenance(ctx context.Context, by audit.Actor, id string, on, terminate bool) (int, error) {
 	l, err := s.Library(ctx, id)
 	if err != nil {
@@ -617,21 +625,126 @@ func (s *Service) SetMaintenance(ctx context.Context, by audit.Actor, id string,
 	if on && l.State != StateActive || !on && l.State != StateMaintenance {
 		return 0, fmt.Errorf("SQS-L015 cannot change maintenance in state %s", l.State.Label())
 	}
-	if err := s.PG.SetAllowConnections(ctx, l.DBName, !on); err != nil {
+	st, typ, msg := StateActive, events.LibraryMaintenanceOff, "Connections reopened for %q"
+	if on {
+		st, typ, msg = StateMaintenance, events.LibraryMaintenanceOn, "%q is in maintenance: it does not accept new connections"
+	}
+	if _, err := s.applyAccess(ctx, l, st); err != nil {
+		// Put back the access of the state the library stays in.
+		s.applyAccess(context.WithoutCancel(ctx), l, l.State)
 		return 0, err
 	}
 	n := 0
 	if on && terminate {
-		n, _ = s.PG.TerminateAll(ctx, l.DBName)
-	}
-	st, typ, msg := StateActive, events.LibraryMaintenanceOff, "Connections reopened for %q"
-	if on {
-		st, typ, msg = StateMaintenance, events.LibraryMaintenanceOn, "%q is in maintenance: it does not accept new connections"
+		n = s.terminateRoleSessions(ctx, l)
 	}
 	s.setState(ctx, id, st)
 	s.Audit.Record(ctx, by, "library.maintenance", "library", id, audit.OK, map[string]any{"on": on, "terminated": n})
 	s.Events.Emit(ctx, events.Event{Type: typ, LibraryID: id, Message: fmt.Sprintf(msg, l.DisplayName)})
 	return n, nil
+}
+
+// applyAccess makes PostgreSQL grant what state st promises (ADR 0024), so it
+// is also the compensation of any step that locked a library. It is
+// idempotent and applies every part even if one fails:
+//
+//   - maintenance: the roles with an active credential cannot log in; the
+//     database accepts connections (sqsolve_admin works on it).
+//   - active: those roles log in and the database accepts connections.
+//   - awaiting_init, init_expired, missing: those roles log in (the owner keeps
+//     CREATEDB while the initialization window is open).
+//
+// For a live database it also repeats the grants and the per-database role of
+// the members, which stay behind when another database takes the name. Revoked
+// credentials never get LOGIN back. It returns the roles whose login changed.
+func (s *Service) applyAccess(ctx context.Context, l *Library, st State) ([]string, error) {
+	switch st {
+	case StateActive, StateMaintenance, StateAwaitingInit, StateInitExpired, StateMissing:
+	default:
+		return nil, nil
+	}
+	creds, err := s.Credentials(ctx, l.ID)
+	if err != nil {
+		return nil, err
+	}
+	var roles, members []string
+	for _, c := range creds {
+		if c.RevokedAt != nil {
+			continue
+		}
+		roles = append(roles, c.PGRole)
+		if c.Kind == "member" {
+			members = append(members, c.PGRole)
+		}
+	}
+	changed, loginErr := s.PG.SetRolesLogin(ctx, roles, st != StateMaintenance)
+	errs := []error{loginErr}
+	switch st {
+	case StateActive, StateMaintenance:
+		errs = append(errs, s.PG.SecureDatabase(ctx, l.DBName, roles))
+		for _, m := range members {
+			errs = append(errs, s.PG.SetRoleDefaultRole(ctx, m, l.DBName, l.OwnerRole))
+		}
+		// In maintenance the database is opened only once every role is
+		// NOLOGIN: a role that kept LOGIN must not find it open.
+		if st == StateMaintenance && loginErr != nil {
+			kept := fmt.Errorf("SQS-L054 not every library role of %s could be set NOLOGIN, so the connections of its database were left as they were", l.Slug)
+			return changed, errors.Join(append([]error{kept}, errs...)...)
+		}
+		errs = append(errs, s.PG.SetAllowConnections(ctx, l.DBName, true))
+	case StateAwaitingInit:
+		errs = append(errs, s.PG.SetRoleCreateDB(ctx, l.OwnerRole, true))
+	}
+	return changed, errors.Join(errs...)
+}
+
+// terminateRoleSessions ends the sessions of the library roles on its
+// database. Sessions of sqsolve itself (a backup running in maintenance) are
+// kept.
+func (s *Service) terminateRoleSessions(ctx context.Context, l *Library) int {
+	roles, err := s.activeRoles(ctx, l.ID)
+	if err != nil {
+		return 0
+	}
+	ss, err := s.PG.Sessions(ctx, l.DBName)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, x := range ss {
+		if !slices.Contains(roles, x.User) {
+			continue
+		}
+		if ok, _ := s.PG.TerminateSession(ctx, l.DBName, x.PID, roles); ok {
+			n++
+		}
+	}
+	return n
+}
+
+// closeSessions ends every session on db before it is renamed. sqsolve_admin
+// cannot end a superuser's session (42501): that is reported and not fatal,
+// and the rename that follows fails cleanly if the session is still there.
+func (s *Service) closeSessions(ctx context.Context, r *jobs.Run, db string) error {
+	n, err := s.PG.TerminateAll(ctx, db)
+	if n > 0 {
+		r.Warnf("Terminated %d sessions", n)
+	}
+	if pg.IsCode(err, "42501") {
+		r.Warnf("Some sessions could not be closed because they belong to a superuser: %v", err)
+		return nil
+	}
+	return err
+}
+
+// renameDB renames a database. A session still connected to it (one sqsolve
+// cannot close) gives a clear error instead of PostgreSQL's.
+func (s *Service) renameDB(ctx context.Context, from, to string) error {
+	err := s.PG.RenameDatabase(ctx, from, to)
+	if pg.IsCode(err, "55006") {
+		return fmt.Errorf("SQS-L052 the database %s still has sessions sqsolve cannot close (for example a superuser session); close them and try again: %w", from, err)
+	}
+	return err
 }
 
 // Sessions lists sessions of a library.
@@ -747,10 +860,10 @@ func (p Policy) Validate() error {
 		switch p.CheckMinutes {
 		case 5, 10, 15, 30, 60:
 		default:
-			return errors.New("SQS-B033 activity-based mode checks every 5, 10, 15, 30 or 60 minutes")
+			return errors.New("SQS-B090 activity-based mode checks every 5, 10, 15, 30 or 60 minutes")
 		}
 	default:
-		return errors.New("SQS-B034 unknown schedule mode")
+		return errors.New("SQS-B091 unknown schedule mode")
 	}
 	if _, err := validateCron(p.EffectiveCron(), p.Timezone); err != nil {
 		return err

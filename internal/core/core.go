@@ -44,6 +44,7 @@ type Service struct {
 
 	activity activityCache
 	hbaMu    sync.Mutex
+	hbaLive  string // pg_hba.conf this process last got PostgreSQL to load; guarded by hbaMu
 	stableMu sync.Mutex
 	stable   map[string]int
 	warned   map[string]bool
@@ -86,6 +87,10 @@ func DefaultSettings(tz string) Settings {
 
 const settingsKey = "runtime"
 
+// MaxRetentionDays caps the trash and previous-state periods: ten years, far
+// below what overflows a time.Duration.
+const MaxRetentionDays = 3650
+
 // Settings returns the runtime settings with defaults filled in.
 func (s *Service) Settings(ctx context.Context) Settings {
 	def := DefaultSettings(s.Cfg.Location.String())
@@ -109,6 +114,10 @@ func (s *Service) Settings(ctx context.Context) Settings {
 	if cur.PrevDays <= 0 {
 		cur.PrevDays = def.PrevDays
 	}
+	// Values stored before SaveSettings capped them must not overflow the
+	// durations computed from them.
+	cur.TrashDays = min(cur.TrashDays, MaxRetentionDays)
+	cur.PrevDays = min(cur.PrevDays, MaxRetentionDays)
 	if cur.StaleHours <= 0 {
 		cur.StaleHours = def.StaleHours
 	}
@@ -133,8 +142,8 @@ func (s *Service) SaveSettings(ctx context.Context, by audit.Actor, st Settings)
 	if st.InitWindowMinutes < 5 || st.InitWindowMinutes > 24*60 {
 		return errors.New("SQS-C031 the initialization window must be between 5 and 1440 minutes")
 	}
-	if st.TrashDays < 1 || st.PrevDays < 1 {
-		return errors.New("SQS-C032 retention periods must be at least one day")
+	if st.TrashDays < 1 || st.PrevDays < 1 || st.TrashDays > MaxRetentionDays || st.PrevDays > MaxRetentionDays {
+		return fmt.Errorf("SQS-C032 retention periods must be between 1 and %d days", MaxRetentionDays)
 	}
 	old := s.Settings(ctx)
 	if err := s.DB.SetSetting(ctx, settingsKey, st, by.Name); err != nil {
@@ -151,7 +160,10 @@ func (s *Service) SaveSettings(ctx context.Context, by audit.Actor, st Settings)
 }
 
 // SyncHBA regenerates pg_hba.conf from the catalog, validates it and reloads
-// PostgreSQL. A failed validation restores the previous file.
+// PostgreSQL. A failed validation restores the previous file. The file is
+// only taken as applied once a reload in this process succeeded, so after a
+// failed validation query or reload (or a restart) the next sync validates
+// and reloads again even if the file on disk did not change (docs 08 §7).
 func (s *Service) SyncHBA(ctx context.Context) error {
 	s.hbaMu.Lock()
 	defer s.hbaMu.Unlock()
@@ -195,9 +207,11 @@ func (s *Service) SyncHBA(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("SQS-P041 could not write pg_hba.conf: %w", err)
 	}
-	if !changed {
+	if !changed && s.hbaLive == content {
 		return nil
 	}
+	// Until a reload succeeds nobody knows which rules are in force.
+	s.hbaLive = ""
 	if errs, err := s.PG.HBAErrors(ctx); err == nil && len(errs) > 0 {
 		pgconf.RestorePreviousHBA(s.Cfg.PGConfDir())
 		return fmt.Errorf("SQS-P042 generated pg_hba.conf is not valid: %s", strings.Join(errs, "; "))
@@ -207,6 +221,7 @@ func (s *Service) SyncHBA(ctx context.Context) error {
 	if err := s.PG.ReloadConf(ctx); err != nil {
 		return fmt.Errorf("SQS-P043 could not reload PostgreSQL: %w", err)
 	}
+	s.hbaLive = content
 	return nil
 }
 

@@ -52,30 +52,34 @@ const (
 	ScheduleVerify = "verify"
 )
 
-// Register adds every job type and schedule kind.
+// Register adds every job type and schedule kind. Retryable marks the
+// idempotent, non-destructive types (docs 11 §11); Action is the permission
+// (an action of internal/auth) that starts the operation, also needed to
+// cancel or retry its job. System jobs are for administrators.
 func (s *Service) Register() {
 	j := s.Jobs
-	j.Register(jobs.Spec{Type: JobLibraryCreate, Title: "Create library", Priority: 90, Lock: jobs.LockWrite, Run: s.runLibraryCreate})
-	j.Register(jobs.Spec{Type: JobLibraryDelete, Title: "Move to trash", Priority: 90, Lock: jobs.LockWrite, Heavy: true, Run: s.runTrash})
-	j.Register(jobs.Spec{Type: JobLibraryUntrash, Title: "Restore from trash", Priority: 90, Lock: jobs.LockWrite, Run: s.runUntrash})
-	j.Register(jobs.Spec{Type: JobLibraryPurge, Title: "Purge library", Priority: 40, Lock: jobs.LockWrite, Run: s.runPurge})
-	j.Register(jobs.Spec{Type: JobBackupCreate, Title: "Back up", Priority: 50, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runBackupCreate})
-	j.Register(jobs.Spec{Type: JobBackupVerify, Title: "Verify backup", Priority: 30, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runVerify})
-	j.Register(jobs.Spec{Type: JobBackupExport, Title: "Prepare export from backup", Priority: 40, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runBackupExport})
-	j.Register(jobs.Spec{Type: JobBackupImport, Title: "Import backup", Priority: 60, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Run: s.runImport})
-	j.Register(jobs.Spec{Type: JobRestoreNew, Title: "Restore as a new library", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Cancellable: true, Run: s.runRestoreNew})
-	j.Register(jobs.Spec{Type: JobRestoreReplace, Title: "Restore by replacing", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRestoreReplace})
-	j.Register(jobs.Spec{Type: JobRestoreRevert, Title: "Revert restore", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRevert})
-	j.Register(jobs.Spec{Type: JobRestoreRecreate, Title: "Recreate from backup", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Run: s.runRecreate})
-	j.Register(jobs.Spec{Type: JobRetention, Title: "Apply retention", Priority: 20, Run: s.runRetentionAll})
-	j.Register(jobs.Spec{Type: JobVerifyAll, Title: "Verify latest backups", Priority: 30, Run: s.runVerifyAll})
-	j.Register(jobs.Spec{Type: JobVacuum, Title: "Optimize libraries", Priority: 10, Heavy: true, Cancellable: true, Run: s.runVacuum})
-	j.Register(jobs.Spec{Type: JobControlBackup, Title: "Back up the control plane", Priority: 20, Run: s.runControlBackup})
-	j.Register(jobs.Spec{Type: JobCatalogCheck, Title: "Check catalog", Priority: 10, Run: s.runCatalogCheck})
-	j.Register(jobs.Spec{Type: JobCatalogRebuild, Title: "Rebuild catalog", Priority: 60, Run: s.runCatalogRebuild})
-	j.Register(jobs.Spec{Type: JobPurgeExpired, Title: "Purge expired", Priority: 10, Run: func(ctx context.Context, r *jobs.Run) error { return s.PurgeExpired(ctx, r) }})
-	j.Register(jobs.Spec{Type: JobHousekeeping, Title: "Housekeeping", Priority: 5, Run: s.runHousekeeping})
-	j.Register(jobs.Spec{Type: JobUpgradeWindow, Title: "Resolve upgrade window", Priority: 95, Run: s.runUpgradeWindow})
+	const admin = "settings.edit"
+	j.Register(jobs.Spec{Type: JobLibraryCreate, Title: "Create library", Priority: 90, Lock: jobs.LockWrite, Action: "library.create", Run: s.runLibraryCreate})
+	j.Register(jobs.Spec{Type: JobLibraryDelete, Title: "Move to trash", Priority: 90, Lock: jobs.LockWrite, Heavy: true, Action: "library.delete", Run: s.runTrash})
+	j.Register(jobs.Spec{Type: JobLibraryUntrash, Title: "Restore from trash", Priority: 90, Lock: jobs.LockWrite, Action: "library.delete", Run: s.runUntrash})
+	j.Register(jobs.Spec{Type: JobLibraryPurge, Title: "Purge library", Priority: 40, Lock: jobs.LockWrite, Action: "library.delete", Run: s.runPurge})
+	j.Register(jobs.Spec{Type: JobBackupCreate, Title: "Back up", Priority: 50, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Retryable: true, Action: "backup.create", Run: s.runBackupCreate})
+	j.Register(jobs.Spec{Type: JobBackupVerify, Title: "Verify backup", Priority: 30, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Retryable: true, Action: "backup.verify", Run: s.runVerify})
+	j.Register(jobs.Spec{Type: JobBackupExport, Title: "Prepare export from backup", Priority: 40, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Retryable: true, Action: "library.export", Run: s.runBackupExport})
+	j.Register(jobs.Spec{Type: JobBackupImport, Title: "Import backup", Priority: 60, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Retryable: true, Action: "backup.import", Run: s.runImport})
+	j.Register(jobs.Spec{Type: JobRestoreNew, Title: "Restore as a new library", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Cancellable: true, Action: "restore.new", Run: s.runRestoreNew})
+	j.Register(jobs.Spec{Type: JobRestoreReplace, Title: "Restore by replacing", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Action: "restore.replace", Run: s.runRestoreReplace})
+	j.Register(jobs.Spec{Type: JobRestoreRevert, Title: "Revert restore", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Action: "restore.revert", Run: s.runRevert})
+	j.Register(jobs.Spec{Type: JobRestoreRecreate, Title: "Recreate from backup", Priority: 100, Lock: jobs.LockWrite, Heavy: true, Action: "restore.replace", Run: s.runRecreate})
+	j.Register(jobs.Spec{Type: JobRetention, Title: "Apply retention", Priority: 20, Retryable: true, Action: admin, Run: s.runRetentionAll})
+	j.Register(jobs.Spec{Type: JobVerifyAll, Title: "Verify latest backups", Priority: 30, Retryable: true, Action: admin, Run: s.runVerifyAll})
+	j.Register(jobs.Spec{Type: JobVacuum, Title: "Optimize libraries", Priority: 10, Heavy: true, Cancellable: true, Retryable: true, Action: admin, Run: s.runVacuum})
+	j.Register(jobs.Spec{Type: JobControlBackup, Title: "Back up the control plane", Priority: 20, Retryable: true, Action: admin, Run: s.runControlBackup})
+	j.Register(jobs.Spec{Type: JobCatalogCheck, Title: "Check catalog", Priority: 10, Retryable: true, Action: admin, Run: s.runCatalogCheck})
+	j.Register(jobs.Spec{Type: JobCatalogRebuild, Title: "Rebuild catalog", Priority: 60, Retryable: true, Action: admin, Run: s.runCatalogRebuild})
+	j.Register(jobs.Spec{Type: JobPurgeExpired, Title: "Purge expired", Priority: 10, Retryable: true, Action: admin, Run: func(ctx context.Context, r *jobs.Run) error { return s.PurgeExpired(ctx, r) }})
+	j.Register(jobs.Spec{Type: JobHousekeeping, Title: "Housekeeping", Priority: 5, Retryable: true, Action: admin, Run: s.runHousekeeping})
+	j.Register(jobs.Spec{Type: JobUpgradeWindow, Title: "Resolve upgrade window", Priority: 95, Action: admin, Run: s.runUpgradeWindow})
 
 	sc := s.Sched
 	sc.RegisterKind(ScheduleBackup, scheduler.Kind{JobType: JobBackupCreate, Jitter: true, Title: "backup", Gate: s.BackupGate})
@@ -91,8 +95,8 @@ var systemSchedules = map[string]struct{ job, cron, title string }{
 	"system.vacuum":         {JobVacuum, "0 3 * * 0", "optimization"},
 	"system.control_backup": {JobControlBackup, "15 4 * * *", "control plane backup"},
 	"system.catalog_check":  {JobCatalogCheck, "30 4 * * *", "catalog check"},
-	"system.purge":          {JobPurgeExpired, "20 4 * * *", "purga"},
-	"system.housekeeping":   {JobHousekeeping, "45 4 * * *", "limpieza"},
+	"system.purge":          {JobPurgeExpired, "20 4 * * *", "purge of expired items"},
+	"system.housekeeping":   {JobHousekeeping, "45 4 * * *", "housekeeping"},
 }
 
 // EnsureSystemSchedules creates the default system schedules once.
@@ -181,11 +185,8 @@ func (s *Service) runControlBackup(ctx context.Context, r *jobs.Run) error {
 	if err := s.DB.BackupTo(ctx, dst); err != nil {
 		return err
 	}
-	// Current month of the audit log, rewritten atomically.
-	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	var buf strings.Builder
-	if _, err := s.Audit.Export(ctx, &buf, start, start.AddDate(0, 1, 0)); err == nil {
-		fsx.WriteFileAtomic(filepath.Join(dir, "audit-"+now.Format("200601")+".jsonl"), []byte(buf.String()), 0o600)
+	if err := s.exportAuditMonths(ctx, dir, now); err != nil {
+		r.Warnf("Audit log export: %v", err)
 	}
 	// Keep the newest 30 copies.
 	matches, _ := filepath.Glob(filepath.Join(dir, "sqsolve-state-*.db"))
@@ -194,6 +195,29 @@ func (s *Service) runControlBackup(ctx context.Context, r *jobs.Run) error {
 		os.Remove(matches[i])
 	}
 	r.Infof("Control plane copy at %s", filepath.Base(dst))
+	return nil
+}
+
+// exportAuditMonths rewrites the audit log export of the current month in
+// dir, atomically. On the first three days of a month it also rewrites the
+// previous one, so the entries written after its last daily copy are not
+// lost.
+func (s *Service) exportAuditMonths(ctx context.Context, dir string, now time.Time) error {
+	now = now.UTC()
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	months := []time.Time{start}
+	if now.Day() <= 3 {
+		months = append([]time.Time{start.AddDate(0, -1, 0)}, months...)
+	}
+	for _, m := range months {
+		var buf strings.Builder
+		if _, err := s.Audit.Export(ctx, &buf, m, m.AddDate(0, 1, 0)); err != nil {
+			return err
+		}
+		if err := fsx.WriteFileAtomic(filepath.Join(dir, "audit-"+m.Format("200601")+".jsonl"), []byte(buf.String()), 0o600); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -305,6 +329,11 @@ func (s *Service) runHousekeeping(ctx context.Context, r *jobs.Run) error {
 	if n := s.PurgeExportWorkspaces(ctx); n > 0 {
 		r.Infof("Closed %d expired exports from backups", n)
 	}
+	if n, err := s.pruneDeletedBackups(ctx); err != nil {
+		r.Warnf("Pruning deleted backups from the catalog: %v", err)
+	} else if n > 0 {
+		r.Infof("Removed %d catalog rows of backups deleted more than a year ago", n)
+	}
 	if broken, n, err := s.Audit.Verify(ctx); err == nil {
 		if broken != 0 {
 			s.Events.Emit(ctx, events.Event{Type: events.AuditChainBroken, Severity: events.Critical,
@@ -319,26 +348,60 @@ func (s *Service) runHousekeeping(ctx context.Context, r *jobs.Run) error {
 	return s.CheckStale(ctx)
 }
 
-// CheckStale warns about live libraries without a recent verified backup.
+// deletedBackupRetention is how long the catalog keeps the rows of deleted
+// backups (their files are already gone).
+const deletedBackupRetention = 365 * 24 * time.Hour
+
+func (s *Service) pruneDeletedBackups(ctx context.Context) (int64, error) {
+	return s.DB.PruneDeletedBackups(ctx, s.now().Add(-deletedBackupRetention))
+}
+
+// clockTolerance is how far in the future a timestamp may be before it is
+// treated as the mark of a clock that went back.
+const clockTolerance = 5 * time.Minute
+
+// Staleness decides whether l lacks a recent verified backup at now, the
+// rule of backup.stale and of the health endpoint (docs 13 §3). It returns
+// the newest verified backup dated up to now (5 minutes of tolerance): one
+// dated in the future (the clock went back) proves nothing about its real
+// age. A library younger than limit, or unchanged since its newest verified
+// backup (ADR 0022), is not stale.
+func (s *Service) Staleness(ctx context.Context, l *Library, now time.Time, limit time.Duration) (latest *Backup, stale bool, err error) {
+	latest, err = s.latestVerified(ctx, l.ID, now.Add(clockTolerance))
+	if err != nil {
+		return nil, false, err
+	}
+	switch {
+	case now.Sub(l.CreatedAt) < limit:
+	case latest != nil && now.Sub(latest.StartedAt) <= limit:
+	case s.UnchangedSince(ctx, l) != nil:
+		// Old but still current: nothing changed since it was taken.
+	default:
+		stale = true
+	}
+	return latest, stale, nil
+}
+
+// CheckStale warns about live libraries without a recent verified backup
+// (Staleness).
 func (s *Service) CheckStale(ctx context.Context) error {
 	hours := s.Settings(ctx).StaleHours
+	limit := time.Duration(hours) * time.Hour
 	libs, err := s.Libraries(ctx, ListOptions{States: []State{StateActive, StateMaintenance}})
 	if err != nil {
 		return err
 	}
 	for _, l := range libs {
-		if s.now().Sub(l.CreatedAt) < time.Duration(hours)*time.Hour {
+		now := s.now()
+		if _, stale, err := s.Staleness(ctx, l, now, limit); err != nil || !stale {
 			continue
 		}
-		b, _ := s.LatestVerified(ctx, l.ID)
-		if b != nil && s.now().Sub(b.StartedAt) > time.Duration(hours)*time.Hour && s.UnchangedSince(ctx, l) != nil {
-			// Old but still current: nothing changed since it was taken.
-			continue
+		msg := fmt.Sprintf("%q has no verified backup in the last %d hours", l.DisplayName, hours)
+		if latest, _ := s.LatestVerified(ctx, l.ID); latest != nil && latest.StartedAt.After(now.Add(clockTolerance)) {
+			msg += fmt.Sprintf("; its newest verified backup is dated %s, in the future: check the server clock",
+				latest.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"))
 		}
-		if b == nil || s.now().Sub(b.StartedAt) > time.Duration(hours)*time.Hour {
-			s.Events.Emit(ctx, events.Event{Type: events.BackupStale, Severity: events.Warning, LibraryID: l.ID,
-				Message: fmt.Sprintf("%q has no verified backup in the last %d hours", l.DisplayName, hours)})
-		}
+		s.Events.Emit(ctx, events.Event{Type: events.BackupStale, Severity: events.Warning, LibraryID: l.ID, Message: msg})
 	}
 	return nil
 }

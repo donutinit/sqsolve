@@ -108,14 +108,23 @@ func (s *Service) PrepareBackupExport(ctx context.Context, by audit.Actor, backu
 	}
 	w := &ExportWorkspace{ID: ulid.New(), BackupID: b.ID, State: WorkspacePreparing, CreatedAt: s.now(), ExpiresAt: s.now().Add(ExportWorkspaceTTL)}
 	w.DBName = pg.ExportDB(ulid.Short(w.ID))
-	j, err := s.Jobs.Enqueue(ctx, JobBackupExport, b.LibraryID, ExportWorkspaceParams{WorkspaceID: w.ID}, by, jobs.Priority(50))
+	// The row exists before the job: a dispatcher that starts the job at
+	// once must find its workspace.
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO export_workspaces(`+workspaceCols+`) VALUES (?, ?, ?, '', ?, '', ?, ?)`,
+		w.ID, w.BackupID, w.DBName, w.State, store.T(w.CreatedAt), store.T(w.ExpiresAt))
 	if err != nil {
 		return nil, nil, err
 	}
-	w.JobID = j.ID
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO export_workspaces(`+workspaceCols+`) VALUES (?, ?, ?, ?, ?, '', ?, ?)`,
-		w.ID, w.BackupID, w.DBName, w.JobID, w.State, store.T(w.CreatedAt), store.T(w.ExpiresAt))
+	j, err := s.Jobs.Enqueue(ctx, JobBackupExport, b.LibraryID, ExportWorkspaceParams{WorkspaceID: w.ID}, by, jobs.Priority(50))
 	if err != nil {
+		s.DB.ExecContext(context.WithoutCancel(ctx), `DELETE FROM export_workspaces WHERE id = ?`, w.ID)
+		return nil, nil, err
+	}
+	if f := hookExportEnqueued.Load(); f != nil {
+		(*f)(j.ID)
+	}
+	w.JobID = j.ID
+	if _, err := s.DB.ExecContext(ctx, `UPDATE export_workspaces SET job_id = ? WHERE id = ?`, w.JobID, w.ID); err != nil {
 		return nil, nil, err
 	}
 	s.Audit.Record(ctx, by, "backup.export_prepare", "backup", b.ID, audit.OK, map[string]any{"workspace": w.ID})
@@ -140,6 +149,9 @@ func (s *Service) runBackupExport(ctx context.Context, r *jobs.Run) error {
 	}
 	if b.Status != BackupOK {
 		return fail(fmt.Errorf("SQS-B021 the backup is not available (%s)", b.Status))
+	}
+	if err := r.Step("space", func() error { return s.checkRestoreSpace(b, "the export workspace") }); err != nil {
+		return fail(err)
 	}
 	if err := r.Step("verify_l1", func() error { return s.verifyL1(ctx, b.ID) }); err != nil {
 		return fail(err)

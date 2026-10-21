@@ -28,8 +28,10 @@ and configurations that expose the ports to the Internet against the documentati
 
 ## What sqsolve does on its own
 
-- Passwords with Argon2id; attempt limits per IP and per account; lock after ten consecutive
-  wrong passwords that only `sqsolve admin unlock` from the console lifts.
+- Passwords with Argon2id (at most 4 checked at once); attempt limits per IP and per account;
+  after ten consecutive wrong passwords a 15-minute lock that refuses password logins only (open
+  sessions and API tokens keep working), lifted sooner with `sqsolve admin unlock` from the
+  console (ADR 0025).
 - Optional TOTP; API tokens with scopes; CSRF; strict headers (CSP without external resources).
 - Panel always over HTTPS. PostgreSQL offers TLS to Resolve; "TLS only" mode requires it.
 - Library passwords encrypted with the master key; secrets never in logs.

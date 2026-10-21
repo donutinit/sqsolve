@@ -1,30 +1,45 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Publishes the release on GitHub with the reference compose and the CHANGELOG notes (docs 17 §6).
+# It is not started by the tag: image.yml calls it after the image it pins has been pushed and
+# signed, so a public release never points to an image that does not exist.
 name: release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_call:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   publish:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Release notes from CHANGELOG.md
         id: notes
         run: |
           v="${GITHUB_REF_NAME#v}"
+          if ! printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "The tag $GITHUB_REF_NAME is not vX.Y.Z"; exit 1
+          fi
           awk -v v="$v" '
             $0 ~ "^## \\[" v "\\]" { on = 1; next }
             on && /^## \[/ { exit }
             on { print }
           ' CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then echo "No notes in CHANGELOG.md for $v" > notes.md; fi
-          cp deploy/compose.yaml "sqsolve-$v-compose.yaml"
+          # The asset pins the image of its own release (X.Y.Z), not the moving X.Y tag of the
+          # reference file in the repository, so a file downloaded later installs this version.
+          sed -E "s#\"ghcr\.io/donutinit/sqsolve:[0-9][0-9.]*\"#\"ghcr.io/donutinit/sqsolve:$v\"#" \
+            deploy/compose.yaml > "sqsolve-$v-compose.yaml"
+          if [ "$(grep -c "\"ghcr.io/donutinit/sqsolve:$v\"" "sqsolve-$v-compose.yaml")" != 1 ]; then
+            echo "The compose asset does not pin ghcr.io/donutinit/sqsolve:$v exactly once"; exit 1
+          fi
+          if grep -Eq 'ghcr\.io/donutinit/sqsolve:[0-9]+\.[0-9]+"' "sqsolve-$v-compose.yaml"; then
+            echo "The compose asset still has a moving X.Y tag"; exit 1
+          fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:

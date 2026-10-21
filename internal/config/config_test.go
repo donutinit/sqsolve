@@ -51,3 +51,35 @@ func TestProxies(t *testing.T) {
 		t.Fatalf("%v", c.TrustedProxies)
 	}
 }
+
+// SQSOLVE_BACKUPS_ADOPT used to accept only "1"; every adopt variable is a
+// boolean like the others (audit finding, task 4 item 15).
+func TestAdoptVariablesAreBooleans(t *testing.T) {
+	for _, v := range []string{"1", "true", "TRUE", "yes", "on"} {
+		c, err := load(env(map[string]string{"SQSOLVE_BACKUPS_ADOPT": v, "SQSOLVE_DB_ADOPT": v, "SQSOLVE_APP_ADOPT": v}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !c.BackupsAdopt || !c.DBAdopt || !c.AppAdopt {
+			t.Errorf("%q not read as true: %+v", v, c)
+		}
+	}
+	c, err := load(env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BackupsAdopt || c.DBAdopt || c.AppAdopt || c.PGAcceptSystemID != "" {
+		t.Fatalf("adopt variables must default to off: %+v", c)
+	}
+}
+
+func TestAcceptSystemIDMustBeANumber(t *testing.T) {
+	c, err := load(env(map[string]string{"SQSOLVE_PG_ACCEPT_SYSTEM_ID": " 7429863312345678901 "}))
+	if err != nil || c.PGAcceptSystemID != "7429863312345678901" {
+		t.Fatalf("%v %q", err, c.PGAcceptSystemID)
+	}
+	_, err = load(env(map[string]string{"SQSOLVE_PG_ACCEPT_SYSTEM_ID": "yes"}))
+	if err == nil || !strings.Contains(err.Error(), "SQS-C001 SQSOLVE_PG_ACCEPT_SYSTEM_ID") {
+		t.Fatalf("want SQS-C001 for a non numeric identifier, got %v", err)
+	}
+}

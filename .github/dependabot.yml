@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Weekly pull requests for what the project pins by hand: the base images (including the
+# PostgreSQL minor version that reaches every installation) and the GitHub Actions (pinned by
+# commit SHA). Docs 17 section 7.
+#
+# Every update waits 7 days after publication (the project's 7-day rule). Go modules are not
+# listed: they are updated by hand once a month and every new one needs an ADR (docs 06 section 9).
+#
+# PostgreSQL appears in two files that must carry the same tag and digest: Dockerfile and
+# deploy/compose.yaml. Dependabot opens one pull request per file, so apply the same change to
+# the other file in the same pull request; CI fails (make pg-image-check) until both match.
+version: 2
+
+updates:
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      # A new PostgreSQL major version is a migration (ADR 0017), never an automatic bump.
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      # Our own image (ghcr.io/donutinit/sqsolve) follows our releases, not Dependabot. The
+      # name is written without the registry, as Dependabot reports it.
+      - dependency-name: donutinit/sqsolve
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

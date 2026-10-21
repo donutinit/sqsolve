@@ -6,8 +6,8 @@
     <p class="muted">{{with .Data.L}}<a href="/libraries/{{.ID}}">{{.DisplayName}}</a> · {{end}}started by {{$j.CreatedBy.Label}} · {{dt $j.CreatedAt}}</p>
   </div>
   <div class="actions">
-    {{if and $j.Cancellable (.P.Can "job.cancel")}}<form method="post" action="/jobs/{{$j.ID}}/cancel">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Cancel</button></form>{{end}}
-    {{if and (or (eq $j.State "failed") (eq $j.State "interrupted") (eq $j.State "cancelled")) (.P.Can "backup.create")}}<form method="post" action="/jobs/{{$j.ID}}/retry">{{template "csrf" .CSRF}}<button type="submit">Retry</button></form>{{end}}
+    {{if .Data.CanCancel}}<form method="post" action="/jobs/{{$j.ID}}/cancel">{{template "csrf" .CSRF}}<button type="submit" class="ghost">Cancel</button></form>{{end}}
+    {{if .Data.CanRetry}}<form method="post" action="/jobs/{{$j.ID}}/retry">{{template "csrf" .CSRF}}<button type="submit">Retry</button></form>{{else}}{{with .Data.StartURL}}<a class="button ghost" href="{{.}}">Start again</a>{{end}}{{end}}
   </div>
 </div>
 <section class="card" data-job="{{$j.ID}}" data-job-state="{{$j.State}}">

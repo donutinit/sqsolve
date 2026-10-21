@@ -8,9 +8,14 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/donutinit/sqsolve/internal/audit"
+	"github.com/donutinit/sqsolve/internal/auth"
 	"github.com/donutinit/sqsolve/internal/core"
 	"github.com/donutinit/sqsolve/internal/jobs"
 )
+
+// sseHeartbeat is how often a job stream pings and re-reads the job.
+var sseHeartbeat = 15 * time.Second
 
 func (s *Server) jobsList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -29,11 +34,52 @@ func (s *Server) jobsList(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "jobs", "Jobs", "jobs", map[string]any{"Active": active, "History": history, "Names": names, "State": q.Get("state")})
 }
 
+// jobAction is the permission needed to cancel or retry a job of type typ:
+// the one that starts the operation. Types without one are for
+// administrators.
+func (s *Server) jobAction(typ string) auth.Action {
+	if a := s.A.Jobs.Action(typ); a != "" {
+		return auth.Action(a)
+	}
+	return auth.ActSettingsEdit
+}
+
+// jobStartURL is the page where the operation of j starts again, for jobs
+// that are not retried from their own page (destructive types ask for
+// their confirmation there).
+func jobStartURL(j *jobs.Job) string {
+	var p struct {
+		BackupID string `json:"backup_id"`
+	}
+	json.Unmarshal(j.Params, &p)
+	switch j.Type {
+	case core.JobLibraryCreate:
+		return "/libraries/new"
+	case core.JobRestoreNew, core.JobRestoreReplace:
+		if p.BackupID != "" {
+			return "/backups/" + p.BackupID + "/restore"
+		}
+	case core.JobRestoreRevert:
+		if j.LibraryID != "" {
+			return "/libraries/" + j.LibraryID + "/revert"
+		}
+	case core.JobBackupImport:
+		return "/backups/import"
+	case core.JobUpgradeWindow:
+		return "/settings?tab=maintenance"
+	}
+	if j.LibraryID != "" {
+		return "/libraries/" + j.LibraryID
+	}
+	return "/settings?tab=maintenance"
+}
+
 func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	p := principalOf(r)
 	j, err := s.A.Jobs.Get(ctx, r.PathValue("id"))
 	if err != nil {
-		s.renderError(w, r, principalOf(r), http.StatusNotFound, "SQS-J002 Job not found.")
+		s.renderError(w, r, p, http.StatusNotFound, "SQS-J002 Job not found.")
 		return
 	}
 	steps, _ := s.A.Jobs.Steps(ctx, j.ID)
@@ -46,6 +92,14 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 	if json.Unmarshal(j.Result, &res) == nil {
 		data["Result"] = res
 	}
+	// The routes also require job.cancel and backup.create.
+	allowed := p.Can(s.jobAction(j.Type))
+	canRetry := j.Retryable && allowed && p.Can(auth.ActBackupCreate)
+	data["CanCancel"] = j.Cancellable && allowed && p.Can(auth.ActJobCancel)
+	data["CanRetry"] = canRetry
+	if !canRetry && (j.State == jobs.Failed || j.State == jobs.Cancelled || j.State == jobs.Interrupted) {
+		data["StartURL"] = jobStartURL(j)
+	}
 	s.render(w, r, "job", j.Title, "jobs", data)
 }
 
@@ -53,6 +107,9 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 func (s *Server) jobEvents(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.PathValue("id")
+	// Subscribe before reading the job, so an update in between is not lost.
+	ch, cancel := s.A.Bus.Subscribe("job:" + id)
+	defer cancel()
 	j, err := s.A.Jobs.Get(ctx, id)
 	if err != nil {
 		http.NotFound(w, r)
@@ -66,25 +123,35 @@ func (s *Server) jobEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	ch, cancel := s.A.Bus.Subscribe("job:" + id)
-	defer cancel()
 	send := func(event string, v any) {
 		b, _ := json.Marshal(v)
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
 		flusher.Flush()
 	}
-	send("state", jobs.Update{JobID: j.ID, State: j.State, Progress: j.Progress, Step: j.CurrentStep, Error: j.ErrorDetail})
-	if j.State.Finished() {
-		send("done", j.State)
+	sendJob := func(j *jobs.Job) bool {
+		send("state", jobs.Update{JobID: j.ID, State: j.State, Progress: j.Progress, Step: j.CurrentStep, Error: j.ErrorDetail})
+		if j.State.Finished() {
+			send("done", j.State)
+			return true
+		}
+		return false
+	}
+	if sendJob(j) {
 		return
 	}
-	heartbeat := time.NewTicker(15 * time.Second)
+	heartbeat := time.NewTicker(sseHeartbeat)
 	defer heartbeat.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-heartbeat.C:
+			// The bus drops updates for slow readers: the database has the
+			// last word on whether the job finished.
+			if cur, err := s.A.Jobs.Get(ctx, id); err == nil && cur.State.Finished() {
+				sendJob(cur)
+				return
+			}
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
 		case m, ok := <-ch:
@@ -101,22 +168,49 @@ func (s *Server) jobEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) jobCancel(w http.ResponseWriter, r *http.Request) {
+// jobForAction loads the job and checks the permission of its type; on
+// refusal it answers 403 and records the attempt.
+func (s *Server) jobForAction(w http.ResponseWriter, r *http.Request, action string) (*jobs.Job, bool) {
+	ctx := r.Context()
+	p := principalOf(r)
 	id := r.PathValue("id")
-	if err := s.A.Jobs.Cancel(r.Context(), id); err != nil {
-		s.fail(w, r, "/jobs/"+id, err)
+	j, err := s.A.Jobs.Get(ctx, id)
+	if err != nil {
+		s.fail(w, r, "/jobs", err)
+		return nil, false
+	}
+	if !p.Can(s.jobAction(j.Type)) {
+		s.A.Audit.Record(ctx, p.Actor(), action, "job", id, audit.Denied, map[string]any{"type": j.Type})
+		s.renderError(w, r, p, http.StatusForbidden, "SQS-A030 Your role does not allow this action.")
+		return nil, false
+	}
+	return j, true
+}
+
+func (s *Server) jobCancel(w http.ResponseWriter, r *http.Request) {
+	j, ok := s.jobForAction(w, r, "job.cancel")
+	if !ok {
 		return
 	}
-	s.A.Audit.Record(r.Context(), principalOf(r).Actor(), "job.cancel", "job", id, "ok", nil)
-	s.ok(w, r, "/jobs/"+id, "Cancellation requested.")
+	if err := s.A.Jobs.Cancel(r.Context(), j.ID); err != nil {
+		s.fail(w, r, "/jobs/"+j.ID, err)
+		return
+	}
+	s.A.Audit.Record(r.Context(), principalOf(r).Actor(), "job.cancel", "job", j.ID, audit.OK, map[string]any{"type": j.Type})
+	s.ok(w, r, "/jobs/"+j.ID, "Cancellation requested.")
 }
 
 func (s *Server) jobRetry(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	nj, err := s.A.Jobs.Retry(r.Context(), id, principalOf(r).Actor())
-	if err != nil {
-		s.fail(w, r, "/jobs/"+id, err)
+	j, ok := s.jobForAction(w, r, "job.retry")
+	if !ok {
 		return
 	}
+	p := principalOf(r)
+	nj, err := s.A.Jobs.Retry(r.Context(), j.ID, p.Actor())
+	if err != nil {
+		s.fail(w, r, "/jobs/"+j.ID, err)
+		return
+	}
+	s.A.Audit.Record(r.Context(), p.Actor(), "job.retry", "job", j.ID, audit.OK, map[string]any{"type": j.Type, "new_job_id": nj.ID})
 	s.ok(w, r, "/jobs/"+nj.ID, "Job queued again.")
 }

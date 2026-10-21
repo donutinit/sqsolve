@@ -2,7 +2,11 @@
 {{$l := .Data.L}}
 <section class="card narrow danger-zone">
   <h1>Revert {{$l.DisplayName}}</h1>
+  {{if eq $l.State "missing"}}
+  <p>The library has no database under its name. Its previous state <code>{{$l.PrevDB}}</code> is put back under the name <code>{{$l.Slug}}</code> and the library becomes active.</p>
+  {{else}}
   <p>The library goes back to the state it had before the last restore. The current state is backed up first and kept so that this can be undone too.</p>
+  {{end}}
   {{with .Data.Sessions}}<div class="flash error" role="alert">There are {{len .}} open connections; they will be closed. Ask people to close Resolve first.</div>{{end}}
   <form method="post" action="/libraries/{{$l.ID}}/revert" class="form">
     {{template "csrf" .CSRF}}

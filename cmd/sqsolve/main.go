@@ -204,11 +204,31 @@ func serve() error {
 	case err := <-errCh:
 		return err
 	}
-	sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	srv.Shutdown(sctx)
-	a.Shutdown(100 * time.Second)
+	stopGracefully(srv, a)
 	return nil
+}
+
+// Stop budget, inside the 120 s stop_grace_period of the compose file: up
+// to 10 s for the HTTP requests, then 100 s shared by the jobs and the
+// notifications, which go out last so that what the jobs emit while
+// stopping (job.interrupted) is delivered. The jobs get the 100 s minus a
+// reserve for one delivery attempt.
+const (
+	httpStopBudget = 10 * time.Second
+	workStopBudget = 100 * time.Second
+	notifyReserve  = 10 * time.Second
+)
+
+// stopGracefully stops the panel, then the jobs (cancellable ones end as
+// interrupted, like after a crash), then the notifier.
+func stopGracefully(srv *http.Server, a *app.App) {
+	hctx, hcancel := context.WithTimeout(context.Background(), httpStopBudget)
+	defer hcancel()
+	srv.Shutdown(hctx)
+	wctx, wcancel := context.WithTimeout(context.Background(), workStopBudget)
+	defer wcancel()
+	a.Shutdown(workStopBudget - notifyReserve)
+	a.Notify.Flush(wctx)
 }
 
 func initCmd() error {
@@ -405,7 +425,7 @@ func adminCmd(args []string) error {
 		if err := a.Auth.Unlock(ctx, audit.CLI, u.ID); err != nil {
 			return err
 		}
-		fmt.Println("Account unlocked; the attempt counter is back to zero.")
+		fmt.Println("Account unlocked; the count of wrong passwords is back to zero. After a burst of recent attempts the panel may still ask to wait (SQS-A003, at most 15 minutes).")
 	default:
 		return fmt.Errorf("unknown subcommand: %s", args[0])
 	}

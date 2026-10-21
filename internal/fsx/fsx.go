@@ -29,6 +29,21 @@ func fail(step string) error {
 // rename, then syncs the directory.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	tmp := path + ".partial"
+	if err := writePartial(tmp, data, perm); err != nil {
+		return err
+	}
+	if err := fail("rename"); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return SyncDir(filepath.Dir(path))
+}
+
+// writePartial writes and fsyncs tmp with the given mode.
+func writePartial(tmp string, data []byte, perm os.FileMode) error {
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
@@ -55,14 +70,92 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 		os.Remove(tmp)
 		return err
 	}
-	if err := fail("rename"); err != nil {
+	return nil
+}
+
+// WritePair writes two files that are only valid together, such as a key
+// and its certificate. Both go to .partial files first and are renamed
+// first, then second; a crash in between leaves only second's .partial file,
+// which RecoverPair renames into place.
+func WritePair(first string, firstData []byte, firstPerm os.FileMode, second string, secondData []byte, secondPerm os.FileMode) error {
+	fp, sp := first+".partial", second+".partial"
+	if err := writePartial(fp, firstData, firstPerm); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
+	if err := writePartial(sp, secondData, secondPerm); err != nil {
+		os.Remove(fp)
 		return err
 	}
-	return SyncDir(filepath.Dir(path))
+	if err := fail("pair-first"); err != nil {
+		return err
+	}
+	if err := os.Rename(fp, first); err != nil {
+		os.Remove(fp)
+		os.Remove(sp)
+		return err
+	}
+	if err := fail("pair-second"); err != nil {
+		return err
+	}
+	if err := os.Rename(sp, second); err != nil {
+		return err
+	}
+	if err := SyncDir(filepath.Dir(first)); err != nil {
+		return err
+	}
+	if filepath.Dir(second) != filepath.Dir(first) {
+		return SyncDir(filepath.Dir(second))
+	}
+	return nil
+}
+
+// RecoverPair finishes a WritePair that stopped between its two renames and
+// discards one that stopped before them, so first and second always belong
+// together. It reports whether it changed anything.
+func RecoverPair(first, second string) (bool, error) {
+	fp, sp := first+".partial", second+".partial"
+	_, ferr := os.Lstat(fp)
+	_, serr := os.Lstat(sp)
+	switch {
+	case ferr == nil:
+		// Stopped before the renames: the old pair is intact.
+		os.Remove(fp)
+		os.Remove(sp)
+		return true, SyncDir(filepath.Dir(first))
+	case serr == nil:
+		// first is already the new one: complete the pair.
+		if err := os.Rename(sp, second); err != nil {
+			return false, err
+		}
+		return true, SyncDir(filepath.Dir(second))
+	}
+	return false, nil
+}
+
+// RemovePartials deletes the regular *.partial files left in dir by an
+// interrupted write. A missing dir is not an error.
+func RemovePartials(dir string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.Type().IsRegular() || filepath.Ext(e.Name()) != ".partial" {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
+			return n, err
+		}
+		n++
+	}
+	if n > 0 {
+		return n, SyncDir(dir)
+	}
+	return 0, nil
 }
 
 // SealFile fsyncs a file written by another process and renames it from
@@ -99,12 +192,23 @@ func SyncDir(dir string) error {
 // MarkerName is the file that identifies a volume.
 const MarkerName = ".sqsolve-volume"
 
+// Volume names in the markers (ADR 0018, ADR 0023).
+const (
+	VolumeDB      = "db"
+	VolumeApp     = "app"
+	VolumeBackups = "backups"
+)
+
 // Marker is the content of a volume marker.
 type Marker struct {
 	InstanceID string    `json:"instance_id"`
 	Volume     string    `json:"volume"`
 	CreatedAt  time.Time `json:"created_at"`
 }
+
+// MsgUnreadableMarker is the text of a marker that cannot be read or parsed
+// (directory, cause).
+const MsgUnreadableMarker = "SQS-S002 unreadable marker in %s: %w"
 
 // ErrNoMarker means the directory has no marker.
 var ErrNoMarker = errors.New("SQS-S001 the volume has no sqsolve marker")
@@ -120,7 +224,7 @@ func ReadMarker(dir string) (*Marker, error) {
 	}
 	var m Marker
 	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("SQS-S002 unreadable marker in %s: %w", dir, err)
+		return nil, fmt.Errorf(MsgUnreadableMarker, dir, err)
 	}
 	return &m, nil
 }
@@ -134,8 +238,16 @@ func WriteMarker(dir string, m Marker) error {
 	return WriteFileAtomic(filepath.Join(dir, MarkerName), append(b, '\n'), 0o600)
 }
 
-// CheckMarker verifies that dir carries the marker of instanceID.
+// CheckMarker verifies that dir is the backups volume of instanceID, the
+// check before every write of a backup.
 func CheckMarker(dir, instanceID string) error {
+	return CheckVolume(dir, instanceID, VolumeBackups)
+}
+
+// CheckVolume verifies that dir carries the marker of the given volume of
+// instanceID. A marker of this installation for another volume means the
+// host paths of the volumes are swapped.
+func CheckVolume(dir, instanceID, volume string) error {
 	m, err := ReadMarker(dir)
 	if err != nil {
 		return err
@@ -143,7 +255,17 @@ func CheckMarker(dir, instanceID string) error {
 	if m.InstanceID != instanceID {
 		return fmt.Errorf("SQS-S003 volume %s belongs to another installation (%s)", dir, m.InstanceID)
 	}
+	if m.Volume != volume {
+		return SwappedError(dir, volume, m)
+	}
 	return nil
+}
+
+// SwappedError describes a marker of the installation found on the path of
+// another of its volumes.
+func SwappedError(dir, want string, m *Marker) error {
+	return fmt.Errorf("SQS-S019 %s holds the %s volume of installation %s, not its %s volume: the host paths of the volumes are swapped. "+
+		"Fix the volume paths in the compose file", dir, m.Volume, m.InstanceID, want)
 }
 
 // Space is the capacity of a filesystem.

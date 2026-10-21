@@ -24,6 +24,10 @@ type DBInfo struct {
 	SizeBytes      int64
 	CollationStale bool
 	ActiveSessions int
+	// Invalid marks a database that a DROP DATABASE in progress or
+	// interrupted left behind (datconnlimit -2): it cannot be used, only
+	// dropped, and its size is not measured (reported as 0).
+	Invalid bool
 }
 
 // ServerInfo describes the server.
@@ -61,25 +65,42 @@ func (c *Client) Server(ctx context.Context) (ServerInfo, error) {
 	return s, nil
 }
 
-// Databases lists non-template databases.
+// dbSelect reads DBInfo. For an invalid database (datconnlimit -2, being
+// dropped or left behind by an interrupted DROP) the size and collation
+// functions are not called: they fail once the drop commits. The size is 0
+// when a database has no files (pg_database_size() returns NULL then).
+const dbSelect = `SELECT d.datname, r.rolname, d.datallowconn, d.datconnlimit,
+	CASE WHEN d.datconnlimit = -2 THEN 0 ELSE COALESCE(pg_database_size(d.oid), 0) END,
+	CASE WHEN d.datconnlimit = -2 THEN false ELSE COALESCE(d.datcollversion <> pg_database_collation_actual_version(d.oid), false) END,
+	(SELECT count(*) FROM pg_stat_activity a WHERE a.datid = d.oid AND a.backend_type = 'client backend')::int,
+	d.datconnlimit = -2
+	FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
+	WHERE NOT d.datistemplate`
+
+func scanDB(row pgx.Row) (DBInfo, error) {
+	var d DBInfo
+	err := row.Scan(&d.Name, &d.Owner, &d.AllowConn, &d.ConnLimit, &d.SizeBytes, &d.CollationStale, &d.ActiveSessions, &d.Invalid)
+	return d, err
+}
+
+// Databases lists every database except templates (docs 07 §10), including
+// invalid ones marked Invalid, so reconciliation can drop invalid auxiliary
+// databases and the panel can show the others. Callers that need the
+// databases a library can use call Database.
 func (c *Client) Databases(ctx context.Context) ([]DBInfo, error) {
 	p, err := c.Pool()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := p.Query(ctx, `SELECT d.datname, r.rolname, d.datallowconn, d.datconnlimit, pg_database_size(d.oid),
-		COALESCE(d.datcollversion <> pg_database_collation_actual_version(d.oid), false),
-		(SELECT count(*) FROM pg_stat_activity a WHERE a.datid = d.oid AND a.backend_type = 'client backend')::int
-		FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
-		WHERE NOT d.datistemplate ORDER BY d.datname`)
+	rows, err := p.Query(ctx, dbSelect+` ORDER BY d.datname`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []DBInfo
 	for rows.Next() {
-		var d DBInfo
-		if err := rows.Scan(&d.Name, &d.Owner, &d.AllowConn, &d.ConnLimit, &d.SizeBytes, &d.CollationStale, &d.ActiveSessions); err != nil {
+		d, err := scanDB(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -87,18 +108,35 @@ func (c *Client) Databases(ctx context.Context) ([]DBInfo, error) {
 	return out, rows.Err()
 }
 
-// Database returns one database or nil if it does not exist.
+// Database returns one usable database, or nil when it does not exist, is a
+// template or is invalid: for the state of a library an invalid database is
+// as good as missing. It reads a single row, so only that database's size is
+// computed. An error never means "does not exist".
 func (c *Client) Database(ctx context.Context, name string) (*DBInfo, error) {
-	all, err := c.Databases(ctx)
+	p, err := c.Pool()
 	if err != nil {
 		return nil, err
 	}
-	for i := range all {
-		if all[i].Name == name {
-			return &all[i], nil
-		}
+	d, err := scanDB(p.QueryRow(ctx, dbSelect+` AND d.datconnlimit <> -2 AND d.datname = $1`, name))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
 	}
-	return nil, nil
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// DatabaseNameTaken reports whether any database, in any state, has that
+// name: an invalid or template database still holds it until it is dropped.
+func (c *Client) DatabaseNameTaken(ctx context.Context, name string) (bool, error) {
+	p, err := c.Pool()
+	if err != nil {
+		return false, err
+	}
+	var ok bool
+	err = p.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)`, name).Scan(&ok)
+	return ok, err
 }
 
 // RoleExists reports whether a role exists.
@@ -178,16 +216,36 @@ func (c *Client) TerminateSession(ctx context.Context, db string, pid int32, rol
 	return ok, err
 }
 
-// TerminateAll ends every session on db except sqsolve's own.
-func (c *Client) TerminateAll(ctx context.Context, db string) (int, error) {
+// TerminateResult counts the sessions TerminateAllSessions ended and those it
+// left alone because they belong to a superuser.
+type TerminateResult struct {
+	Terminated int
+	Superuser  int
+}
+
+// TerminateAllSessions ends every session on db except sqsolve's own and
+// those of superusers: PostgreSQL refuses to let sqsolve_admin end them, and
+// that refusal used to abort the whole query. Callers can report Superuser.
+// A session whose role is not known yet counts as a superuser one.
+func (c *Client) TerminateAllSessions(ctx context.Context, db string) (TerminateResult, error) {
 	p, err := c.Pool()
 	if err != nil {
-		return 0, err
+		return TerminateResult{}, err
 	}
-	var n int
-	err = p.QueryRow(ctx, `SELECT count(*) FILTER (WHERE pg_terminate_backend(pid))::int FROM pg_stat_activity
-		WHERE datname = $1 AND pid <> pg_backend_pid() AND backend_type = 'client backend'`, db).Scan(&n)
-	return n, err
+	var r TerminateResult
+	err = p.QueryRow(ctx, `SELECT
+		count(*) FILTER (WHERE CASE WHEN r.rolsuper IS FALSE THEN pg_terminate_backend(a.pid) ELSE false END)::int,
+		count(*) FILTER (WHERE r.rolsuper IS NOT FALSE)::int
+		FROM pg_stat_activity a LEFT JOIN pg_roles r ON r.oid = a.usesysid
+		WHERE a.datname = $1 AND a.pid <> pg_backend_pid() AND a.backend_type = 'client backend'`, db).Scan(&r.Terminated, &r.Superuser)
+	return r, err
+}
+
+// TerminateAll is TerminateAllSessions for callers that only need how many
+// sessions were ended.
+func (c *Client) TerminateAll(ctx context.Context, db string) (int, error) {
+	r, err := c.TerminateAllSessions(ctx, db)
+	return r.Terminated, err
 }
 
 func (c *Client) exec(ctx context.Context, stmt string) error {
@@ -196,7 +254,28 @@ func (c *Client) exec(ctx context.Context, stmt string) error {
 		return err
 	}
 	_, err = p.Exec(ctx, stmt)
-	return err
+	return WrapTimeout(err)
+}
+
+// execTx runs stmts in one transaction, so either all of them take effect or
+// none does. On failure it returns the index of the statement that failed, or
+// -1 when the failure is not one of them (no pool, BEGIN or COMMIT).
+func (c *Client) execTx(ctx context.Context, stmts ...string) (int, error) {
+	p, err := c.Pool()
+	if err != nil {
+		return -1, err
+	}
+	failed := -1
+	err = pgx.BeginFunc(ctx, p, func(tx pgx.Tx) error {
+		for i, s := range stmts {
+			if _, err := tx.Exec(ctx, s); err != nil {
+				failed = i
+				return err
+			}
+		}
+		return nil
+	})
+	return failed, WrapTimeout(err)
 }
 
 // RoleOptions are the attributes of a library role.
@@ -227,7 +306,9 @@ func roleAttrs(o RoleOptions) (string, error) {
 	return strings.Join(attrs, " "), nil
 }
 
-// CreateLibraryRole creates a role and lets sqsolve_admin act as it.
+// CreateLibraryRole creates a role and lets sqsolve_admin act as it. Both
+// happen in one transaction: a failed membership does not leave a role behind
+// that would block the next attempt (SQS-L006, SQS-L033).
 func (c *Client) CreateLibraryRole(ctx context.Context, name string, o RoleOptions) error {
 	q, err := Ident(name)
 	if err != nil {
@@ -237,13 +318,16 @@ func (c *Client) CreateLibraryRole(ctx context.Context, name string, o RoleOptio
 	if err != nil {
 		return err
 	}
-	if err := c.exec(ctx, "CREATE ROLE "+q+" "+attrs); err != nil {
+	i, err := c.execTx(ctx, "CREATE ROLE "+q+" "+attrs, "GRANT "+q+" TO "+MustIdent(AdminRole)+" WITH INHERIT TRUE, SET TRUE")
+	switch {
+	case err == nil:
+		return nil
+	case i == 0:
 		return fmt.Errorf("SQS-P020 creating role %s: %w", name, redact(err, o.Verifier))
-	}
-	if err := c.exec(ctx, "GRANT "+q+" TO "+MustIdent(AdminRole)+" WITH INHERIT TRUE, SET TRUE"); err != nil {
+	case i == 1:
 		return fmt.Errorf("SQS-P021 membership of %s: %w", name, err)
 	}
-	return nil
+	return err
 }
 
 // SetRolePassword changes the password through a verifier.
@@ -286,6 +370,35 @@ func (c *Client) SetRoleLogin(ctx context.Context, name string, on bool) error {
 		attr = "LOGIN"
 	}
 	return c.exec(ctx, "ALTER ROLE "+q+" "+attr)
+}
+
+// SetRolesLogin enables or disables login for those of names that exist and
+// are not in that state yet, and returns the roles it changed. Roles that do
+// not exist are skipped.
+func (c *Client) SetRolesLogin(ctx context.Context, names []string, on bool) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	p, err := c.Pool()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := p.Query(ctx, `SELECT rolname FROM pg_roles WHERE rolname = ANY($1) AND rolcanlogin <> $2 ORDER BY 1`, names, on)
+	if err != nil {
+		return nil, err
+	}
+	todo, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, err
+	}
+	var changed []string
+	for _, r := range todo {
+		if err := c.SetRoleLogin(ctx, r, on); err != nil {
+			return changed, err
+		}
+		changed = append(changed, r)
+	}
+	return changed, nil
 }
 
 // SetRoleConnLimit sets the connection limit of a role.
@@ -514,7 +627,8 @@ func CountRows(ctx context.Context, q interface {
 				WHERE n.nspname = 'public' AND c.relname = $1`, t).Scan(&n)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("count of %s: %w", t, err)
+			// The connection's lock_timeout bounds a count behind a lock.
+			return nil, fmt.Errorf("count of %s: %w", t, WrapTimeout(err))
 		}
 		out[t] = n
 	}

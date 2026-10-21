@@ -21,6 +21,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/donutinit/sqsolve/internal/fsx"
 )
 
 //go:embed migrations/*.sql
@@ -68,7 +70,13 @@ type DB struct {
 }
 
 // ErrNotFound is returned when a row does not exist.
-var ErrNotFound = errors.New("no encontrado")
+var ErrNotFound = errors.New("not found")
+
+// now is the clock of the migration copies; tests replace it.
+var now = time.Now
+
+// keepMigrationCopies is how many copies taken before migrations are kept.
+const keepMigrationCopies = 5
 
 // Open opens (and creates) the database at path and applies migrations.
 // Before applying migrations to an existing database a copy is written to
@@ -77,6 +85,15 @@ func Open(ctx context.Context, path, backupDir string) (*DB, error) {
 	existed := true
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		existed = false
+		// SQLite creates its files with the process umask (0644) and gives
+		// -wal and -shm the mode of the database: create it private first.
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil && !errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("SQS-X031 could not create %s: %w", path, err)
+		}
+		if err == nil {
+			f.Close()
+		}
 	}
 	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(10000)&_pragma=synchronous(FULL)&_txlock=immediate"
 	sqldb, err := sql.Open("sqlite", dsn)
@@ -90,8 +107,12 @@ func Open(ctx context.Context, path, backupDir string) (*DB, error) {
 		return nil, fmt.Errorf("SQS-X010 could not open %s: %w", path, err)
 	}
 	if existed {
-		if err := os.Chmod(path, 0o600); err != nil && !errors.Is(err, os.ErrPermission) {
-			return nil, err
+		// Databases created by earlier versions were 0644.
+		for _, p := range []string{path, path + "-wal", path + "-shm"} {
+			if err := os.Chmod(p, 0o600); err != nil && !errors.Is(err, os.ErrPermission) && !errors.Is(err, os.ErrNotExist) {
+				sqldb.Close()
+				return nil, err
+			}
 		}
 	}
 	if err := db.migrate(ctx, existed, backupDir); err != nil {
@@ -204,12 +225,8 @@ func (db *DB) migrate(ctx context.Context, existed bool, backupDir string) error
 		return nil
 	}
 	if existed && len(applied) > 0 && backupDir != "" {
-		if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		if err := db.copyBeforeMigrating(ctx, backupDir, pending[0].version); err != nil {
 			return err
-		}
-		dst := filepath.Join(backupDir, fmt.Sprintf("sqsolve-before-%04d-%s.db", pending[0].version, time.Now().UTC().Format("20060102T150405Z")))
-		if err := db.BackupTo(ctx, dst); err != nil {
-			return fmt.Errorf("SQS-X013 could not copy the database before migrating: %w", err)
 		}
 	}
 	for _, m := range pending {
@@ -241,26 +258,91 @@ func (db *DB) Tx(ctx context.Context, fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// BackupTo writes a consistent copy of the database to dst.
+// BackupTo writes a consistent copy of the database to dst: VACUUM INTO a
+// .partial file, fsync, rename and fsync of the folder (fsx.SealFile).
 func (db *DB) BackupTo(ctx context.Context, dst string) error {
-	if strings.ContainsAny(dst, "'\x00") {
+	if err := db.backupTo(ctx, dst); err != nil {
+		return fmt.Errorf("SQS-X030 could not copy the database to %s: %w", dst, err)
+	}
+	return nil
+}
+
+func (db *DB) backupTo(ctx context.Context, dst string) error {
+	if strings.ContainsRune(dst, 0) {
 		return errors.New("invalid path")
 	}
 	tmp := dst + ".partial"
 	os.Remove(tmp)
-	if _, err := db.ExecContext(ctx, "VACUUM INTO '"+tmp+"'"); err != nil {
+	if _, err := db.ExecContext(ctx, `VACUUM INTO ?`, tmp); err != nil {
 		os.Remove(tmp)
 		return err
 	}
 	if err := os.Chmod(tmp, 0o600); err != nil {
+		os.Remove(tmp)
 		return err
 	}
-	f, err := os.Open(tmp)
-	if err == nil {
-		f.Sync()
-		f.Close()
+	if err := fsx.SealFile(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return err
 	}
-	return os.Rename(tmp, dst)
+	return nil
+}
+
+// copyBeforeMigrating keeps a copy of the database taken before migrating to
+// version. A migration that fails on every start does not write a new copy
+// each time: one per pending version is enough. Only the newest copies are
+// kept.
+func (db *DB) copyBeforeMigrating(ctx context.Context, backupDir string, version int) error {
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		return fmt.Errorf("SQS-X013 could not copy the database before migrating: %w", err)
+	}
+	prefix := fmt.Sprintf("sqsolve-before-%04d-", version)
+	if m, _ := filepath.Glob(filepath.Join(backupDir, prefix+"*.db")); len(m) > 0 {
+		return nil
+	}
+	dst := filepath.Join(backupDir, prefix+now().UTC().Format("20060102T150405Z")+".db")
+	if err := db.BackupTo(ctx, dst); err != nil {
+		return fmt.Errorf("SQS-X013 could not copy the database before migrating: %w", err)
+	}
+	pruneMigrationCopies(backupDir, keepMigrationCopies)
+	return nil
+}
+
+// pruneMigrationCopies deletes all but the newest keep copies, ordered by the
+// time in their name.
+func pruneMigrationCopies(dir string, keep int) {
+	matches, _ := filepath.Glob(filepath.Join(dir, "sqsolve-before-*.db"))
+	stamp := func(p string) string {
+		// sqsolve-before-VVVV-<time>.db
+		name := strings.TrimSuffix(filepath.Base(p), ".db")
+		if i := strings.LastIndexByte(name, '-'); i >= 0 {
+			return name[i+1:]
+		}
+		return name
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		if a, b := stamp(matches[i]), stamp(matches[j]); a != b {
+			return a < b
+		}
+		return matches[i] < matches[j]
+	})
+	for i := 0; i < len(matches)-keep; i++ {
+		os.Remove(matches[i])
+	}
+}
+
+// PruneDeletedBackups removes the catalog rows of backups deleted before
+// before. Rows still referenced by an export workspace or by a library's
+// previous state are kept.
+func (db *DB) PruneDeletedBackups(ctx context.Context, before time.Time) (int64, error) {
+	res, err := db.ExecContext(ctx, `DELETE FROM backups WHERE status = 'deleted'
+		AND COALESCE(deleted_at, finished_at, started_at) < ?
+		AND id NOT IN (SELECT backup_id FROM export_workspaces)
+		AND id NOT IN (SELECT prev_backup_id FROM libraries)`, T(before))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // IntegrityCheck runs PRAGMA integrity_check.

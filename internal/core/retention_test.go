@@ -45,10 +45,12 @@ func TestRetainNeverDeletesPinnedOrLastVerified(t *testing.T) {
 		for i := range in {
 			in[i] = RetentionItem{
 				ID:       fmt.Sprintf("X%03d", i),
+				Seq:      rng.Int63n(1 << 20),
 				Started:  now.Add(-time.Duration(rng.Intn(400*24)) * time.Hour),
 				Kind:     []string{KindScheduled, KindManual, KindPreRestore, KindPreDelete}[rng.Intn(4)],
 				Pinned:   rng.Intn(15) == 0,
 				Verified: rng.Intn(3) > 0,
+				Aux:      rng.Intn(6) == 0,
 			}
 			anyVerified = anyVerified || in[i].Verified
 		}

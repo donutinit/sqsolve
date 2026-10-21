@@ -4,6 +4,13 @@
 
 package execx
 
-import "syscall"
+import (
+	"errors"
+	"syscall"
+)
 
 func sysProcAttr() *syscall.SysProcAttr { return &syscall.SysProcAttr{Setpgid: true} }
+
+// waitExit is Linux only; elsewhere the group escalation is skipped and
+// WaitDelay kills the leader.
+func waitExit(int) error { return errors.New("waiting without reaping is not supported here") }

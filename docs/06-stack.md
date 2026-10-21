@@ -92,10 +92,15 @@ three simple protocols.
 | `github.com/jackc/pgx/v5` | MIT | PostgreSQL client, `Identifier.Sanitize` |
 | `modernc.org/sqlite` | BSD-3 | SQLite without CGO |
 | `golang.org/x/crypto` | BSD-3 | Argon2id, XChaCha20-Poly1305 |
+| `golang.org/x/sys` | BSD-3 | Only its `unix` package, to turn off terminal echo when the console asks for a password (`cmd/sqsolve/main.go`) |
 | `github.com/adhocore/gronx` | MIT | Cron expressions |
 | `github.com/klauspost/compress` | BSD-3 | Only its `zstd` package, for the experimental project and grade export (ADR 0019) |
 
-The closed list for 1.0 has five modules since 2026-10-19.
+The closed list for 1.0 has six modules since 2026-10-20. This is a correction of the list, not a
+new dependency: `golang.org/x/sys` and `github.com/klauspost/compress` were already imported by
+the code (the first was missing from this table, the second was marked `// indirect` in `go.mod`
+although `internal/drp/blobs.go` imports it directly). `go.mod` now lists both as direct
+requirements, and CI fails if it differs from what `go mod tidy` writes (`make tidy-check`).
 
 Tests only: `github.com/testcontainers/testcontainers-go` (MIT), `github.com/chromedp/chromedp`
 (MIT), `github.com/getkin/kin-openapi` (MIT).
@@ -112,7 +117,16 @@ review of the transitive dependency tree (`go mod graph`).
   `pg_dump` and `pg_restore` have the same major version as the server and to share layers with
   the PostgreSQL container.
 - The binary is built in a `golang:<version>-trixie` stage pinned by digest, with
-  `CGO_ENABLED=0 -trimpath -buildvcs=true`.
+  `CGO_ENABLED=0 -trimpath -buildvcs=false` and the version and commit injected through
+  `-ldflags`: the build context has no `.git`, so there is nothing to stamp. `-w` drops the DWARF
+  data but the symbol table stays, because `govulncheck -mode=binary` needs it to scan the binary
+  that ships (it reports false positives on one stripped with `-s`). Two builds of the same
+  commit with the same toolchain give the same binary (checked on 2026-10-20 with Go 1.27.2 for
+  linux/amd64: identical SHA-256 with and without `go build -a`). The layers of the image are not
+  reproducible: their timestamps are those of the build.
+- The two base images are written literally in their `FROM` lines so that Dependabot can update
+  them. The PostgreSQL reference (tag and digest) must be the same in the `Dockerfile` and in
+  `deploy/compose.yaml`; `make pg-image-check` verifies it in CI.
 - Deployment: Docker Compose v2. No Helm, no Kubernetes, no NAS-specific catalogs.
 
 ## 11. Development tools and CI
@@ -122,11 +136,14 @@ review of the transitive dependency tree (`go mod graph`).
 | `make` | Single entry point: `make check`, `make test-integration`, `make image` |
 | `gofmt`, `go vet`, `staticcheck` | Quality |
 | `govulncheck` | Known vulnerabilities in dependencies and the standard library |
-| `gosec` | Static security analysis |
-| Docker Buildx | Multi-architecture images |
-| `syft` | SBOM in SPDX and CycloneDX |
-| `cosign` | Signing of images and attestations |
-| OWASP ZAP (Docker image) | UI scan in CI |
+| `gosec` | Static security analysis (planned; not run in CI yet) |
+| Docker Buildx | Multi-architecture images and their SBOM and provenance attestations (`sbom: true`, `provenance: true`) |
+| `syft` | SBOM in SPDX and CycloneDX (planned; today the SBOM is the one Buildx attaches to the image) |
+| `cosign` | Keyless signing of the images published for `v*` tags |
+| Dependabot | Weekly pull requests for the base images and the GitHub Actions, with a 7-day cooldown |
+| OWASP ZAP (Docker image) | UI scan in CI (planned) |
 
 CI is written for GitHub Actions with syntax compatible with Forgejo Actions, so the integration
-can be moved or duplicated to a free forge without rewriting it.
+can be moved or duplicated to a free forge without rewriting it. The reusable workflow
+(`workflow_call`, which `image.yml` uses to run `ci.yml`) and Dependabot were added on 2026-10-20
+and have not been checked on Forgejo: To be confirmed.

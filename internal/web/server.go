@@ -19,9 +19,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"mime/multipart"
-	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -112,7 +110,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.log.Error("panic in a request", "path", r.URL.Path, "panic", p)
 			http.Error(rw, "Internal error (SQS-X999)", http.StatusInternalServerError)
 		}
-		if !strings.HasPrefix(r.URL.Path, "/static/") && r.URL.Path != "/healthz" {
+		if !quietPath(r.URL.Path) {
 			s.log.Info("http", "method", r.Method, "path", r.URL.Path, "status", rw.status, "ms", time.Since(start).Milliseconds(), "ip", s.clientIP(r))
 		}
 	}()
@@ -124,6 +122,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(rw, r.Body, limit)
 	}
 	s.mux.ServeHTTP(rw, r)
+}
+
+// quietPath reports the requests that are not logged: static files and the
+// health probes, which Docker and uptime monitors call every few seconds.
+func quietPath(p string) bool {
+	switch p {
+	case "/healthz", "/readyz", "/api/v1/system/health":
+		return true
+	}
+	return strings.HasPrefix(p, "/static/")
 }
 
 type statusWriter struct {
@@ -139,25 +147,10 @@ func (w *statusWriter) Flush() {
 }
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-// clientIP honours X-Forwarded-For only from trusted proxies.
+// clientIP honours X-Forwarded-For only from trusted proxies, with the same
+// rules as the API (auth.ClientIP).
 func (s *Server) clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	addr, err := netip.ParseAddr(host)
-	if err != nil {
-		return host
-	}
-	for _, p := range s.A.Cfg.TrustedProxies {
-		if p.Contains(addr) {
-			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-				parts := strings.Split(xff, ",")
-				return strings.TrimSpace(parts[len(parts)-1])
-			}
-		}
-	}
-	return addr.String()
+	return auth.ClientIP(r, s.A.Cfg.TrustedProxies)
 }
 
 func (s *Server) secure() bool { return !s.A.Cfg.InsecureHTTP }
@@ -205,7 +198,22 @@ func principalOf(r *http.Request) *auth.Principal {
 	return p
 }
 
-// page wraps a handler that needs a logged-in user with the action.
+// totpEnrollPath is the enrollment page an administrator without a second
+// factor is sent to while the installation requires one; enrollmentPaths are
+// the only pages such a session may reach (docs 08 §4).
+const totpEnrollPath = "/account/totp"
+
+var enrollmentPaths = map[string]bool{totpEnrollPath: true, "/account/totp/start": true, "/account/totp/enable": true, "/logout": true}
+
+// mustEnroll reports whether p is an administrator who has to enable the
+// second factor before using the panel.
+func (s *Server) mustEnroll(ctx context.Context, p *auth.Principal) bool {
+	return auth.MustEnrollTOTP(p, func() bool { return s.A.Svc.Settings(ctx).TOTPRequiredAdmins })
+}
+
+// page wraps a handler that needs a logged-in user with the action. An
+// administrator without the second factor the installation requires only
+// reaches the enrollment pages.
 func (s *Server) page(action auth.Action, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if has, err := s.A.Auth.HasAdmin(r.Context()); err == nil && !has {
@@ -222,6 +230,10 @@ func (s *Server) page(action auth.Action, h http.HandlerFunc) http.HandlerFunc {
 			}
 			next := r.URL.RequestURI()
 			http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusSeeOther)
+			return
+		}
+		if !enrollmentPaths[r.URL.Path] && s.mustEnroll(r.Context(), p) {
+			http.Redirect(w, r, totpEnrollPath, http.StatusSeeOther)
 			return
 		}
 		if !p.Can(action) {
@@ -487,6 +499,7 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /account", s.page(auth.ActView, s.account))
 	m.HandleFunc("POST /account/password", s.page(auth.ActView, s.accountPassword))
+	m.HandleFunc("GET /account/totp", s.page(auth.ActView, s.accountTOTPBegin))
 	m.HandleFunc("POST /account/totp/start", s.page(auth.ActView, s.accountTOTPBegin))
 	m.HandleFunc("POST /account/totp/enable", s.page(auth.ActView, s.accountTOTPEnable))
 	m.HandleFunc("POST /account/totp/disable", s.page(auth.ActView, s.accountTOTPDisable))

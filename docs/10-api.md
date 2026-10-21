@@ -6,7 +6,11 @@
   (OpenAPI 3.1), which is written before the handlers and validated in tests (SQS-410).
 - Authentication: `Authorization: Bearer sqs_...` (tokens with scope `read`, `backup`,
   `restore`, `export` or `admin`) or a session cookie plus the `X-CSRF-Token` header (browser
-  use).
+  use). With a session cookie, an administrator who has no second factor while the
+  installation requires one gets `403` with `SQS-A051` until they enable it in the panel;
+  tokens are not affected. A login lock (`SQS-A004`) does not stop tokens or open sessions
+  (ADR 0025). `SQS-A050` (too many passwords being checked at once) answers `503` with
+  `Retry-After`.
 - Errors: RFC 9457 `application/problem+json`:
 
 ```json
@@ -36,7 +40,7 @@
 | Method and path | Minimum scope | Description |
 |---|---|---|
 | `GET /system/status` | `read` | Summary status (what the dashboard shows) |
-| `GET /system/health` | no authentication | `200` or `503` with minimal detail (for monitors) |
+| `GET /system/health` | no authentication | `200` or `503` with states and counts only: PostgreSQL, volumes, backup freshness (for uptime monitors; fields in `13-observability.md` §3) |
 | `GET /system/version` | `read` | sqsolve and PostgreSQL versions, compatibility matrix |
 | `GET /libraries` | `read` | List with `state` filters |
 | `POST /libraries` | `admin` | Create; returns a job |
@@ -78,7 +82,7 @@
 | `GET /jobs/{id}` | `read` | Detail with steps |
 | `GET /jobs/{id}/logs` | `read` | Paginated log |
 | `GET /jobs/{id}/events` | `read` | Progress SSE |
-| `POST /jobs/{id}/cancel` | by type | Cancel |
+| `POST /jobs/{id}/cancel` | by type | Cancel. Needs `job.cancel` and the permission that starts the job's type (the one of its page: `restore.replace` for a restore by replacing, `admin` for system jobs); otherwise `403` with `SQS-A030` and a `denied` entry in the audit log |
 | `GET /events` | `read` | Events with filters |
 | `GET /audit` | `admin` | Audit log; `?format=jsonl` to export |
 | `GET /audit/verify` | `admin` | Verify the chain |
@@ -123,24 +127,39 @@ Job types: `library.create`, `library.init_watch`, `library.delete`, `library.pu
 
 | Type | Severity | When |
 |---|---|---|
-| `library.created`, `library.activated`, `library.trashed`, `library.purged`, `library.restored_from_trash` | info | Lifecycle |
+| `library.created`, `library.activated`, `library.restored_from_trash` | info | Lifecycle |
+| `library.trashed`, `library.purged` | warning | Lifecycle: moved to the trash, purged for good |
+| `library.extra_database` | warning | The library role created a database with another name (the name typed in Resolve was not the identifier) |
 | `library.init_expired` | warning | The window expired |
 | `library.schema_changed` | warning | The fingerprint changed |
 | `library.maintenance_on`, `library.maintenance_off` | info | Locks |
+| `library.missing` | critical, warning | Critical: reconciliation found no usable database under the library's name (none, or an invalid one). Warning: a database with the name and owner of a `missing` library is on the server again but was not adopted, because it has no tables while the library had some or it could not be inspected; the message says why and that the database is kept (docs 11 §7.7) |
+| `library.found` | info | The database of a `missing` library is on the server again with its owner and has tables (or the library never had any); the library is active |
+| `library.prev_kept` | warning | A previous state (`__prev`) was not dropped because no verified backup of it exists or could be taken (`SQS-R055`) |
 | `library.credential_rotated`, `library.credential_revealed` | info | Credentials |
-| `backup.started`, `backup.succeeded` | info | Backups |
+| `backup.started`, `backup.succeeded` | info | Backups; a backup cut by a cancel or a graceful stop emits no `backup.failed` |
+| `backup.verified` | info | A test restore (L2) matched the manifest |
 | `backup.failed`, `backup.verify_failed`, `backup.missed` | error | Backup problems |
+| `backup.verify_skipped` | warning | A verification could not run (no space, cancelled, server or tool unavailable); the backup keeps its verification status |
+| `backup.import_source_kept` | warning | An import asked to delete its source kept it: the file in `_import/` changed or was replaced during the import |
 | `backup.stale` | warning | Library without a verified backup for more than the threshold (48 h) |
 | `backup.expired` | info | Retention deleted a backup |
+| `backup.catalog_mismatch` | warning | The catalog check found backup files missing from the volume or files not in the catalog |
 | `restore.started`, `restore.succeeded`, `restore.reverted` | info | Restore |
-| `restore.failed` | error | Failed restore (the active library was not touched or was reverted) |
-| `storage.low` | warning at 80 %, error at 90 % | Space |
-| `storage.volume_missing` | critical | Volume marker missing |
-| `postgres.down`, `postgres.up` | critical, info | Availability |
-| `auth.login_failed_burst` | warning | Probable brute force |
+| `restore.failed` | error | Failed restore (the active library was not touched or was reverted); critical when a swap stopped halfway (`SQS-R053`) or its reopening failed (`SQS-R054`) |
+| `storage.low` | warning at 80 %, error at 90 % | Space; `data.volume` is `db`, `app` or `backups` |
+| `storage.volume_missing` | critical | The backups volume marker is missing, or a volume cannot be measured; `data.volume` is `db`, `app` or `backups` |
+| `postgres.down`, `postgres.up` | critical, info | Availability: first failed check after it answered, or no answer in the 5 minutes after sqsolve started; `up` only after a `down`, and it ends the grouping window of `down` on every channel |
+| `postgres.cluster_changed` | critical | The cluster's system identifier is not the stored one; sqsolve holds (ADR 0023) |
+| `postgres.cluster_accepted` | warning | `SQSOLVE_PG_ACCEPT_SYSTEM_ID` accepted a new cluster |
+| `auth.login_failed_burst` | warning | Probable brute force (`data.ip`, `data.username`) |
+| `auth.locked` | critical | An account was locked for 15 minutes after 10 wrong passwords in a row (ADR 0025; `data.username`, `data.ip`) |
 | `audit.chain_broken` | critical | Audit log integrity |
-| `tls.expiring` | warning | Certificate expires in less than 30 days |
-| `job.interrupted` | warning | Job cut off by a restart |
+| `tls.expiring` | warning, error | Certificate expires in less than 30 days; error in the last 14 days, once expired, or when renewing the panel's fails (`data.cert` is `Panel web` or `PostgreSQL`) |
+| `job.interrupted` | warning | Job cut off by a restart or by a graceful stop (`data.job_type`) |
+| `job.failed` | error | Failed job (`data.code`, `data.job_type`) |
+| `system.started`, `system.upgraded` | info | sqsolve started; it started with a version other than the last one (the message names both) |
+| `system.internal_error` | critical | A background loop (job dispatcher, scheduler) recovered from an internal error and keeps running |
 
 ## 5. Outgoing webhooks
 
@@ -167,6 +186,12 @@ Job types: `library.create`, `library.init_watch`, `library.delete`, `library.pu
 
 - Retries after 10 s, 1 min, 10 min and 1 h; then the channel is marked as failing. Maximum time
   per delivery 10 s. Redirects are not followed.
+- The error stored for a failing channel keeps the cause and the HTTP status, never the URL (Slack,
+  Discord and ntfy URLs carry tokens) nor a secret field: `SQS-N040 could not reach the
+  destination: ...` or `SQS-N002 the destination responded 403 Forbidden`. Only users with
+  `notify.manage` see it in the panel.
+- Grouping (docs 11 §13): a summary delivery is the latest held event with the message
+  `N more like this. Latest: ...` and `"suppressed_since_last": N` in the body.
 - "Before" events (`backup.started`, `restore.started`) are sent but do not block the
   operation. Prior blocking belongs to hooks (1.1).
 
@@ -194,8 +219,8 @@ sqsolve doctor [--json]              # checks volumes, permissions, PostgreSQL, 
 sqsolve admin create --username U --role admin
 sqsolve admin reset-password U
 sqsolve admin disable-totp U
-sqsolve admin rotate-master-key
-sqsolve admin rotate-superuser
+sqsolve admin rotate-master-key      # not implemented (08 §6)
+sqsolve admin rotate-superuser       # not implemented (08 §6)
 sqsolve library list [--json]
 sqsolve backup create <slug>
 sqsolve backup list <slug> [--json]

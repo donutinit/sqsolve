@@ -1,6 +1,7 @@
 # ADR 0021. Security proportionate to the local network and the VPN
 
-**Status:** Accepted (2026-10-19). Diego's decision.
+**Status:** Accepted (2026-10-19). Diego's decision. The "account lock" point is amended by
+ADR 0025 (2026-10-20): the lock now lasts 15 minutes and spares open sessions and API tokens.
 
 **Context.** sqsolve is meant for a studio LAN or a VPN (ADR 0015: port 5432 and the panel never
 reach the Internet). With that model, the panel also asked to confirm the password every 5

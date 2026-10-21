@@ -20,7 +20,7 @@ Probability (P) and impact (I): H high, M medium, L low. Reviewed at the close o
 | T-12 | SQLite corruption | L | M | WAL, daily copies in `backups/_system`, catalog rebuild from manifests | Daily `PRAGMA integrity_check` |
 | T-13 | Collation changes with a new image | L | H | `builtin` provider (PoC-01 step 7) and collation version indicator | Collation indicator |
 | T-14 | Collaboration fails because of the workstations' network and the server gets the blame | H | L | Editors guide with ports; PoC-07; `sqsolve-check` tool (1.2) | User reports |
-| T-15 | Change in the official PostgreSQL image (paths, entrypoint) | L | M | Pinned digest; integration tests against every new digest | Weekly digest job |
+| T-15 | Change in the official PostgreSQL image (paths, entrypoint), or an installation that stays on an old PostgreSQL minor because its copy of the compose file pins the digest | L | M | Pinned digest; Dependabot opens a weekly pull request for each new `postgres:18.x-trixie` (7-day cooldown) and the full CI, including the smoke test with the reference compose, runs on it; `make pg-image-check` keeps the `Dockerfile` and `deploy/compose.yaml` equal; the release notes give the new `image:` line and the user guide says to apply it | Dependabot pull request |
 | T-16 | A new version of Resolve changes the `.drp` or `.drx` format and the export produces files that import badly | M | M | Off by default; schema contract that turns it off by itself (`SQS-E001`); `SQS-E004` guards; per-version verification kit (`22` §6); "no guarantee" notice | New unregistered fingerprint |
 
 ## 2. Security
@@ -30,7 +30,7 @@ Probability (P) and impact (I): H high, M medium, L low. Reviewed at the close o
 | S-01 | Someone exposes 5432 to the Internet | M | H | Documentation, panel warning if the advertised address is public, strong passwords and SCRAM, network rules |
 | S-02 | SQL or command injection in sqsolve | L | H | Controls T-06 and T-07 of `08-security.md`; role without superuser; fuzzing |
 | S-03 | Loss of the master key | M | M | Mandatory recovery kit; the libraries remain safe; documented credential rotation |
-| S-04 | Supply chain of Go or of the base image | L | H | Closed dependency list, 7-day wait, `govulncheck`, pinned digest, SBOM, signatures |
+| S-04 | Supply chain of Go or of the base image | L | H | Closed dependency list, 7-day wait (also Dependabot's cooldown), `govulncheck` on the source and on the binary inside the image, pinned digest, SBOM, signatures; images are published only after CI passes |
 | S-05 | A compromised workstation leaks a library password | M | M | Per-person credentials (1.1) and revocation; network rules; rotation |
 
 ## 3. Legal

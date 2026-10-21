@@ -91,6 +91,7 @@ const (
 	JobFailed                = "job.failed"
 	SystemStarted            = "system.started"
 	SystemUpgraded           = "system.upgraded"
+	SystemInternalError      = "system.internal_error"
 )
 
 // Event is one recorded fact.

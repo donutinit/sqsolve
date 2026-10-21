@@ -1,6 +1,7 @@
 {{define "content"}}
 <section class="card narrow">
   <h1>Enable second factor</h1>
+  {{if .Data.Required}}<div class="flash warn" role="status">The second factor is required for administrators on this installation. Enable it to continue using the panel.</div>{{end}}
   <ol class="steps">
     <li>In your authenticator app add a new account with this key (or paste the otpauth link if your app accepts it):
       {{template "copy" (dict "label" "Key" "value" .Data.Grouped "id" "t-secret")}}
@@ -12,7 +13,7 @@
     {{template "csrf" .CSRF}}
     <input type="hidden" name="secret" value="{{.Data.Secret}}">
     <label>Code<input name="code" required inputmode="numeric" autocomplete="one-time-code" class="mono" maxlength="6" autofocus></label>
-    <div class="actions"><button type="submit">Enable</button><a href="/account">Cancel</a></div>
+    <div class="actions"><button type="submit">Enable</button>{{if not .Data.Required}}<a href="/account">Cancel</a>{{end}}</div>
   </form>
 </section>
 {{end}}

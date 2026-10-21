@@ -95,7 +95,8 @@ func TestWriteHBAKeepsPrev(t *testing.T) {
 
 func TestPostgresConf(t *testing.T) {
 	s := PostgresConf(Params{DataDir: "/d", ConfDir: "/c", SocketDir: "/s", Port: 5432, Listen: "*", MaxConnections: 200, MemoryMB: 16384, SSL: true})
-	for _, want := range []string{"hba_file                     = '/c/pg_hba.conf'", "shared_buffers               = 2048MB", "ssl                          = on", "password_encryption          = scram-sha-256"} {
+	for _, want := range []string{"hba_file                     = '/c/pg_hba.conf'", "shared_buffers               = 2048MB", "ssl                          = on", "password_encryption          = scram-sha-256",
+		"superuser_reserved_connections = 5\n", "reserved_connections         = 3\n"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %q", want)
 		}

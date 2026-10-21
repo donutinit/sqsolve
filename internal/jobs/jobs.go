@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"regexp"
 	"runtime/debug"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -59,6 +60,8 @@ func (s State) Label() string {
 // Finished reports whether the state is final.
 func (s State) Finished() bool { return s != Queued && s != Running }
 
+func (s State) retryable() bool { return s == Failed || s == Cancelled || s == Interrupted }
+
 // LockMode on the job's library.
 type LockMode int
 
@@ -77,7 +80,14 @@ type Spec struct {
 	Heavy       bool
 	Lock        LockMode
 	Cancellable bool
-	Run         func(ctx context.Context, r *Run) error
+	// Retryable marks idempotent, non-destructive types: Retry may queue them
+	// again with their original parameters. Destructive types are started
+	// again from the page that asks for their confirmation.
+	Retryable bool
+	// Action is the permission (an action name of internal/auth) needed to
+	// cancel or retry a job of this type. Empty means administrators only.
+	Action string
+	Run    func(ctx context.Context, r *Run) error
 }
 
 // Job is a stored job.
@@ -102,6 +112,7 @@ type Job struct {
 	Attempt      int             `json:"attempt"`
 	Result       json.RawMessage `json:"result"`
 	Cancellable  bool            `json:"cancellable"`
+	Retryable    bool            `json:"retryable"`
 }
 
 // Duration of the run so far or in total.
@@ -162,12 +173,26 @@ type Manager struct {
 	wake    chan struct{}
 	stop    atomic.Bool
 	wg      sync.WaitGroup
+
+	// finishWaits are the pauses between attempts to record the final
+	// state of a job.
+	finishWaits []time.Duration
+	// hookDispatch, when set, runs at the start of every dispatch (tests).
+	hookDispatch func()
 }
 
+// dispatchPage is how many queued rows the dispatcher reads at a time.
+const dispatchPage = 50
+
 type runningJob struct {
-	cancel      context.CancelFunc
+	cancel      context.CancelCauseFunc
 	cancellable bool
 }
+
+// ErrStopped is the cause given to the jobs that a graceful shutdown cuts
+// off: they end as interrupted, like the ones a crash leaves behind, so they
+// are reconciled and can be retried.
+var ErrStopped = errors.New("SQS-J010 the process stopped while the job was running")
 
 // NewManager creates a manager.
 func NewManager(db *store.DB, ev *events.Recorder, bus *events.Bus, log *slog.Logger, workers, heavy int) *Manager {
@@ -179,6 +204,8 @@ func NewManager(db *store.DB, ev *events.Recorder, bus *events.Bus, log *slog.Lo
 		locks:   newLockTable(),
 		running: map[string]*runningJob{},
 		wake:    make(chan struct{}, 1),
+
+		finishWaits: []time.Duration{100 * time.Millisecond, 500 * time.Millisecond, 2 * time.Second, 5 * time.Second},
 	}
 }
 
@@ -189,6 +216,26 @@ func (m *Manager) Register(s Spec) {
 	}
 	m.specs[s.Type] = s
 }
+
+// Spec returns the definition of a job type.
+func (m *Manager) Spec(typ string) (Spec, bool) {
+	s, ok := m.specs[typ]
+	return s, ok
+}
+
+// Types lists the registered job types, sorted.
+func (m *Manager) Types() []string {
+	out := make([]string, 0, len(m.specs))
+	for t := range m.specs {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Action returns the permission needed to cancel or retry a job of type
+// typ, or "" when the type has none (administrators only).
+func (m *Manager) Action(typ string) string { return m.specs[typ].Action }
 
 // Title returns the label of a job type.
 func (m *Manager) Title(typ string) string {
@@ -206,6 +253,7 @@ type enqueueOpts struct {
 	scheduleID string
 	priority   int
 	unique     bool
+	attempt    int
 }
 
 // At delays a job.
@@ -218,8 +266,11 @@ func FromSchedule(id string) Option { return func(o *enqueueOpts) { o.scheduleID
 func Priority(p int) Option { return func(o *enqueueOpts) { o.priority = p } }
 
 // Unique returns the existing queued or running job of the same type and
-// library instead of creating another.
+// library instead of creating another. A row left "running" that this
+// process is not running (its final update failed) does not count.
 func Unique() Option { return func(o *enqueueOpts) { o.unique = true } }
+
+func attempt(n int) Option { return func(o *enqueueOpts) { o.attempt = n } }
 
 // ErrUnknownType is returned for unregistered job types.
 var ErrUnknownType = errors.New("SQS-J001 unknown job type")
@@ -230,18 +281,17 @@ func (m *Manager) Enqueue(ctx context.Context, typ, libraryID string, params any
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrUnknownType, typ)
 	}
-	o := enqueueOpts{at: time.Now(), priority: spec.Priority}
+	o := enqueueOpts{at: time.Now(), priority: spec.Priority, attempt: 1}
 	for _, f := range opts {
 		f(&o)
 	}
 	if o.unique {
-		var id string
-		err := m.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE type = ? AND library_id = ? AND state IN ('queued', 'running') ORDER BY created_at LIMIT 1`, typ, libraryID).Scan(&id)
-		if err == nil {
-			return m.Get(ctx, id)
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		id, err := m.pending(ctx, typ, libraryID)
+		if err != nil {
 			return nil, err
+		}
+		if id != "" {
+			return m.Get(ctx, id)
 		}
 	}
 	p, err := json.Marshal(params)
@@ -253,15 +303,42 @@ func (m *Manager) Enqueue(ctx context.Context, typ, libraryID string, params any
 	}
 	id := ulid.New()
 	now := store.NowT()
-	_, err = m.db.ExecContext(ctx, `INSERT INTO jobs(id, type, library_id, params, state, priority, scheduled_for, created_at, created_by_type, created_by_id, created_by_name, schedule_id)
-		VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)`,
-		id, typ, libraryID, string(p), o.priority, store.T(o.at), now, by.Type, by.ID, by.Name, o.scheduleID)
+	_, err = m.db.ExecContext(ctx, `INSERT INTO jobs(id, type, library_id, params, state, priority, scheduled_for, created_at, created_by_type, created_by_id, created_by_name, schedule_id, attempt)
+		VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, typ, libraryID, string(p), o.priority, store.T(o.at), now, by.Type, by.ID, by.Name, o.scheduleID, o.attempt)
 	if err != nil {
 		return nil, err
 	}
 	m.Wake()
 	m.bus.Publish("jobs", Update{JobID: id, State: Queued})
 	return m.Get(ctx, id)
+}
+
+// pending returns the oldest queued job of the type and library, or a
+// running one this process is actually running; "" when there is none.
+func (m *Manager) pending(ctx context.Context, typ, libraryID string) (string, error) {
+	rows, err := m.db.QueryContext(ctx, `SELECT id, state FROM jobs WHERE type = ? AND library_id = ? AND state IN ('queued', 'running') ORDER BY created_at`, typ, libraryID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, state string
+		if err := rows.Scan(&id, &state); err != nil {
+			return "", err
+		}
+		if State(state) == Queued || m.isRunning(id) {
+			return id, nil
+		}
+	}
+	return "", rows.Err()
+}
+
+func (m *Manager) isRunning(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.running[id]
+	return ok
 }
 
 // Wake nudges the dispatcher.
@@ -295,6 +372,7 @@ func (m *Manager) scanJob(row interface{ Scan(...any) error }) (*Job, error) {
 	j.Title = m.Title(j.Type)
 	if s, ok := m.specs[j.Type]; ok {
 		j.Cancellable = s.Cancellable && !j.State.Finished()
+		j.Retryable = s.Retryable && j.State.retryable()
 	}
 	return &j, nil
 }
@@ -447,27 +525,38 @@ func (m *Manager) Cancel(ctx context.Context, id string) error {
 	if !rj.cancellable {
 		return ErrNotCancellable
 	}
-	rj.cancel()
+	rj.cancel(context.Canceled)
 	return nil
 }
 
-// Retry re-enqueues a failed or interrupted job.
+// ErrNotRetryable is returned when Retry is asked for a type that is not
+// idempotent (docs 11 §11): its original confirmation and checks would be
+// skipped.
+var ErrNotRetryable = errors.New("SQS-J030 this type of job cannot be retried; start the operation again from its page, which asks for confirmation")
+
+// Retry re-enqueues a failed, cancelled or interrupted job of a retryable
+// type with its original parameters. The caller checks the permission of
+// the type (Action) and records the audit entry.
 func (m *Manager) Retry(ctx context.Context, id string, by audit.Actor) (*Job, error) {
 	j, err := m.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if j.State != Failed && j.State != Interrupted && j.State != Cancelled {
+	spec, ok := m.specs[j.Type]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownType, j.Type)
+	}
+	if !spec.Retryable {
+		return nil, ErrNotRetryable
+	}
+	if !j.State.retryable() {
 		return nil, errors.New("SQS-J004 only failed, cancelled or interrupted jobs can be retried")
 	}
 	var params any
-	json.Unmarshal(j.Params, &params)
-	nj, err := m.Enqueue(ctx, j.Type, j.LibraryID, params, by)
-	if err != nil {
-		return nil, err
+	if err := json.Unmarshal(j.Params, &params); err != nil {
+		return nil, fmt.Errorf("SQS-J031 the stored parameters of job %s are not valid: %w", j.ID, err)
 	}
-	m.db.ExecContext(ctx, `UPDATE jobs SET attempt = ? WHERE id = ?`, j.Attempt+1, nj.ID)
-	return m.Get(ctx, nj.ID)
+	return m.Enqueue(ctx, j.Type, j.LibraryID, params, by, attempt(j.Attempt+1))
 }
 
 // MarkInterrupted turns running jobs left by a previous process into
@@ -481,7 +570,7 @@ func (m *Manager) MarkInterrupted(ctx context.Context) ([]*Job, error) {
 		m.db.ExecContext(ctx, `UPDATE jobs SET state = 'interrupted', finished_at = ?, error_code = 'SQS-J010', error_detail = 'The process stopped while the job was running' WHERE id = ?`, store.NowT(), j.ID)
 		m.db.ExecContext(ctx, `UPDATE job_steps SET state = 'interrupted', finished_at = ? WHERE job_id = ? AND state = 'running'`, store.NowT(), j.ID)
 		m.ev.Emit(ctx, events.Event{Type: events.JobInterrupted, Severity: events.Warning, LibraryID: j.LibraryID, JobID: j.ID,
-			Message: fmt.Sprintf("The job %q was interrupted by a restart", m.Title(j.Type))})
+			Message: fmt.Sprintf("The job %q was interrupted by a restart", m.Title(j.Type)), Data: map[string]any{"job_type": j.Type}})
 		j.State = Interrupted
 	}
 	return running, nil
@@ -511,20 +600,40 @@ func (m *Manager) Start(ctx context.Context) {
 			case <-t.C:
 			}
 			if !m.stop.Load() {
-				m.dispatch(ctx)
+				m.safeDispatch(ctx)
 			}
 		}
 	}()
 }
 
+// safeDispatch runs one pass of the dispatcher; a panic is logged and
+// recorded as a critical event, and the loop goes on.
+func (m *Manager) safeDispatch(ctx context.Context) {
+	defer m.recoverLoop("job dispatcher")
+	if m.hookDispatch != nil {
+		m.hookDispatch()
+	}
+	m.dispatch(ctx)
+}
+
+func (m *Manager) recoverLoop(name string) {
+	p := recover()
+	if p == nil {
+		return
+	}
+	m.log.Error("panic in a background loop", "loop", name, "panic", p, "stack", string(debug.Stack()))
+	m.ev.Emit(context.Background(), events.Event{Type: events.SystemInternalError, Severity: events.Critical,
+		Message: fmt.Sprintf("Internal error in the %s (it keeps running): %v", name, p), Data: map[string]any{"loop": name}})
+}
+
 // Shutdown stops dispatching, cancels cancellable jobs and waits up to
-// timeout for the rest.
+// timeout for the rest. The jobs it cancels end as interrupted.
 func (m *Manager) Shutdown(timeout time.Duration) {
 	m.stop.Store(true)
 	m.mu.Lock()
 	for _, rj := range m.running {
 		if rj.cancellable {
-			rj.cancel()
+			rj.cancel(ErrStopped)
 		}
 	}
 	m.mu.Unlock()
@@ -554,65 +663,115 @@ func (m *Manager) dispatch(ctx context.Context) {
 	if free <= 0 {
 		return
 	}
-	rows, err := m.db.QueryContext(ctx, `SELECT `+jobCols+` FROM jobs WHERE state = 'queued' AND scheduled_for <= ?
-		ORDER BY priority DESC, scheduled_for, id LIMIT 50`, store.NowT())
-	if err != nil {
-		m.log.Error("job queue", "err", err)
-		return
-	}
-	var queued []*Job
-	for rows.Next() {
-		j, err := m.scanJob(rows)
-		if err == nil {
-			queued = append(queued, j)
-		}
-	}
-	rows.Close()
-	for _, j := range queued {
-		if free <= 0 {
+	now := store.NowT()
+	// The queue is read a page at a time and blocked jobs (locked library,
+	// heavy slot taken) are skipped, so runnable jobs further down are not
+	// starved by a full first page.
+	var after *Job
+	for free > 0 {
+		page, err := m.queuedPage(ctx, now, after)
+		if err != nil {
+			m.log.Error("job queue", "err", err)
 			return
 		}
-		spec, ok := m.specs[j.Type]
-		if !ok {
-			m.finish(ctx, j, Failed, fmt.Errorf("%w: %s", ErrUnknownType, j.Type))
-			continue
-		}
-		if !m.locks.tryAcquire(j.LibraryID, spec.Lock) {
-			continue
-		}
-		if spec.Heavy {
-			select {
-			case m.heavy <- struct{}{}:
-			default:
-				m.locks.release(j.LibraryID, spec.Lock)
-				continue
+		for _, j := range page {
+			if free <= 0 || m.stop.Load() {
+				return
+			}
+			if m.tryStart(ctx, j) {
+				free--
 			}
 		}
-		res, err := m.db.ExecContext(ctx, `UPDATE jobs SET state = 'running', started_at = ? WHERE id = ? AND state = 'queued'`, store.NowT(), j.ID)
-		if n, _ := res.RowsAffected(); err != nil || n != 1 {
-			m.locks.release(j.LibraryID, spec.Lock)
-			if spec.Heavy {
-				<-m.heavy
-			}
-			continue
+		if len(page) < dispatchPage {
+			return
 		}
-		now := time.Now()
-		j.StartedAt = &now
-		j.State = Running
-		free--
-		jctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-		m.mu.Lock()
-		m.busy++
-		m.running[j.ID] = &runningJob{cancel: cancel, cancellable: spec.Cancellable}
-		m.mu.Unlock()
-		m.wg.Add(1)
-		go m.execute(jctx, cancel, j, spec)
+		after = page[len(page)-1]
 	}
+}
+
+// queuedPage returns due queued jobs in dispatch order after the cursor.
+func (m *Manager) queuedPage(ctx context.Context, now string, after *Job) ([]*Job, error) {
+	q := `SELECT ` + jobCols + ` FROM jobs WHERE state = 'queued' AND scheduled_for <= ?`
+	args := []any{now}
+	if after != nil {
+		sf := store.T(after.ScheduledFor)
+		q += ` AND (priority < ? OR (priority = ? AND (scheduled_for > ? OR (scheduled_for = ? AND id > ?))))`
+		args = append(args, after.Priority, after.Priority, sf, sf, after.ID)
+	}
+	q += ` ORDER BY priority DESC, scheduled_for, id LIMIT ?`
+	args = append(args, dispatchPage)
+	rows, err := m.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Job
+	for rows.Next() {
+		j, err := m.scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// tryStart claims a queued job and runs it; false when it must wait.
+func (m *Manager) tryStart(ctx context.Context, j *Job) bool {
+	spec, ok := m.specs[j.Type]
+	if !ok {
+		m.finish(j, Failed, fmt.Errorf("%w: %s", ErrUnknownType, j.Type))
+		return false
+	}
+	if !m.locks.tryAcquire(j.LibraryID, spec.Lock) {
+		return false
+	}
+	if spec.Heavy {
+		select {
+		case m.heavy <- struct{}{}:
+		default:
+			m.locks.release(j.LibraryID, spec.Lock)
+			return false
+		}
+	}
+	// Registered before the row says "running", so Unique never mistakes a
+	// job being started for a ghost.
+	jctx, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
+	m.mu.Lock()
+	m.busy++
+	m.running[j.ID] = &runningJob{cancel: cancel, cancellable: spec.Cancellable}
+	m.mu.Unlock()
+	res, err := m.db.ExecContext(ctx, `UPDATE jobs SET state = 'running', started_at = ? WHERE id = ? AND state = 'queued'`, store.NowT(), j.ID)
+	var n int64
+	if err == nil {
+		n, err = res.RowsAffected()
+	}
+	if err != nil || n != 1 {
+		if err != nil && ctx.Err() == nil {
+			m.log.Error("could not start a job", "job", j.ID, "err", err)
+		}
+		m.mu.Lock()
+		m.busy--
+		delete(m.running, j.ID)
+		m.mu.Unlock()
+		cancel(nil)
+		m.locks.release(j.LibraryID, spec.Lock)
+		if spec.Heavy {
+			<-m.heavy
+		}
+		return false
+	}
+	now := time.Now()
+	j.StartedAt = &now
+	j.State = Running
+	m.wg.Add(1)
+	go m.execute(jctx, cancel, j, spec)
+	return true
 }
 
 var codeRe = regexp.MustCompile(`SQS-[A-Z][0-9]{3}`)
 
-func (m *Manager) execute(ctx context.Context, cancel context.CancelFunc, j *Job, spec Spec) {
+func (m *Manager) execute(ctx context.Context, cancel context.CancelCauseFunc, j *Job, spec Spec) {
 	defer m.wg.Done()
 	r := &Run{Job: j, m: m, ctx: ctx}
 	m.bus.Publish("job:"+j.ID, Update{JobID: j.ID, State: Running})
@@ -620,7 +779,7 @@ func (m *Manager) execute(ctx context.Context, cancel context.CancelFunc, j *Job
 	err := func() (err error) {
 		defer func() {
 			if p := recover(); p != nil {
-				err = fmt.Errorf("SQS-X999 error interno: %v", p)
+				err = fmt.Errorf("SQS-X999 internal error: %v", p)
 				m.log.Error("panic in job", "job", j.ID, "panic", p, "stack", string(debug.Stack()))
 			}
 		}()
@@ -629,12 +788,16 @@ func (m *Manager) execute(ctx context.Context, cancel context.CancelFunc, j *Job
 	state := Succeeded
 	if err != nil {
 		state = Failed
-		if ctx.Err() != nil && errors.Is(err, context.Canceled) || ctx.Err() != nil && spec.Cancellable {
+		switch {
+		case ctx.Err() != nil && errors.Is(context.Cause(ctx), ErrStopped):
+			state = Interrupted
+			err = fmt.Errorf("%w (%v)", ErrStopped, err)
+		case ctx.Err() != nil && (errors.Is(err, context.Canceled) || spec.Cancellable):
 			state = Cancelled
 		}
 	}
-	m.finish(context.Background(), j, state, err)
-	cancel()
+	m.finish(j, state, err)
+	cancel(nil)
 	m.mu.Lock()
 	m.busy--
 	delete(m.running, j.ID)
@@ -646,7 +809,11 @@ func (m *Manager) execute(ctx context.Context, cancel context.CancelFunc, j *Job
 	m.Wake()
 }
 
-func (m *Manager) finish(ctx context.Context, j *Job, state State, err error) {
+// finish records the final state of a job. It never uses the job context
+// (cancelled by then): the final update is retried with a bounded backoff,
+// because a row left "running" would hold Unique and the schedules.
+func (m *Manager) finish(j *Job, state State, err error) {
+	ctx := context.Background()
 	code, detail := "", ""
 	if err != nil {
 		detail = err.Error()
@@ -659,17 +826,47 @@ func (m *Manager) finish(ctx context.Context, j *Job, state State, err error) {
 	if state == Succeeded {
 		progress = 100
 	}
-	m.db.ExecContext(ctx, `UPDATE jobs SET state = ?, finished_at = ?, error_code = ?, error_detail = ?, progress = ? WHERE id = ?`,
-		string(state), store.NowT(), code, detail, progress, j.ID)
-	m.db.ExecContext(ctx, `UPDATE job_steps SET state = ?, finished_at = ? WHERE job_id = ? AND state = 'running'`,
-		map[bool]string{true: "failed", false: "cancelled"}[state == Failed], store.NowT(), j.ID)
+	stepState := map[State]string{Failed: "failed", Interrupted: "interrupted"}[state]
+	if stepState == "" {
+		stepState = "cancelled"
+	}
+	for i := 0; ; i++ {
+		uerr := m.recordFinal(ctx, j.ID, state, code, detail, progress, stepState)
+		if uerr == nil {
+			break
+		}
+		if i >= len(m.finishWaits) {
+			m.log.Error("could not record the final state of a job; it stays running until the next start", "job", j.ID, "state", state, "err", uerr)
+			break
+		}
+		m.log.Warn("could not record the final state of a job; retrying", "job", j.ID, "state", state, "err", uerr)
+		time.Sleep(m.finishWaits[i])
+	}
 	u := Update{JobID: j.ID, State: state, Progress: progress, Error: detail}
 	m.bus.Publish("job:"+j.ID, u)
 	m.bus.Publish("jobs", u)
-	if state == Failed {
+	switch state {
+	case Failed:
 		m.ev.Emit(ctx, events.Event{Type: events.JobFailed, Severity: events.Error, LibraryID: j.LibraryID, JobID: j.ID,
-			Message: fmt.Sprintf("The job %q failed: %s", m.Title(j.Type), shorten(detail, 300)), Data: map[string]any{"code": code}})
+			Message: fmt.Sprintf("The job %q failed: %s", m.Title(j.Type), shorten(detail, 300)), Data: map[string]any{"code": code, "job_type": j.Type}})
+	case Interrupted:
+		m.ev.Emit(ctx, events.Event{Type: events.JobInterrupted, Severity: events.Warning, LibraryID: j.LibraryID, JobID: j.ID,
+			Message: fmt.Sprintf("The job %q was interrupted because sqsolve stopped", m.Title(j.Type)), Data: map[string]any{"job_type": j.Type}})
 	}
+}
+
+// recordFinal writes the final state of the job and of its open steps. Both
+// updates are idempotent, so a failed attempt is simply repeated.
+func (m *Manager) recordFinal(ctx context.Context, id string, state State, code, detail string, progress int, stepState string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	now := store.NowT()
+	if _, err := m.db.ExecContext(ctx, `UPDATE jobs SET state = ?, finished_at = ?, error_code = ?, error_detail = ?, progress = ? WHERE id = ?`,
+		string(state), now, code, detail, progress, id); err != nil {
+		return err
+	}
+	_, err := m.db.ExecContext(ctx, `UPDATE job_steps SET state = ?, finished_at = ? WHERE job_id = ? AND state = 'running'`, stepState, now, id)
+	return err
 }
 
 func shorten(s string, n int) string {
@@ -710,6 +907,9 @@ func (r *Run) Step(name string, fn func() error) error {
 		state = "failed"
 		if r.ctx.Err() != nil {
 			state = "cancelled"
+			if errors.Is(context.Cause(r.ctx), ErrStopped) {
+				state = "interrupted"
+			}
 		}
 	}
 	db.ExecContext(ctx, `UPDATE job_steps SET state = ?, finished_at = ? WHERE job_id = ? AND seq = ?`, state, store.NowT(), r.Job.ID, seq)

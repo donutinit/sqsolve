@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/donutinit/sqsolve/internal/app"
 	"github.com/donutinit/sqsolve/internal/audit"
@@ -19,9 +20,30 @@ import (
 	"github.com/donutinit/sqsolve/internal/core"
 )
 
+// safeNext returns next when it is a path on this server and "/" otherwise
+// (audit M4). Browsers drop tabs and line breaks from a Location and treat a
+// backslash as a slash, so "/<TAB>/host" or "/\host" would leave the origin:
+// any control character, whitespace or backslash is refused, before and
+// after decoding, and the parsed URL must have no scheme or host and a path
+// that starts with exactly one slash.
 func safeNext(next string) string {
-	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.Contains(next, "\\") {
+	if next == "" || len(next) > 2048 || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
 		return "/"
+	}
+	for _, r := range next {
+		if unicode.IsControl(r) || unicode.IsSpace(r) || r == '\\' {
+			return "/"
+		}
+	}
+	u, err := url.Parse(next)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.Opaque != "" || u.User != nil ||
+		!strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") {
+		return "/"
+	}
+	for _, r := range u.Path {
+		if unicode.IsControl(r) || r == '\\' {
+			return "/"
+		}
 	}
 	return next
 }
@@ -178,7 +200,11 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		fail("The form expired; try again.")
 		return
 	}
-	token, _, mfa, err := s.A.Auth.Login(r.Context(), r.FormValue("username"), r.FormValue("password"), s.clientIP(r), r.UserAgent())
+	token, p, mfa, err := s.A.Auth.Login(r.Context(), r.FormValue("username"), r.FormValue("password"), s.clientIP(r), r.UserAgent())
+	if errors.Is(err, auth.ErrBusy) {
+		s.loginBusy(w, r, next, err)
+		return
+	}
 	if err != nil {
 		fail(humanError(err))
 		return
@@ -188,7 +214,20 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login/code?next="+url.QueryEscape(next), http.StatusSeeOther)
 		return
 	}
+	if s.mustEnroll(r.Context(), p) {
+		http.Redirect(w, r, totpEnrollPath, http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, next, http.StatusSeeOther)
+}
+
+// loginBusy answers 503 with Retry-After when every password hashing slot is
+// taken (auth.ErrBusy): nothing was checked, so the form comes back as it was
+// with the coded message instead of a redirect.
+func (s *Server) loginBusy(w http.ResponseWriter, r *http.Request, next string, err error) {
+	w.Header().Set("Retry-After", "5")
+	s.renderStatus(w, r, http.StatusServiceUnavailable, "login", "Sign in", "",
+		map[string]any{"Pre": s.preToken(w, r), "Next": next, "User": r.FormValue("username"), "Error": humanError(err)})
 }
 
 func (s *Server) totpForm(w http.ResponseWriter, r *http.Request) {
@@ -249,10 +288,17 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request) {
 	s.ok(w, r, "/account", "Password changed. Your other sessions were closed.")
 }
 
+// accountTOTPBegin shows a new secret to enroll. GET /account/totp is where
+// an administrator without the required second factor is sent.
 func (s *Server) accountTOTPBegin(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
+	if p.User.TOTPEnabled {
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		return
+	}
 	secret, uri := s.A.Auth.BeginTOTP(p.User)
-	s.render(w, r, "totp_setup", "Enable second factor", "account", map[string]any{"Secret": secret, "URI": uri, "Grouped": group4(secret)})
+	s.render(w, r, "totp_setup", "Enable second factor", "account", map[string]any{"Secret": secret, "URI": uri, "Grouped": group4(secret),
+		"Required": s.mustEnroll(r.Context(), p)})
 }
 
 func group4(s string) string {
@@ -281,7 +327,7 @@ func (s *Server) accountTOTPEnable(w http.ResponseWriter, r *http.Request) {
 func (s *Server) accountTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	if s.A.Svc.Settings(r.Context()).TOTPRequiredAdmins && p.User.Role == auth.RoleAdmin {
-		s.fail(w, r, "/account", errors.New("SQS-A040 the second factor is required for administrators on this installation"))
+		s.fail(w, r, "/account", auth.ErrTOTPRequired)
 		return
 	}
 	if err := s.A.Auth.DisableTOTP(r.Context(), p.Actor(), p.User.ID); err != nil {

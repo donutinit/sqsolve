@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf16"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // Builders of synthetic blobs in the shapes Resolve uses. No value here comes
@@ -209,5 +211,38 @@ func TestRewriteOFXContext(t *testing.T) {
 	}
 	if _, err := rewriteOFXContext([]byte{0x81, 0x00, 0x01}, version); err == nil {
 		t.Error("bad zstd accepted")
+	}
+}
+
+// TestPayloadSizeLimit: a compressed payload cannot expand without bound, so a
+// crafted blob in a library cannot exhaust sqsolve's memory (audit: zstd
+// decode unbounded).
+func TestPayloadSizeLimit(t *testing.T) {
+	const limit = maxPayloadBytes
+	big := make([]byte, limit+1)
+	// EncodeAll writes the decoded size in the frame header.
+	if _, _, err := payload(encodePayload(big, true)); err == nil || !strings.Contains(err.Error(), "expands to more than 64 MiB") {
+		t.Fatalf("declared size: %v", err)
+	}
+	// A streaming frame does not declare it: the limit applies while decoding.
+	var buf bytes.Buffer
+	w, err := zstd.NewWriter(&buf, zstd.WithEncoderConcurrency(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Write(big)
+	w.Close()
+	if _, _, err := payload(append([]byte{0x81}, buf.Bytes()...)); err == nil || !strings.Contains(err.Error(), "expands to more than 64 MiB") {
+		t.Fatalf("undeclared size: %v", err)
+	}
+	// A grade whose node tree is too large fails (emit adds SQS-E006).
+	if _, err := rewriteOFXContext(encodePayload(big, true), "v"); err == nil || !strings.Contains(err.Error(), "expands to more than 64 MiB") {
+		t.Fatalf("node tree: %v", err)
+	}
+	// Up to the limit it decodes.
+	ok := bytes.Repeat([]byte("x"), limit)
+	raw, compressed, err := payload(encodePayload(ok, true))
+	if err != nil || !compressed || len(raw) != limit {
+		t.Fatalf("within the limit: %d %v %v", len(raw), compressed, err)
 	}
 }

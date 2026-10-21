@@ -33,8 +33,19 @@ func newService(t *testing.T) *Service {
 }
 
 func TestPasswordHash(t *testing.T) {
-	h := HashPassword("correct horse battery")
-	if !CheckPassword(h, "correct horse battery") || CheckPassword(h, "wrong") || CheckPassword("garbage", "x") {
+	ctx := context.Background()
+	h, err := HashPassword(ctx, "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(hash, pw string) bool {
+		ok, err := CheckPassword(ctx, hash, pw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if !check(h, "correct horse battery") || check(h, "wrong") || check("garbage", "x") {
 		t.Fatal("hash check")
 	}
 	if !strings.HasPrefix(h, "$argon2id$v=19$m=65536,t=3,p=2$") {
@@ -166,35 +177,10 @@ func TestLoginSessionCSRFAndLockout(t *testing.T) {
 	if !errors.As(err, &locked) {
 		t.Fatalf("expected lockout, got %v", err)
 	}
-	// Ten wrong passwords in a row lock the account for good, even with the
-	// right password afterwards; only Unlock lifts it and resets the count.
-	base := time.Now()
-	for i := 0; i < 20; i++ {
-		base = base.Add(20 * time.Minute)
-		s.Now = func() time.Time { return base }
-		s.Login(ctx, "diego", "wrong", "10.0.0.9", "")
+	if !strings.HasPrefix(err.Error(), "SQS-A003 too many attempts; wait ") {
+		t.Fatalf("rate limit message: %v", err)
 	}
-	base = base.Add(20 * time.Minute)
-	s.Now = func() time.Time { return base }
-	if _, _, _, err := s.Login(ctx, "diego", "tungsten light 3200K", "10.0.0.3", ""); !errors.Is(err, ErrAccountLocked) {
-		t.Fatalf("expected account lock, got %v", err)
-	}
-	if u2, _ := s.UserByName(ctx, "diego"); u2.LockedAt == nil || u2.FailedLogins < LockoutAttempts {
-		t.Fatal("lock not recorded")
-	}
-	if _, err := s.Session(ctx, raw, "", false); !errors.Is(err, ErrNoSession) {
-		t.Fatal("session of a locked account still valid")
-	}
-	if err := s.Unlock(ctx, audit.CLI, u.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, err := s.Login(ctx, "diego", "tungsten light 3200K", "10.0.0.3", ""); err != nil {
-		t.Fatal("login after unlock:", err)
-	}
-	if u3, _ := s.UserByName(ctx, "diego"); u3.FailedLogins != 0 || u3.LockedAt != nil {
-		t.Fatal("failure count not reset")
-	}
-	s.Now = time.Now
+	// The account lock after LockoutAttempts is in TestLockoutIsTemporary.
 }
 
 func TestTOTPFlowAndTokens(t *testing.T) {

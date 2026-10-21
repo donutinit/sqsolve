@@ -31,10 +31,29 @@ const Superuser = "postgres"
 // ErrUnavailable means PostgreSQL cannot be reached right now.
 var ErrUnavailable = errors.New("SQS-P001 PostgreSQL is not available")
 
+// Errors of statements that waited or ran for too long (docs 07 §10).
+var (
+	ErrLockTimeout      = errors.New("SQS-P050 PostgreSQL gave up waiting for a lock that another session holds (lock_timeout); try again when that session finishes")
+	ErrStatementTimeout = errors.New("SQS-P051 PostgreSQL cancelled a statement that ran for longer than sqsolve allows (statement_timeout)")
+)
+
+// Timeouts of every connection sqsolve opens with pgx: the admin pool,
+// ConnectDB and Superuser. pg_dump and pg_restore are separate processes and
+// keep their own --lock-wait-timeout; the lock wait here matches pg_dump's.
+const (
+	DefaultLockTimeout      = 60 * time.Second
+	DefaultStatementTimeout = 30 * time.Minute
+)
+
 // Client manages connections to the server.
 type Client struct {
 	SocketDir string
 	Port      int
+	// LockTimeout and StatementTimeout replace the defaults when set. They
+	// apply to connections opened afterwards (call Open again for the pool).
+	LockTimeout      time.Duration
+	StatementTimeout time.Duration
+
 	adminPass secrets.String
 	superPass secrets.String
 
@@ -57,7 +76,35 @@ func (c *Client) connConfig(user string, pass secrets.String, db string) (*pgx.C
 	cfg.Database = db
 	cfg.ConnectTimeout = 10 * time.Second
 	cfg.RuntimeParams["application_name"] = "sqsolve"
+	// A statement behind a lock held by Resolve (or anyone else) fails with
+	// SQS-P050 instead of waiting forever and holding a job slot.
+	cfg.RuntimeParams["lock_timeout"] = millis(c.LockTimeout, DefaultLockTimeout)
+	cfg.RuntimeParams["statement_timeout"] = millis(c.StatementTimeout, DefaultStatementTimeout)
 	return cfg, nil
+}
+
+func millis(d, def time.Duration) string {
+	if d <= 0 {
+		d = def
+	}
+	return strconv.FormatInt(d.Milliseconds(), 10)
+}
+
+// WrapTimeout adds ErrLockTimeout or ErrStatementTimeout to an error that
+// PostgreSQL raised because of lock_timeout or statement_timeout, keeping the
+// PostgreSQL error in the chain. Other errors are returned unchanged.
+func WrapTimeout(err error) error {
+	var pe *pgconn.PgError
+	if !errors.As(err, &pe) {
+		return err
+	}
+	switch {
+	case pe.Code == "55P03":
+		return fmt.Errorf("%w: %w", ErrLockTimeout, err)
+	case pe.Code == "57014" && strings.Contains(pe.Message, "statement timeout"):
+		return fmt.Errorf("%w: %w", ErrStatementTimeout, err)
+	}
+	return err
 }
 
 // Bootstrap creates or repairs sqsolve_admin using the superuser. It is
@@ -88,7 +135,9 @@ func (c *Client) Bootstrap(ctx context.Context) error {
 	}
 	stmts := []string{
 		stmt,
-		"GRANT pg_monitor, pg_signal_backend, pg_read_all_data TO " + role,
+		// pg_use_reserved_connections: the reserved_connections slots of
+		// postgresql.conf, so workstations cannot starve backups.
+		"GRANT pg_monitor, pg_signal_backend, pg_read_all_data, pg_use_reserved_connections TO " + role,
 		"GRANT EXECUTE ON FUNCTION pg_catalog.pg_reload_conf() TO " + role,
 		"GRANT EXECUTE ON FUNCTION pg_catalog.pg_hba_file_rules() TO " + role,
 		"GRANT SELECT ON pg_catalog.pg_hba_file_rules TO " + role,

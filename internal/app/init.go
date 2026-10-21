@@ -3,8 +3,8 @@
 package app
 
 import (
+	"crypto/tls"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -17,7 +17,6 @@ import (
 	"github.com/donutinit/sqsolve/internal/fsx"
 	"github.com/donutinit/sqsolve/internal/pgconf"
 	"github.com/donutinit/sqsolve/internal/secrets"
-	"github.com/donutinit/sqsolve/internal/ulid"
 )
 
 // Paths inside the app volume.
@@ -94,57 +93,72 @@ func Init(c *config.Config, out io.Writer) error {
 		return true, nil
 	}
 
+	// Identity of the three volumes, decided before writing anything
+	// (ADR 0023).
+	for _, v := range []struct {
+		on   bool
+		name string
+	}{{c.BackupsAdopt, "SQSOLVE_BACKUPS_ADOPT"}, {c.DBAdopt, "SQSOLVE_DB_ADOPT"}, {c.AppAdopt, "SQSOLVE_APP_ADOPT"}} {
+		if v.on {
+			say("warning: %s is set: remove it from the compose file once the volume is marked, so an unmounted disk is never adopted", v.name)
+		}
+	}
+	plan, err := planVolumes(c)
+	if err != nil {
+		return err
+	}
+	for _, w := range plan.Warnings {
+		say("warning: %s", w)
+	}
+	instanceID := plan.ID
+	mark := func(dir, volume string) error {
+		if err := fsx.WriteMarker(dir, fsx.Marker{InstanceID: instanceID, Volume: volume, CreatedAt: time.Now().UTC()}); err != nil {
+			return fmt.Errorf("SQS-C081 could not mark the %s volume: %w", volume, err)
+		}
+		chown(filepath.Join(dir, fsx.MarkerName), c.UID, c.GID)
+		return nil
+	}
+
 	// App volume.
 	for _, d := range []string{c.AppDir, c.SecretsDir(), filepath.Join(c.AppDir, "tls"), stateBackupDir(c)} {
 		if err := mkdir(d, 0o700, c.UID, c.GID); err != nil {
 			return err
 		}
 	}
+	if plan.AdoptedFrom != "" {
+		say("adopting identity %s from the %s volume (recovery of a previous installation)", instanceID, plan.AdoptedFrom)
+	}
 
-	// Backups volume and instance identity.
-	if err := os.MkdirAll(c.BackupDir, 0o700); err != nil {
-		return fmt.Errorf("SQS-C051 backups volume: %w", err)
-	}
-	instanceID := ""
-	if b, err := os.ReadFile(instanceIDPath(c)); err == nil {
-		instanceID = strings.TrimSpace(string(b))
-	}
-	marker, merr := fsx.ReadMarker(c.BackupDir)
-	switch {
-	case merr == nil && instanceID == "":
-		instanceID = marker.InstanceID
-		say("adopting identity %s from the backups volume (recovery of a previous installation)", instanceID)
-	case merr == nil && marker.InstanceID != instanceID:
-		return fmt.Errorf("SQS-S003 the backups volume belongs to another installation (%s); this one is %s", marker.InstanceID, instanceID)
-	case errors.Is(merr, fsx.ErrNoMarker):
-		empty, err := fsx.IsEmptyDir(c.BackupDir)
-		if err != nil {
-			return err
+	// Backups volume: written only when it belongs to this installation.
+	if plan.MarkBackups {
+		if err := os.MkdirAll(c.BackupDir, 0o700); err != nil {
+			return fmt.Errorf("SQS-C051 backups volume: %w", err)
 		}
-		if !empty && os.Getenv("SQSOLVE_BACKUPS_ADOPT") != "1" {
-			return errors.New("SQS-S004 the backups volume has files but does not belong to sqsolve. Mount an empty folder or set SQSOLVE_BACKUPS_ADOPT=1 if you know it is the right one")
-		}
-		if instanceID == "" {
-			instanceID = ulid.New()
-		}
-		if err := fsx.WriteMarker(c.BackupDir, fsx.Marker{InstanceID: instanceID, Volume: "backups", CreatedAt: time.Now().UTC()}); err != nil {
+		if err := mark(c.BackupDir, "backups"); err != nil {
 			return err
 		}
 		say("backups volume marked for installation %s", instanceID)
-	case merr != nil:
-		return merr
 	}
 	if _, err := writeIfMissing(instanceIDPath(c), []byte(instanceID+"\n"), 0o600, c.UID, c.GID); err != nil {
 		return err
 	}
-	for _, d := range []string{"libraries", "_system", "_import"} {
-		if err := mkdir(filepath.Join(c.BackupDir, d), 0o700, c.UID, c.GID); err != nil {
+	if plan.MarkApp {
+		if err := mark(c.AppDir, "app"); err != nil {
 			return err
 		}
+	} else {
+		chown(filepath.Join(c.AppDir, fsx.MarkerName), c.UID, c.GID)
 	}
-	os.Chmod(c.BackupDir, 0o700)
-	chown(c.BackupDir, c.UID, c.GID)
-	chown(filepath.Join(c.BackupDir, fsx.MarkerName), c.UID, c.GID)
+	if plan.BackupsOK {
+		for _, d := range []string{"libraries", "_system", "_import"} {
+			if err := mkdir(filepath.Join(c.BackupDir, d), 0o700, c.UID, c.GID); err != nil {
+				return err
+			}
+		}
+		os.Chmod(c.BackupDir, 0o700)
+		chown(c.BackupDir, c.UID, c.GID)
+		chown(filepath.Join(c.BackupDir, fsx.MarkerName), c.UID, c.GID)
+	}
 
 	// Secrets of sqsolve.
 	if created, err := writeIfMissing(masterKeyPath(c), []byte(base64.StdEncoding.EncodeToString(secrets.RandomBytes(32))+"\n"), 0o400, c.UID, c.GID); err != nil {
@@ -160,6 +174,14 @@ func Init(c *config.Config, out io.Writer) error {
 	conf := c.PGConfDir()
 	if err := mkdir(c.PGDir, 0o755, -1, -1); err != nil {
 		return err
+	}
+	if plan.MarkDB {
+		if err := mark(c.PGDir, "db"); err != nil {
+			return err
+		}
+	} else {
+		// sqsolve reads it (doctor); a new server can use another UID.
+		chown(filepath.Join(c.PGDir, fsx.MarkerName), c.UID, c.GID)
 	}
 	// PGDATA is prepared here, like the permissions container of TrueNAS
 	// apps, so the postgres container runs as its own user and never needs
@@ -210,16 +232,22 @@ func Init(c *config.Config, out io.Writer) error {
 	if _, err := writeIfMissing(filepath.Join(conf, "pg_ident.conf"), []byte("# Empty: sqsolve does not use user name maps.\n"), 0o640, c.UID, c.PGGID); err != nil {
 		return err
 	}
+	// The folder and the certificate are readable so sqsolve can show its
+	// expiry; the key belongs to the PostgreSQL user with mode 0600, which
+	// PostgreSQL accepts. Owned by root, sqsolve cannot replace them.
 	tlsDir := filepath.Join(conf, "tls")
 	tlsOwner := c.UID
 	if root {
 		tlsOwner = 0
 	}
-	if err := mkdir(tlsDir, 0o750, tlsOwner, c.PGGID); err != nil {
+	if err := mkdir(tlsDir, 0o755, tlsOwner, c.PGGID); err != nil {
 		return err
 	}
 	crt, key := filepath.Join(tlsDir, "server.crt"), filepath.Join(tlsDir, "server.key")
-	if _, err := os.Stat(crt); err != nil {
+	if _, err := fsx.RecoverPair(key, crt); err != nil {
+		return fmt.Errorf("SQS-C080 could not write the PostgreSQL certificate: %w", err)
+	}
+	if _, err := tls.LoadX509KeyPair(crt, key); err != nil {
 		hosts := []string{"localhost"}
 		if c.AdvertisedHost != "" {
 			hosts = append(hosts, c.AdvertisedHost)
@@ -228,26 +256,23 @@ func Init(c *config.Config, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if err := fsx.WriteFileAtomic(crt, cp, 0o644); err != nil {
-			return err
-		}
-		keyMode := os.FileMode(0o640)
-		if !root {
-			keyMode = 0o600
-		}
-		if err := fsx.WriteFileAtomic(key, kp, keyMode); err != nil {
-			return err
+		// Key first, then the certificate: a pair that never mixes halves.
+		if err := fsx.WritePair(key, kp, 0o600, crt, cp, 0o644); err != nil {
+			return fmt.Errorf("SQS-C080 could not write the PostgreSQL certificate: %w", err)
 		}
 		say("PostgreSQL TLS certificate generated")
 	}
 	chown(crt, tlsOwner, c.PGGID)
-	chown(key, tlsOwner, c.PGGID)
-	if root {
-		os.Chmod(key, 0o640)
-	}
+	os.Chmod(crt, 0o644)
+	chown(key, c.PGUID, c.PGGID)
+	os.Chmod(key, 0o600)
 
 	if c.FixPerms && root {
-		for _, dir := range []string{c.AppDir, c.BackupDir} {
+		dirs := []string{c.AppDir}
+		if plan.BackupsOK {
+			dirs = append(dirs, c.BackupDir)
+		}
+		for _, dir := range dirs {
 			filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 				if err == nil {
 					os.Lchown(p, c.UID, c.GID)

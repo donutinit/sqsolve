@@ -23,8 +23,11 @@ Format: context, decision, alternatives, consequences. Statuses: **Proposed**, *
 | [0015](0015-remote-access.md) | Remote access only over VPN; 5432 never to the Internet | Accepted |
 | [0016](0016-base-image.md) | sqsolve image based on the official PostgreSQL image | Accepted |
 | [0017](0017-postgresql-major-version.md) | PostgreSQL major versions by logical migration to a new cluster | Accepted |
-| [0018](0018-three-volumes.md) | Three visible volumes: database, application and backups | Accepted |
+| [0018](0018-three-volumes.md) | Three visible volumes: database, application and backups | Accepted (complemented by 0023) |
 | [0019](0019-experimental-export.md) | Experimental export of projects (`.drp`) and grades (`.drx`) reading a fixed set of tables | Accepted (experimental in 1.0) |
 | [0020](0020-visual-identity.md) | "Node" visual identity: symbol, outlined wordmark, brand palette only in the ports, icons | Accepted |
-| [0021](0021-proportionate-security.md) | Security proportionate to LAN and VPN: no reauthentication, 8-character passwords, long sessions, mandatory HTTPS, account lock with CLI unlock | Accepted |
+| [0021](0021-proportionate-security.md) | Security proportionate to LAN and VPN: no reauthentication, 8-character passwords, long sessions, mandatory HTTPS, account lock with CLI unlock | Accepted (account lock amended by 0025) |
 | [0022](0022-activity-based-backups.md) | Activity-based backups: check every N minutes and back up only if the library changed; a current backup is not overdue | Accepted |
+| [0023](0023-volume-identity.md) | Every volume carries a marker with the installation and its role; init refuses an empty or foreign db or app volume and never adopts an unmarked backups folder; backups problems do not stop init; sqsolve holds when the PostgreSQL cluster identifier changes | Accepted |
+| [0024](0024-maintenance-blocks-roles.md) | Maintenance sets the library roles `NOLOGIN` and leaves the database open to `sqsolve_admin`, so backups, restores and deletes go on in maintenance | Accepted |
+| [0025](0025-temporary-login-lockout.md) | The login lockout lasts 15 minutes, spares open sessions and API tokens, and password hashing runs in at most 4 slots | Accepted |

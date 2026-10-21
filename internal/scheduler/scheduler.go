@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -58,7 +59,7 @@ func Validate(cron, tz string) (*time.Location, error) {
 	}
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
-		return nil, fmt.Errorf("%w: zona horaria %q", ErrInvalidCron, tz)
+		return nil, fmt.Errorf("%w: time zone %q", ErrInvalidCron, tz)
 	}
 	return loc, nil
 }
@@ -203,7 +204,7 @@ func (s *Scheduler) List(ctx context.Context) ([]*Schedule, error) {
 
 // Run checks due schedules until ctx ends.
 func (s *Scheduler) Run(ctx context.Context) {
-	s.Tick(ctx)
+	s.safeTick(ctx)
 	t := time.NewTicker(15 * time.Second)
 	defer t.Stop()
 	for {
@@ -211,17 +212,35 @@ func (s *Scheduler) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.Tick(ctx)
+			s.safeTick(ctx)
 		}
 	}
 }
 
-// Tick enqueues every due schedule once.
+func (s *Scheduler) safeTick(ctx context.Context) {
+	defer func() {
+		if p := recover(); p != nil {
+			s.reportPanic("scheduler", p)
+		}
+	}()
+	s.Tick(ctx)
+}
+
+// reportPanic logs a recovered panic and records a critical event; the
+// scheduler goes on with the next schedule or tick.
+func (s *Scheduler) reportPanic(where string, p any) {
+	s.log.Error("panic in the scheduler", "where", where, "panic", p, "stack", string(debug.Stack()))
+	s.ev.Emit(context.Background(), events.Event{Type: events.SystemInternalError, Severity: events.Critical,
+		Message: fmt.Sprintf("Internal error in the %s (it keeps running): %v", where, p), Data: map[string]any{"loop": "scheduler"}})
+}
+
+// Tick enqueues every due schedule once. A panic in one schedule does not
+// stop the others.
 func (s *Scheduler) Tick(ctx context.Context) {
 	now := s.Now()
 	rows, err := s.db.QueryContext(ctx, `SELECT `+cols+` FROM schedules WHERE enabled = 1 AND next_run_at <= ?`, store.T(now))
 	if err != nil {
-		s.log.Error("programador", "err", err)
+		s.log.Error("scheduler", "err", err)
 		return
 	}
 	var due []*Schedule
@@ -232,8 +251,35 @@ func (s *Scheduler) Tick(ctx context.Context) {
 	}
 	rows.Close()
 	for _, sc := range due {
-		s.fire(ctx, sc, now)
+		s.fireSafe(ctx, sc, now)
 	}
+}
+
+// fireSafe fires one schedule. After a panic the schedule moves on to its
+// next run, so a broken schedule is reported once per run, not every tick.
+func (s *Scheduler) fireSafe(ctx context.Context, sc *Schedule, now time.Time) {
+	defer func() {
+		p := recover()
+		if p == nil {
+			return
+		}
+		s.reportPanic(fmt.Sprintf("scheduler (schedule %s, %s %s)", sc.ID, sc.Kind, sc.TargetID), p)
+		k := s.kinds[sc.Kind]
+		loc, err := time.LoadLocation(sc.Timezone)
+		if err != nil {
+			return
+		}
+		var jitter time.Duration
+		if k.Jitter {
+			jitter = JitterFor(sc.TargetID)
+		}
+		if next, err := Next(sc.Cron, loc, now, jitter); err == nil {
+			if _, err := s.db.ExecContext(ctx, `UPDATE schedules SET next_run_at = ? WHERE id = ?`, store.T(next), sc.ID); err != nil {
+				s.log.Error("could not move the schedule to its next run", "schedule", sc.ID, "err", err)
+			}
+		}
+	}()
+	s.fire(ctx, sc, now)
 }
 
 func (s *Scheduler) fire(ctx context.Context, sc *Schedule, now time.Time) {
@@ -276,6 +322,8 @@ func (s *Scheduler) fire(ctx context.Context, sc *Schedule, now time.Time) {
 		}
 		jobID = j.ID
 	}
-	s.db.ExecContext(ctx, `UPDATE schedules SET next_run_at = ?, last_run_at = ?, last_job_id = ? WHERE id = ?`,
-		store.T(next), store.T(now), jobID, sc.ID)
+	if _, err := s.db.ExecContext(ctx, `UPDATE schedules SET next_run_at = ?, last_run_at = ?, last_job_id = ? WHERE id = ?`,
+		store.T(next), store.T(now), jobID, sc.ID); err != nil {
+		s.log.Error("could not move the schedule to its next run", "schedule", sc.ID, "err", err)
+	}
 }

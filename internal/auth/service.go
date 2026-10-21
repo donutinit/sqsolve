@@ -31,8 +31,12 @@ import (
 const (
 	SessionIdle = 30 * 24 * time.Hour
 	// LockoutAttempts is the number of consecutive wrong passwords that locks
-	// an account until `sqsolve admin unlock` (ADR 0021).
+	// an account for LockoutDuration (ADR 0025, amending ADR 0021).
 	LockoutAttempts = 10
+	// LockoutDuration is how long the lock refuses password logins. When it
+	// expires the failure count starts again from zero; `sqsolve admin
+	// unlock` lifts it sooner.
+	LockoutDuration = 15 * time.Minute
 	SessionAbsolute = 180 * 24 * time.Hour
 )
 
@@ -47,12 +51,26 @@ type User struct {
 	LastLoginAt *time.Time
 	DisabledAt  *time.Time
 	// FailedLogins counts consecutive wrong passwords; at LockoutAttempts the
-	// account is locked (LockedAt) until `sqsolve admin unlock` (ADR 0021).
+	// account is locked (LockedAt) for LockoutDuration (ADR 0025). The lock
+	// only refuses password logins: open sessions and API tokens keep working.
 	FailedLogins int
 	LockedAt     *time.Time
 	hash         string
 	totpEnc      string
 	totpLast     int64
+}
+
+// LockedUntil is when the current login lock expires (zero if none).
+func (u *User) LockedUntil() time.Time {
+	if u.LockedAt == nil {
+		return time.Time{}
+	}
+	return u.LockedAt.Add(LockoutDuration)
+}
+
+// IsLocked reports whether the login lock still refuses passwords at now.
+func (u *User) IsLocked(now time.Time) bool {
+	return u.LockedAt != nil && now.Before(u.LockedUntil())
 }
 
 // Name returns the display name or the username.
@@ -74,9 +92,10 @@ type Principal struct {
 	CSRF      string
 }
 
-// Can reports whether the principal may perform a.
+// Can reports whether the principal may perform a. A login lock does not
+// matter here: it only refuses new password logins (ADR 0025).
 func (p *Principal) Can(a Action) bool {
-	if p == nil || p.User == nil || p.User.DisabledAt != nil || p.User.LockedAt != nil {
+	if p == nil || p.User == nil || p.User.DisabledAt != nil {
 		return false
 	}
 	if !RoleAllows(p.User.Role, a) {
@@ -202,10 +221,14 @@ func (s *Service) CreateUser(ctx context.Context, by audit.Actor, username, disp
 	if err := ValidatePassword(password, username); err != nil {
 		return nil, err
 	}
+	hash, err := HashPassword(ctx, password)
+	if err != nil {
+		return nil, err
+	}
 	id := ulid.New()
 	now := store.NowT()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO admin_users(id, username, display_name, password_hash, role, created_at, password_changed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, username, strings.TrimSpace(display), HashPassword(password), string(role), now, now)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO admin_users(id, username, display_name, password_hash, role, created_at, password_changed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, username, strings.TrimSpace(display), hash, string(role), now, now)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, errors.New("SQS-A013 a user with that name already exists")
@@ -216,7 +239,9 @@ func (s *Service) CreateUser(ctx context.Context, by audit.Actor, username, disp
 	return s.UserByID(ctx, id)
 }
 
-// SetPassword changes a password and ends the user's other sessions.
+// SetPassword changes a password, clears a login lock and ends the user's
+// other sessions. API tokens are separate credentials and keep working; each
+// one is revoked on its own (docs 08 §4).
 func (s *Service) SetPassword(ctx context.Context, by audit.Actor, userID, password, keepSession string) error {
 	u, err := s.UserByID(ctx, userID)
 	if err != nil {
@@ -225,7 +250,11 @@ func (s *Service) SetPassword(ctx context.Context, by audit.Actor, userID, passw
 	if err := ValidatePassword(password, u.Username); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET password_hash = ?, password_changed_at = ?, failed_logins = 0, locked_at = NULL WHERE id = ?`, HashPassword(password), store.NowT(), userID); err != nil {
+	hash, err := HashPassword(ctx, password)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET password_hash = ?, password_changed_at = ?, failed_logins = 0, locked_at = NULL WHERE id = ?`, hash, store.NowT(), userID); err != nil {
 		return err
 	}
 	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND id_hash <> ?`, userID, keepSession)
@@ -268,8 +297,9 @@ func (s *Service) UpdateUser(ctx context.Context, by audit.Actor, userID, displa
 // ErrBadCredentials hides whether the user exists.
 var ErrBadCredentials = errors.New("SQS-A002 incorrect username or password")
 
-// ErrAccountLocked is returned for an account locked after LockoutAttempts.
-var ErrAccountLocked = errors.New("SQS-A004 account locked after incorrect passwords; in the container console: sqsolve admin unlock <username>")
+// ErrAccountLocked is returned while an account is locked after
+// LockoutAttempts wrong passwords in a row (ADR 0025).
+var ErrAccountLocked = errors.New("SQS-A004 account locked for 15 minutes after 10 incorrect passwords in a row; try again later, or unlock it now in the container console: sqsolve admin unlock <username>")
 
 // ErrLocked is returned while a login is rate limited.
 type ErrLocked struct{ Until time.Time }
@@ -279,7 +309,13 @@ func (e ErrLocked) Error() string {
 }
 
 // Login checks credentials and creates a session. When the user has TOTP the
-// session starts as pending until VerifySecondFactor succeeds.
+// session starts as pending until VerifySecondFactor succeeds. The rate
+// limiter counts the attempt before the password is hashed, so parallel
+// attempts cannot slip past it, and the hash runs inside one of the
+// HashSlots (ErrBusy when none frees up in time). An attempt against a
+// locked account is refused before it is counted: it checks no password, and
+// retrying during the lock must not leave a wait behind once `sqsolve admin
+// unlock` lifts it.
 func (s *Service) Login(ctx context.Context, username, password, ip, ua string) (token string, p *Principal, mfa bool, err error) {
 	now := s.Now()
 	if until := s.limiter.blocked(ip, username, now); !until.IsZero() {
@@ -287,21 +323,31 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 	}
 	u, uerr := s.UserByName(ctx, username)
 	if uerr == nil && u.LockedAt != nil {
-		s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: username, IP: ip}, "auth.login", "user", u.ID, audit.Denied, map[string]any{"locked": true})
-		return "", nil, false, ErrAccountLocked
+		if u.IsLocked(now) {
+			s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: username, IP: ip}, "auth.login", "user", u.ID, audit.Denied, map[string]any{"locked": true})
+			return "", nil, false, ErrAccountLocked
+		}
+		s.expireLock(ctx, u, now)
+	}
+	until, burst := s.limiter.reserve(ip, username, now)
+	if !until.IsZero() {
+		return "", nil, false, ErrLocked{until}
 	}
 	hash := dummyHash
 	if uerr == nil {
 		hash = u.hash
 	}
-	ok := CheckPassword(hash, password)
+	ok, err := CheckPassword(ctx, hash, password)
+	if err != nil {
+		return "", nil, false, err
+	}
 	if uerr != nil || !ok || u.DisabledAt != nil {
-		if s.limiter.fail(ip, username, now) {
+		if burst {
 			s.ev.Emit(ctx, events.Event{Type: events.AuthBruteforce, Severity: events.Warning,
 				Message: fmt.Sprintf("Many failed login attempts from %s", ip), Data: map[string]any{"ip": ip, "username": username}})
 		}
 		s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: username, IP: ip}, "auth.login", "user", username, audit.Denied, nil)
-		if uerr == nil && !ok && s.countFailure(ctx, u, ip) {
+		if uerr == nil && !ok && s.countFailure(ctx, u, ip, now) {
 			return "", nil, false, ErrAccountLocked
 		}
 		return "", nil, false, ErrBadCredentials
@@ -321,25 +367,43 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 	return token, p, u.TOTPEnabled, nil
 }
 
+// expireLock clears a lock whose LockoutDuration has passed, together with
+// its failure count, so the account starts again from zero.
+func (s *Service) expireLock(ctx context.Context, u *User, now time.Time) {
+	s.db.ExecContext(ctx, `UPDATE admin_users SET failed_logins = 0, locked_at = NULL WHERE id = ? AND locked_at IS NOT NULL AND locked_at <= ?`,
+		u.ID, store.T(now.Add(-LockoutDuration)))
+	u.FailedLogins, u.LockedAt = 0, nil
+}
+
 // countFailure records a wrong password and, at LockoutAttempts consecutive
-// failures, locks the account and closes its sessions. Only Unlock lifts it.
-func (s *Service) countFailure(ctx context.Context, u *User, ip string) bool {
-	n := u.FailedLogins + 1
-	if n < LockoutAttempts {
-		s.db.ExecContext(ctx, `UPDATE admin_users SET failed_logins = ? WHERE id = ?`, n, u.ID)
+// failures, locks the account for LockoutDuration. The database increments
+// the count, so parallel failures are not lost. Locking never closes
+// sessions nor revokes API tokens (ADR 0025): an anonymous caller who only
+// knows the username must not be able to log its owner out.
+func (s *Service) countFailure(ctx context.Context, u *User, ip string, now time.Time) bool {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `UPDATE admin_users SET failed_logins = failed_logins + 1 WHERE id = ? RETURNING failed_logins`, u.ID).Scan(&n); err != nil {
 		return false
 	}
-	s.db.ExecContext(ctx, `UPDATE admin_users SET failed_logins = ?, locked_at = ? WHERE id = ?`, n, store.NowT(), u.ID)
-	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, u.ID)
-	s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: u.Username, IP: ip}, "auth.locked", "user", u.ID, audit.OK, map[string]any{"attempts": n})
-	s.ev.Emit(ctx, events.Event{Type: events.AuthLocked, Severity: events.Critical,
-		Message: fmt.Sprintf("Account %q was locked after %d consecutive incorrect passwords; unlock it with \"sqsolve admin unlock %s\" in the container console", u.Username, n, u.Username),
-		Data:    map[string]any{"username": u.Username, "ip": ip}})
+	if n < LockoutAttempts {
+		return false
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE admin_users SET locked_at = ? WHERE id = ? AND locked_at IS NULL`, store.T(now), u.ID)
+	if err != nil {
+		return true
+	}
+	if first, _ := res.RowsAffected(); first == 1 {
+		minutes := int(LockoutDuration.Minutes())
+		s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: u.Username, IP: ip}, "auth.locked", "user", u.ID, audit.OK, map[string]any{"attempts": n, "minutes": minutes})
+		s.ev.Emit(ctx, events.Event{Type: events.AuthLocked, Severity: events.Critical,
+			Message: fmt.Sprintf("Account %q was locked for %d minutes after %d consecutive incorrect passwords. Its open sessions and API tokens keep working. To unlock it sooner: \"sqsolve admin unlock %s\" in the container console", u.Username, minutes, n, u.Username),
+			Data:    map[string]any{"username": u.Username, "ip": ip}})
+	}
 	return true
 }
 
-// Unlock lifts the lockout of an account and resets its failure count. It is
-// only offered from the container console (ADR 0021).
+// Unlock lifts a login lock before it expires and resets the failure count.
+// It is only offered from the container console (ADR 0021).
 func (s *Service) Unlock(ctx context.Context, by audit.Actor, userID string) error {
 	u, err := s.UserByID(ctx, userID)
 	if err != nil {
@@ -417,7 +481,7 @@ func (s *Service) Session(ctx context.Context, raw, ip string, allowPending bool
 		return nil, ErrMFAPending
 	}
 	u, err := s.UserByID(ctx, userID)
-	if err != nil || u.DisabledAt != nil || u.LockedAt != nil {
+	if err != nil || u.DisabledAt != nil {
 		return nil, ErrNoSession
 	}
 	if now.Sub(store.ParseT(last)) > time.Minute {
@@ -469,14 +533,14 @@ func (s *Service) checkSecondFactor(ctx context.Context, u *User, code string) e
 	return ErrBadCode
 }
 
-// VerifySecondFactor completes a pending login.
+// VerifySecondFactor completes a pending login. As in Login, the attempt is
+// counted before the code is checked.
 func (s *Service) VerifySecondFactor(ctx context.Context, p *Principal, code string) error {
 	now := s.Now()
-	if until := s.limiter.blocked(p.IP, p.User.Username, now); !until.IsZero() {
+	if until, _ := s.limiter.reserve(p.IP, p.User.Username, now); !until.IsZero() {
 		return ErrLocked{until}
 	}
 	if err := s.checkSecondFactor(ctx, p.User, code); err != nil {
-		s.limiter.fail(p.IP, p.User.Username, now)
 		s.audit.Record(ctx, p.Actor(), "auth.totp", "user", p.User.ID, audit.Denied, nil)
 		return err
 	}
@@ -525,6 +589,27 @@ func (s *Service) EnableTOTP(ctx context.Context, p *Principal, secret, code str
 	}
 	s.audit.Record(ctx, p.Actor(), "auth.totp_enable", "user", p.User.ID, audit.OK, nil)
 	return codes, nil
+}
+
+// ErrTOTPRequired refuses removing an administrator's second factor while
+// the installation requires it (docs 08 §4).
+var ErrTOTPRequired = errors.New("SQS-A040 the second factor is required for administrators on this installation")
+
+// ErrEnrollTOTP refuses an administrator's browser session that has no
+// second factor while the installation requires one: the panel sends it to
+// enrollment and the API answers 403.
+var ErrEnrollTOTP = errors.New("SQS-A051 the second factor is required for administrators on this installation: enable it in the panel before continuing")
+
+// MustEnrollTOTP reports whether p is an administrator's session without a
+// second factor while the installation requires one for administrators
+// ("Second factor required for administrators", RF-USR-02). required reads
+// that setting and is only called when the answer depends on it. API tokens
+// are not affected: they are separate credentials with their own scopes.
+func MustEnrollTOTP(p *Principal, required func() bool) bool {
+	if p == nil || p.User == nil || p.TokenID != "" || p.User.Role != RoleAdmin || p.User.TOTPEnabled {
+		return false
+	}
+	return required()
 }
 
 // DisableTOTP turns the second factor off.
@@ -677,10 +762,16 @@ func (l *limiter) keys(ip, user string) []string {
 	return []string{"ip:" + ip, "user:" + strings.ToLower(user)}
 }
 
+// blocked reports until when the caller must wait (zero if not limited),
+// without counting anything. reserve repeats the check when it counts.
 func (l *limiter) blocked(ip, user string, now time.Time) time.Time {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	var until time.Time
+	return l.waitLocked(ip, user, now)
+}
+
+// waitLocked is blocked with l.mu held.
+func (l *limiter) waitLocked(ip, user string, now time.Time) (until time.Time) {
 	for _, k := range l.keys(ip, user) {
 		if a := l.m[k]; a != nil && a.until.After(now) && a.until.After(until) {
 			until = a.until
@@ -689,10 +780,18 @@ func (l *limiter) blocked(ip, user string, now time.Time) time.Time {
 	return until
 }
 
-// fail records a failure and reports whether the burst threshold was hit.
-func (l *limiter) fail(ip, user string, now time.Time) bool {
+// reserve checks the limit and, when the attempt may go ahead, counts it as a
+// failure before the caller checks the password or the code, in the same
+// critical section, so parallel attempts are counted as they arrive (audit
+// M2); success clears the count. It returns when the caller may try again
+// (zero if it may go ahead now) and whether this attempt reached the burst
+// threshold.
+func (l *limiter) reserve(ip, user string, now time.Time) (until time.Time, burst bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if until = l.waitLocked(ip, user, now); !until.IsZero() {
+		return until, false
+	}
 	if len(l.m) > 10000 {
 		// Random usernames must not grow the map without bound.
 		for k, a := range l.m {
@@ -701,7 +800,6 @@ func (l *limiter) fail(ip, user string, now time.Time) bool {
 			}
 		}
 	}
-	burst := false
 	for _, k := range l.keys(ip, user) {
 		a := l.m[k]
 		if a == nil || now.Sub(a.last) > time.Hour {
@@ -721,7 +819,7 @@ func (l *limiter) fail(ip, user string, now time.Time) bool {
 			}
 		}
 	}
-	return burst
+	return time.Time{}, burst
 }
 
 func (l *limiter) success(ip, user string) {

@@ -4,6 +4,7 @@ package drp
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -21,7 +22,7 @@ type ExportInfo struct {
 	Files int
 	// Bytes is the size written to the caller.
 	Bytes int64
-	// Notes lists deviations from what Resolve would write, in Spanish.
+	// Notes lists deviations from what Resolve would write.
 	Notes []string
 }
 
@@ -372,6 +373,44 @@ func (s *Session) ExportAlbum(ctx context.Context, viewID string, w io.Writer) (
 	info.Bytes = cw.n
 	info.Notes = e.notes
 	return info, nil
+}
+
+// Download runs one export into memory and closes the session before it
+// returns, so the REPEATABLE READ snapshot and the locks it holds on the
+// library's tables are released before the file goes to a client that may
+// read it slowly (docs 22 §9). kind is "project", "still" or "album".
+func (s *Session) Download(ctx context.Context, kind, id string) (*ExportInfo, []byte, error) {
+	defer s.Close(ctx)
+	var buf bytes.Buffer
+	var info *ExportInfo
+	var err error
+	switch kind {
+	case "project":
+		info, err = s.ExportProject(ctx, id, &buf)
+	case "still":
+		info, err = s.ExportStill(ctx, id, &buf)
+	case "album":
+		info, err = s.ExportAlbum(ctx, id, &buf)
+	default:
+		err = fmt.Errorf("SQS-E006 unknown export kind %q", kind)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return info, buf.Bytes(), nil
+}
+
+// FileName names a download of kind ("project", "still" or "album") with
+// prefix (the library identifier, plus the backup date for an export from a
+// backup) and the exported object's name.
+func FileName(kind, prefix, id string, info *ExportInfo) string {
+	switch kind {
+	case "project":
+		return prefix + "_" + SafeName(info.Name, "project") + ".drp"
+	case "still":
+		return StillFileName(info.Name, strings.ToLower(id))
+	}
+	return prefix + "_" + SafeName(info.Name, "album") + ".zip"
 }
 
 // StillFileName names a .drx after its label and the start of its id, since

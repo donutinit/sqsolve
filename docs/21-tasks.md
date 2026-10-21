@@ -525,5 +525,6 @@ publishable; the rest moves to 1.1 and is noted in each task.
 | Proportionate security | ADR 0021 | Implemented (2026-10-19): no reauthentication, 8-character passwords, long sessions, lock with `admin unlock` |
 | Activity-based backup | ADR 0022 | Implemented (2026-10-19): `activity` mode, gate in the scheduler, mark per backup, protection timeline |
 | Export from backup | docs/22 §7 | Implemented (2026-10-19): `backup.export` job, temporary database, page and API, audit log |
+| Stability audit | ADR 0023, 0024, 0025 | Implemented (2026-10-20): every finding of the 2026-10-20 audit (data safety of restores, recreate and import; verification outcomes; jobs runtime; volume identity and startup; health and alerts; login lockout and web hardening; PostgreSQL client; build, CI and deploy). Not validated with real Resolve: maintenance through `NOLOGIN` (what Resolve shows is To be confirmed) and the reserved connections |
 
 The `[ ]` criteria of each task were not ticked one by one in this pass; the table summarizes.

@@ -17,12 +17,19 @@ name: sqsolve
 # "1.1" receives every fix of the 1.1 series (TrueNAS shows "Update available").
 # To pin an exact version, use for example "1.1.0".
 x-sqsolve: &sqsolve-image "ghcr.io/donutinit/sqsolve:1.1"
-x-postgres: &postgres-image "postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336"
 
 x-env: &env
   TZ: "America/Mexico_City"
   SQSOLVE_UID: "1000"
   SQSOLVE_GID: "1000"
+
+# Container logs rotate: at most 5 files of 10 MB per service. Without a limit Docker keeps
+# them forever and a busy server slowly fills the disk of the container runtime.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
 
 services:
   # Prepares volumes, secrets and the PostgreSQL configuration. Runs once per start.
@@ -32,6 +39,7 @@ services:
     user: "0:0"
     network_mode: none
     environment: *env
+    logging: *logging
     volumes:
       - /path/to/sqsolve/db:/var/lib/postgresql          # Volumes: database (SSD)
       - /path/to/sqsolve/app:/var/lib/sqsolve            # Volumes: application (SSD)
@@ -39,7 +47,10 @@ services:
     restart: "no"
 
   postgres:
-    image: *postgres-image
+    # Pinned by digest. A new sqsolve release does not change this line: when the release
+    # notes announce a new PostgreSQL minor version, paste the new compose file or replace
+    # only this line with the one from the release (docs/manual/user-guide.md, "Updating").
+    image: postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
     # As in TrueNAS apps: sqsolve-init prepares the data folder and PostgreSQL runs
     # with its own user, never as root.
     user: "999:999"
@@ -54,6 +65,7 @@ services:
     ports:
       - "5432:5432"
     shm_size: 256mb
+    logging: *logging
     depends_on:
       sqsolve-init:
         condition: service_completed_successfully
@@ -88,6 +100,10 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
+    # A minimal init process as PID 1 reaps orphaned child processes (pg_dump, pg_restore)
+    # and passes the stop signal on to sqsolve.
+    init: true
+    logging: *logging
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     stop_grace_period: 120s

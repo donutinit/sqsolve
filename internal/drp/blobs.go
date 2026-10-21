@@ -22,8 +22,14 @@ import (
 // (version 2, protobuf field 2, itself a version 1 map) and the node trees of
 // grades for the OFX context rewrite.
 
+// maxPayloadBytes bounds what one compressed payload may expand to, so a
+// crafted blob in a library cannot exhaust sqsolve's memory. Like maxDepth it
+// is a generous bound; the size of the largest blob Resolve writes is To be
+// confirmed with the verification kit (docs 22 §6).
+const maxPayloadBytes = 64 << 20
+
 var (
-	zstdDecoder, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
+	zstdDecoder, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(maxPayloadBytes))
 	zstdEncoder, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(1), zstd.WithZeroFrames(true))
 )
 
@@ -37,6 +43,9 @@ func payload(b []byte) (raw []byte, compressed bool, err error) {
 		return b[1:], false, nil
 	case 0x81:
 		raw, err = zstdDecoder.DecodeAll(b[1:], nil)
+		if errors.Is(err, zstd.ErrDecoderSizeExceeded) {
+			return nil, true, fmt.Errorf("the compressed payload expands to more than %d MiB", maxPayloadBytes>>20)
+		}
 		return raw, true, err
 	}
 	return nil, false, fmt.Errorf("payload with marker 0x%02x", b[0])

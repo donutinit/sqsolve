@@ -352,3 +352,58 @@ func TestExportSyntheticLibrary(t *testing.T) {
 		t.Errorf("contract: %v", err)
 	}
 }
+
+// TestDownloadClosesSession: a download is built in memory and the session is
+// closed before the caller sends it, so a slow client does not keep the
+// snapshot and the locks on the library's tables (audit: export transaction
+// open during the download).
+func TestDownloadClosesSession(t *testing.T) {
+	c := testpg.Start(t)
+	d := newSynthDB(t, c, "drp_download")
+	d.seedProject()
+	ctx := d.ctx
+	missing := "00000000-0000-4000-8000-0000000000ff"
+	for _, tc := range []struct {
+		kind, id, name, err string
+	}{
+		{"project", idProject, "lib_Test.drp", ""},
+		{"still", strings.ToUpper(idStill), "1.1-" + idStill[:8] + ".drx", ""},
+		{"album", idView2, "lib_PowerGrade.zip", ""},
+		{"project", missing, "", "SQS-E003"},
+		{"bogus", idProject, "", `SQS-E006 unknown export kind "bogus"`},
+	} {
+		s := d.mustOpen()
+		pid := s.conn.PgConn().PID()
+		info, data, err := s.Download(ctx, tc.kind, tc.id)
+		if tc.err == "" && (err != nil || len(data) == 0 || info.Bytes != int64(len(data)) || FileName(tc.kind, "lib", tc.id, info) != tc.name) {
+			t.Errorf("%s %s: %v %d bytes %+v", tc.kind, tc.id, err, len(data), info)
+		}
+		if tc.err != "" && (err == nil || !strings.Contains(err.Error(), tc.err)) {
+			t.Errorf("%s %s: error %v, want %s", tc.kind, tc.id, err, tc.err)
+		}
+		if s.conn != nil || s.tx != nil {
+			t.Fatalf("%s %s: the session is still open", tc.kind, tc.id)
+		}
+		// The backend is gone, so it holds no snapshot and no lock: Resolve
+		// can take an ACCESS EXCLUSIVE lock on the tables at once.
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			var n int
+			d.conn.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE pid = $1`, pid).Scan(&n)
+			if n == 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s %s: backend %d still running", tc.kind, tc.id, pid)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		d.exec(`BEGIN`)
+		d.exec(`SET LOCAL lock_timeout = '1s'`)
+		d.exec(`LOCK TABLE "SM_Project", "Gallery::GyStill" IN ACCESS EXCLUSIVE MODE`)
+		d.exec(`ROLLBACK`)
+	}
+	if got := FileName("project", "lib_20261020T1504", idProject, &ExportInfo{Name: " "}); got != "lib_20261020T1504_project.drp" {
+		t.Errorf("unnamed project: %s", got)
+	}
+}

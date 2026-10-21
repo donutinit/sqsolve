@@ -127,7 +127,11 @@ or the reverse).
 
 Three views: running (with a bar and the current step live), queued (with the expected time) and
 history (filterable by state and kind). A job's detail shows steps with timings and the full
-log, with a "Cancel" button if applicable and "Retry" for failed ones.
+log, with a "Cancel" button if applicable and "Retry" for failed, cancelled or interrupted jobs of
+idempotent types (docs 11 §11). Both buttons appear only to whoever may start that operation.
+Destructive jobs (restores, deletion, purge, library creation) and jobs the viewer may not retry
+show "Start again" instead, a link to the page where the operation starts and asks for its
+confirmation.
 
 ### 3.6 Activity: events and audit log
 
@@ -143,7 +147,8 @@ sqsolve (version, commit, memory, jobs). In 1.2, space of media volumes mounted 
 ### 3.8 Settings
 
 Users and tokens; notifications (channels with a "Test" button, and rules); system (advertised
-address, panel TLS with upload of your own certificate, time zone, trusted proxies);
+address, panel TLS with upload of your own certificate, time zone, trusted proxies, days in the
+trash and days the previous state is kept, each between 1 and 3650);
 maintenance and recovery (rebuild catalog, import, regenerate `pg_hba.conf`, diagnostic bundle,
 recovery kit, Resolve upgrade window); about (versions, third-party licenses, SBOM,
 compatibility matrix). In General > Experimental: "Experimental export of projects and grades",

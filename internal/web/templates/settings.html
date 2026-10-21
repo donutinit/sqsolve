@@ -74,7 +74,7 @@
   <div class="scroll-x"><table class="table compact cards-on-mobile"><thead><tr><th>User</th><th>Role</th><th>Second factor</th><th>Last access</th><th>Changes</th></tr></thead><tbody>
   {{range .Data.Users}}
   <tr>
-    <td data-label="User"><strong>{{.Username}}</strong>{{if .DisplayName}}<br><span class="muted small">{{.DisplayName}}</span>{{end}}{{if .DisabledAt}} {{template "badge" (dict "tone" "off" "label" "Disabled")}}{{end}}{{if .LockedAt}} {{template "badge" (dict "tone" "bad" "label" "Locked")}}{{end}}</td>
+    <td data-label="User"><strong>{{.Username}}</strong>{{if .DisplayName}}<br><span class="muted small">{{.DisplayName}}</span>{{end}}{{if .DisabledAt}} {{template "badge" (dict "tone" "off" "label" "Disabled")}}{{end}}{{if .IsLocked $.Now}} {{template "badge" (dict "tone" "bad" "label" "Locked")}}<br><span class="muted small">Password logins refused until {{dt .LockedUntil}}</span>{{end}}</td>
     <td data-label="Role">{{.Role.Label}}</td>
     <td data-label="Second factor">{{if .TOTPEnabled}}Yes <form method="post" action="/settings/users/{{.ID}}/totp" class="inline-form" data-confirm="The account of {{.Username}} will be protected by the password only. Remove their second factor?">{{template "csrf" $.CSRF}}<button class="ghost small danger" type="submit">Remove</button></form>{{else}}No{{end}}</td>
     <td data-label="Last access">{{if .LastLoginAt}}{{ago .LastLoginAt}}{{else}}never{{end}}</td>
@@ -89,7 +89,7 @@
         </form>
         <form method="post" action="/settings/users/{{.ID}}/password" class="form">
           {{template "csrf" $.CSRF}}
-          <label>New password<input type="password" name="password" minlength="12" required autocomplete="new-password"></label>
+          <label>New password<input type="password" name="password" minlength="8" required autocomplete="new-password"></label>
           <button type="submit" class="small ghost">Change password</button>
         </form>
       </details>
@@ -106,8 +106,8 @@
     <label>Display name<input name="display"></label>
     <label>Role<select name="role">{{range .Data.Roles}}<option value="{{.}}">{{.Label}}</option>{{end}}</select></label>
     <p class="hint">Viewer: sees everything without changing anything. Operator: also backs up, verifies and restores as a copy. Administrator: everything.</p>
-    <label>Password<input type="password" name="password" required minlength="12" autocomplete="new-password"></label>
-    <label>Repeat it<input type="password" name="password2" required minlength="12" autocomplete="new-password"></label>
+    <label>Password<input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+    <label>Repeat it<input type="password" name="password2" required minlength="8" autocomplete="new-password"></label>
     <div class="actions"><button type="submit">Add</button></div>
   </form>
 </section>
@@ -124,7 +124,7 @@
     <td data-label="Type">{{.Kind}}</td>
     <td data-label="Severity">{{sev .MinSeverity}}</td>
     <td data-label="Events" class="mono small">{{.Pattern}}</td>
-    <td data-label="Last sent">{{if .LastOK}}{{ago .LastOK}}{{else}}never{{end}}{{if .LastError}}<br><span class="bad small">{{.LastError}}</span>{{end}}</td>
+    <td data-label="Last sent">{{if .LastOK}}{{ago .LastOK}}{{else}}never{{end}}{{if and .LastError ($p.Can "notify.manage")}}<br><span class="bad small">{{.LastError}}</span>{{end}}</td>
     <td class="actions">
       {{if $p.Can "notify.manage"}}
       <form method="post" action="/settings/notifications/{{.ID}}/test">{{template "csrf" $.CSRF}}<button class="ghost small" type="submit">Test</button></form>

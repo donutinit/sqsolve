@@ -58,8 +58,10 @@ func (s *Service) UnchangedSince(ctx context.Context, l *Library) *Backup {
 }
 
 // BackupGate decides whether a due scheduled backup runs. In activity mode it
-// is skipped while the rows have not changed since the last successful
-// backup; every check is recorded on the policy so the panel can show it.
+// is skipped while the rows have not changed since the newest usable
+// verified backup: a backup that failed its verification, or was never
+// verified, does not count, so an unchanged library still gets a good one.
+// Every check is recorded on the policy so the panel can show it.
 func (s *Service) BackupGate(ctx context.Context, libraryID string) (bool, string) {
 	pol, err := s.Policy(ctx, libraryID)
 	if err != nil || !pol.Adaptive() {
@@ -71,10 +73,10 @@ func (s *Service) BackupGate(ctx context.Context, libraryID string) (bool, strin
 	}
 	var lastMark, lastAt string
 	err = s.DB.QueryRowContext(ctx, `SELECT activity_mark, started_at FROM backups WHERE library_id = ? AND status = 'ok' AND source_db = ?
-		ORDER BY started_at DESC LIMIT 1`, l.ID, l.DBName).Scan(&lastMark, &lastAt)
+		AND verify_status IN ('l1_ok', 'l2_ok', 'partial') ORDER BY started_at DESC LIMIT 1`, l.ID, l.DBName).Scan(&lastMark, &lastAt)
 	if err != nil || lastMark == "" {
 		s.recordActivityCheck(ctx, l.ID, false)
-		return true, "no earlier backup with an activity mark"
+		return true, "no earlier verified backup with an activity mark"
 	}
 	cur, err := s.PG.ActivityMark(ctx, l.DBName)
 	if err != nil || cur == "" {

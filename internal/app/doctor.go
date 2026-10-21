@@ -4,13 +4,16 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/donutinit/sqsolve/internal/core"
+	"github.com/donutinit/sqsolve/internal/events"
 	"github.com/donutinit/sqsolve/internal/fsx"
+	"github.com/donutinit/sqsolve/internal/health"
 	"github.com/donutinit/sqsolve/internal/pg"
 )
 
@@ -31,6 +34,33 @@ func (c Check) Tone() string {
 		return "warn"
 	}
 	return "bad"
+}
+
+// clusterCheck compares the PostgreSQL cluster with the one the control
+// plane knows (ADR 0023). It works in the CLI too, where the server's guard
+// state is not available.
+func (a *App) clusterCheck(ctx context.Context) (name, status, detail, hint string) {
+	name = "PostgreSQL cluster"
+	if p := a.PGIdentityProblem(); p != "" {
+		return name, "fail", p, ""
+	}
+	current, err := a.systemIdentifier(ctx)
+	if err != nil {
+		return name, "warn", "could not read the system identifier: " + err.Error(), ""
+	}
+	var stored string
+	if _, err := a.DB.GetSetting(ctx, pgSystemIDSetting, &stored); err != nil {
+		return name, "warn", "system identifier " + current + "; the stored one cannot be read: " + err.Error(), ""
+	}
+	switch decideIdentity(stored, current, a.Cfg.PGAcceptSystemID) {
+	case identityStore:
+		return name, "ok", "system identifier " + current + " (stored at the next start)", ""
+	case identityAccept:
+		return name, "warn", fmt.Sprintf("system identifier %s differs from %s and SQSOLVE_PG_ACCEPT_SYSTEM_ID accepts it at the next start", current, stored), ""
+	case identityHold:
+		return name, "fail", clusterChangedMessage(current, stored), ""
+	}
+	return name, "ok", "system identifier " + current, ""
 }
 
 // Doctor runs the checks of docs 13 §7.
@@ -60,6 +90,26 @@ func Doctor(ctx context.Context, a *App) []Check {
 	} else {
 		add("Backups volume marker", "ok", "belongs to this installation ("+a.InstanceID+")", "")
 	}
+	// The same codes as init: SQS-S011 (db) and SQS-S010 (app) for another
+	// installation, SQS-S019 for swapped mounts.
+	for _, v := range []struct{ name, dir, volume, foreign string }{
+		{"Database volume marker", c.PGDir, fsx.VolumeDB, msgDBForeign},
+		{"Application volume marker", c.AppDir, fsx.VolumeApp, msgAppForeign},
+	} {
+		m, err := fsx.ReadMarker(v.dir)
+		switch {
+		case errors.Is(err, fsx.ErrNoMarker):
+			add(v.name, "warn", "the volume has no marker yet", "run sqsolve init (the sqsolve-init service) so it marks the volume")
+		case err != nil:
+			add(v.name, "fail", err.Error(), "mount the right volume (docs/adr/0023-volume-identity.md)")
+		case m.InstanceID != a.InstanceID:
+			add(v.name, "fail", fmt.Sprintf(v.foreign, v.dir, m.Volume, m.InstanceID, a.InstanceID), "mount the right volume")
+		case m.Volume != v.volume:
+			add(v.name, "fail", fsx.SwappedError(v.dir, v.volume, m).Error(), "")
+		default:
+			add(v.name, "ok", "belongs to this installation ("+a.InstanceID+")", "")
+		}
+	}
 	for _, f := range []string{masterKeyPath(c), adminPassPath(c)} {
 		st, err := os.Stat(f)
 		switch {
@@ -82,6 +132,18 @@ func Doctor(ctx context.Context, a *App) []Check {
 			status = "warn"
 		}
 		add("PostgreSQL", status, detail, "")
+		dump := a.Monitor.PGDumpVersion(ctx)
+		switch sev, msg := health.CompareVersions(info.VersionNum, dump); {
+		case dump == "":
+			add("PostgreSQL version", "warn", "the bundled pg_dump did not report its version", "check SQSOLVE_PG_BIN_DIR")
+		case sev == events.Critical:
+			add("PostgreSQL version", "fail", msg, "")
+		case sev == events.Warning:
+			add("PostgreSQL version", "warn", msg, "")
+		default:
+			add("PostgreSQL version", "ok", fmt.Sprintf("server %s, %s", info.Version, strings.TrimSpace(dump)), "")
+		}
+		add(a.clusterCheck(ctx))
 		if conn, err := a.PG.Superuser(ctx, "postgres"); err != nil {
 			add("Superuser over the socket", "fail", err.Error(), "the password in "+c.SuperuserPasswordFile()+" does not match the cluster")
 		} else {

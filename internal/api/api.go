@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -18,9 +17,11 @@ import (
 	"time"
 
 	"github.com/donutinit/sqsolve/internal/app"
+	"github.com/donutinit/sqsolve/internal/audit"
 	"github.com/donutinit/sqsolve/internal/auth"
 	"github.com/donutinit/sqsolve/internal/core"
 	"github.com/donutinit/sqsolve/internal/events"
+	"github.com/donutinit/sqsolve/internal/health"
 	"github.com/donutinit/sqsolve/internal/jobs"
 )
 
@@ -55,11 +56,14 @@ func problem(w http.ResponseWriter, r *http.Request, status int, err error) {
 	code := codeRe.FindString(msg)
 	typ := "about:blank"
 	if code != "" {
-		typ = "/docs/errores/" + code
+		typ = "/docs/errors/" + code
 	}
 	title := http.StatusText(status)
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set("Cache-Control", "no-store")
+	if errors.Is(err, auth.ErrBusy) {
+		w.Header().Set("Retry-After", "5")
+	}
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(Problem{Type: typ, Title: title, Status: status, Detail: msg, Code: code, Instance: r.URL.Path})
 }
@@ -76,31 +80,29 @@ func statusFor(err error) int {
 	switch {
 	case strings.Contains(msg, "SQS-B012"):
 		return http.StatusInsufficientStorage
-	case strings.Contains(msg, "SQS-P001"):
+	case strings.Contains(msg, "SQS-P001"), errors.Is(err, auth.ErrBusy):
 		return http.StatusServiceUnavailable
 	}
 	return http.StatusUnprocessableEntity
 }
 
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+// clientIP resolves the caller's address with the same rules as the panel:
+// X-Forwarded-For only from SQSOLVE_TRUSTED_PROXIES (auth.ClientIP).
+func (a *API) clientIP(r *http.Request) string {
+	return auth.ClientIP(r, a.A.Cfg.TrustedProxies)
 }
 
 // principal resolves a bearer token or a session cookie. With a cookie,
 // mutating requests need the X-CSRF-Token header.
 func (a *API) principal(r *http.Request) (*auth.Principal, error) {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-		return a.A.Auth.TokenPrincipal(r.Context(), strings.TrimSpace(strings.TrimPrefix(h, "Bearer ")), clientIP(r))
+		return a.A.Auth.TokenPrincipal(r.Context(), strings.TrimSpace(strings.TrimPrefix(h, "Bearer ")), a.clientIP(r))
 	}
 	c, err := r.Cookie("sqsolve_session")
 	if err != nil {
 		return nil, auth.ErrNoSession
 	}
-	p, err := a.A.Auth.Session(r.Context(), c.Value, clientIP(r), false)
+	p, err := a.A.Auth.Session(r.Context(), c.Value, a.clientIP(r), false)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +120,12 @@ func (a *API) guard(action auth.Action, h handler) http.HandlerFunc {
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="sqsolve"`)
 			problem(w, r, http.StatusUnauthorized, err)
+			return
+		}
+		// The panel's enrollment requirement also holds for the same browser
+		// session here; tokens are separate credentials and not affected.
+		if auth.MustEnrollTOTP(p, func() bool { return a.A.Svc.Settings(r.Context()).TOTPRequiredAdmins }) {
+			problem(w, r, http.StatusForbidden, auth.ErrEnrollTOTP)
 			return
 		}
 		if !p.Can(action) {
@@ -183,13 +191,52 @@ func (a *API) Register(m *http.ServeMux) {
 	})
 }
 
+// health needs no authentication (uptime monitors, docs 13 §3): it shows
+// states and counts, never paths, names or identifiers.
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
-	pgOK, volOK := a.A.PGAlive(r.Context()), a.A.Svc.BackupVolumeOK() == nil
-	status := http.StatusOK
-	if !pgOK || !volOK {
-		status = http.StatusServiceUnavailable
+	ctx := r.Context()
+	pgOK, volOK := a.A.PGAlive(ctx), a.A.Svc.BackupVolumeOK() == nil
+	status, body := healthBody(pgOK, volOK, a.A.PGIdentityProblem() != "", a.A.Monitor.BackupFreshness(ctx), a.A.Monitor.Volumes())
+	writeJSON(w, status, body)
+}
+
+type volumeHealth struct {
+	Name    string  `json:"name"`
+	UsedPct float64 `json:"used_percent"`
+	Status  string  `json:"status"`
+}
+
+// healthBody builds the unauthenticated health: 503 when anything is
+// critical (PostgreSQL, the backups volume marker, a changed cluster, stale
+// backups or a volume at 90 %).
+func healthBody(pgOK, volOK, clusterChanged bool, fresh health.Freshness, vols []health.Volume) (int, map[string]any) {
+	overall := health.StatusOK
+	worse := func(s string) {
+		if s == health.StatusCritical || (s == health.StatusWarning && overall == health.StatusOK) {
+			overall = s
+		}
 	}
-	writeJSON(w, status, map[string]any{"ready": pgOK && volOK, "postgres": pgOK, "backup_volume": volOK})
+	vs := []volumeHealth{}
+	for _, v := range vols {
+		st := v.Status()
+		worse(st)
+		vs = append(vs, volumeHealth{v.ID, float64(int64(v.UsedPct*10)) / 10, st})
+	}
+	worse(fresh.Status)
+	cluster := "ok"
+	if clusterChanged {
+		cluster = "changed"
+		worse(health.StatusCritical)
+	}
+	if !pgOK || !volOK {
+		worse(health.StatusCritical)
+	}
+	code := http.StatusOK
+	if overall == health.StatusCritical {
+		code = http.StatusServiceUnavailable
+	}
+	return code, map[string]any{"ready": pgOK && volOK, "postgres": pgOK, "backup_volume": volOK, "status": overall,
+		"postgres_cluster": cluster, "backups": fresh, "volumes": vs}
 }
 
 func (a *API) status(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
@@ -625,12 +672,29 @@ func (a *API) jobLogs(w http.ResponseWriter, r *http.Request, p *auth.Principal)
 	writeJSON(w, 200, map[string]any{"items": logs})
 }
 
+// jobCancel also needs the permission of the job's type (the one that
+// starts the operation); types without one are for administrators.
 func (a *API) jobCancel(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
-	if err := a.A.Jobs.Cancel(r.Context(), r.PathValue("id")); err != nil {
+	ctx := r.Context()
+	j, err := a.A.Jobs.Get(ctx, r.PathValue("id"))
+	if err != nil {
 		problem(w, r, statusFor(err), err)
 		return
 	}
-	a.A.Audit.Record(r.Context(), p.Actor(), "job.cancel", "job", r.PathValue("id"), "ok", nil)
+	action := auth.Action(a.A.Jobs.Action(j.Type))
+	if action == "" {
+		action = auth.ActSettingsEdit
+	}
+	if !p.Can(action) {
+		a.A.Audit.Record(ctx, p.Actor(), "job.cancel", "job", j.ID, audit.Denied, map[string]any{"type": j.Type})
+		problem(w, r, http.StatusForbidden, errors.New("SQS-A030 the role or the token scopes do not allow this action"))
+		return
+	}
+	if err := a.A.Jobs.Cancel(ctx, j.ID); err != nil {
+		problem(w, r, statusFor(err), err)
+		return
+	}
+	a.A.Audit.Record(ctx, p.Actor(), "job.cancel", "job", j.ID, audit.OK, map[string]any{"type": j.Type})
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "cancel_requested"})
 }
 

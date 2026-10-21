@@ -157,16 +157,38 @@ func (s *Service) RotatePassword(ctx context.Context, by audit.Actor, libraryID,
 	if err != nil {
 		return err
 	}
+	// The current password, to put it back if the new one cannot be saved.
+	// Rotating stays possible when it cannot be read: that is the way out.
+	old, oldErr := s.Box.Open(c.passwordEnc, credAAD(c.ID))
 	if err := s.PG.SetRolePassword(ctx, c.PGRole, v); err != nil {
 		return err
 	}
 	if _, err := s.DB.ExecContext(ctx, `UPDATE library_credentials SET password_enc = ?, rotated_at = ? WHERE id = ?`, enc, store.NowT(), c.ID); err != nil {
+		err = s.restorePassword(ctx, c.PGRole, old, oldErr, err)
+		s.Audit.Record(ctx, by, "library.credential_rotate", "library", libraryID, audit.Failed, map[string]any{"role": c.PGRole, "error": err.Error()})
 		return err
 	}
 	s.Audit.Record(ctx, by, "library.credential_rotate", "library", libraryID, audit.OK, map[string]any{"role": c.PGRole})
 	s.Events.Emit(ctx, events.Event{Type: events.CredentialRotated, LibraryID: libraryID,
 		Message: fmt.Sprintf("Changed the password of %s. Workstations must use the new one when they reconnect", c.PGRole)})
 	return nil
+}
+
+// restorePassword puts the previous password back in PostgreSQL after the new
+// one could not be saved, so the password the panel shows keeps working.
+func (s *Service) restorePassword(ctx context.Context, role string, old secrets.String, oldErr, cause error) error {
+	ctx = context.WithoutCancel(ctx)
+	err := oldErr
+	if err == nil {
+		var v string
+		if v, err = pg.ScramVerifier(old); err == nil {
+			err = s.PG.SetRolePassword(ctx, role, v)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("SQS-L071 the new password of %s could not be saved and the previous one could not be put back (%v); rotate the password again: %w", role, err, cause)
+	}
+	return fmt.Errorf("SQS-L070 the new password of %s could not be saved; the previous password is still in force: %w", role, cause)
 }
 
 // AddMember creates a personal credential (docs 07 §6).
@@ -193,23 +215,37 @@ func (s *Service) AddMember(ctx context.Context, by audit.Actor, libraryID, pers
 	if err != nil {
 		return nil, err
 	}
-	if err := s.PG.CreateLibraryRole(ctx, role, pg.RoleOptions{Verifier: v, Login: true, ConnLimit: -1}); err != nil {
+	// CreateLibraryRole is atomic: when it fails there is nothing to undo.
+	// In maintenance the new person waits for it to end, like everyone (ADR 0024).
+	if err := s.PG.CreateLibraryRole(ctx, role, pg.RoleOptions{Verifier: v, Login: l.State != StateMaintenance, ConnLimit: l.ConnLimit}); err != nil {
 		return nil, err
+	}
+	// From here on the role is this call's: a failure removes it and the
+	// credential row, so the person can be added again (SQS-L033 otherwise).
+	var c *Credential
+	undo := func(cause error) error {
+		bg := context.WithoutCancel(ctx)
+		if c != nil {
+			if _, err := s.DB.ExecContext(bg, `DELETE FROM library_credentials WHERE id = ?`, c.ID); err != nil {
+				s.Log.Warn("could not remove the credential of a member that failed to be added", "role", role, "err", err)
+			}
+		}
+		if err := s.PG.DropRole(bg, role); err != nil {
+			s.Log.Warn("could not remove the role of a member that failed to be added", "role", role, "err", err)
+		}
+		return fmt.Errorf("SQS-L072 could not add %s: %w", role, cause)
 	}
 	if err := s.PG.GrantRole(ctx, l.OwnerRole, role); err != nil {
-		s.PG.DropRole(ctx, role)
-		return nil, err
+		return nil, undo(err)
 	}
 	if err := s.PG.SetRoleDefaultRole(ctx, role, l.DBName, l.OwnerRole); err != nil {
-		s.PG.DropRole(ctx, role)
-		return nil, err
+		return nil, undo(err)
 	}
-	c, err := s.addCredential(ctx, libraryID, "member", role, person, pass)
-	if err != nil {
-		return nil, err
+	if c, err = s.addCredential(ctx, libraryID, "member", role, person, pass); err != nil {
+		return nil, undo(err)
 	}
 	if err := s.PG.SecureDatabase(ctx, l.DBName, []string{role}); err != nil {
-		return nil, err
+		return nil, undo(err)
 	}
 	s.Audit.Record(ctx, by, "library.member_add", "library", libraryID, audit.OK, map[string]any{"role": role})
 	return c, s.SyncHBA(ctx)
@@ -238,7 +274,12 @@ func (s *Service) RevokeMember(ctx context.Context, by audit.Actor, libraryID, c
 			}
 		}
 	}
-	s.DB.ExecContext(ctx, `UPDATE library_credentials SET revoked_at = ? WHERE id = ?`, store.NowT(), c.ID)
+	// ADR 0024: every credential that is not revoked gets LOGIN back when
+	// the library's access is applied, so an unrecorded revocation would
+	// come undone at the next start.
+	if _, err := s.DB.ExecContext(ctx, `UPDATE library_credentials SET revoked_at = ? WHERE id = ?`, store.NowT(), c.ID); err != nil {
+		return fmt.Errorf("SQS-L080 the role %s was set NOLOGIN, but its revocation could not be recorded, so the next start would give it its login back; revoke it again: %w", c.PGRole, err)
+	}
 	s.Audit.Record(ctx, by, "library.member_revoke", "library", libraryID, audit.OK, map[string]any{"role": c.PGRole})
 	return s.SyncHBA(ctx)
 }

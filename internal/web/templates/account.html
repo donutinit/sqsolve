@@ -6,8 +6,8 @@
     <h2>Password</h2>
     <form method="post" action="/account/password" class="form">
       {{template "csrf" .CSRF}}
-      <label>New password<input type="password" name="password" required minlength="12" autocomplete="new-password"></label>
-      <label>Repeat it<input type="password" name="password2" required minlength="12" autocomplete="new-password"></label>
+      <label>New password<input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+      <label>Repeat it<input type="password" name="password2" required minlength="8" autocomplete="new-password"></label>
       <div class="actions"><button type="submit">Change password</button></div>
     </form>
   </section>

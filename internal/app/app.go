@@ -61,18 +61,19 @@ type App struct {
 	InstanceID string
 	Started    time.Time
 
-	pgReady     atomic.Bool
-	installMu   sync.Mutex
-	installCode string
-	cert        atomic.Pointer[tls.Certificate]
-	cancel      context.CancelFunc
+	pgReady         atomic.Bool
+	identityProblem atomic.Pointer[string]
+	installMu       sync.Mutex
+	installCode     string
+	cert            atomic.Pointer[tls.Certificate]
+	cancel          context.CancelFunc
 }
 
 // ReadMasterKey loads the master key file.
 func ReadMasterKey(c *config.Config) ([]byte, error) {
 	s, err := secrets.ReadFile(masterKeyPath(c))
 	if err != nil {
-		return nil, fmt.Errorf("SQS-C010 could not read the master key (did you run sqsolve init?): %w", err)
+		return nil, fmt.Errorf("SQS-C100 could not read the master key (did you run sqsolve init?): %w", err)
 	}
 	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s.Reveal()))
 	if err != nil {
@@ -122,7 +123,10 @@ func Open(ctx context.Context, c *config.Config, log *slog.Logger) (*App, error)
 	a.Notify.Instance = func() string { return a.Svc.Settings(context.Background()).InstanceName }
 	a.Notify.BaseURL = a.BaseURL
 	a.Events.Listen(a.Notify.Handle)
-	a.Monitor = &health.Monitor{Svc: a.Svc, Jobs: a.Jobs, Events: a.Events, PanelTLS: panelCertPath(c)}
+	a.Monitor = &health.Monitor{Svc: a.Svc, Jobs: a.Jobs, Events: a.Events, PanelTLS: panelCertPath(c),
+		RenewPanelCert: a.RenewPanelCert, Notices: a.identityNotices,
+		// Catalog writes of the monitor wait until reconciliation is done.
+		Paused: func() bool { return !a.pgReady.Load() }}
 	return a, nil
 }
 
@@ -188,59 +192,34 @@ func (a *App) Certificate() (*tls.Certificate, error) {
 	return nil, errors.New("no certificate")
 }
 
-// LoadPanelCert loads (or creates) the panel certificate.
-func (a *App) LoadPanelCert() error {
-	crt, key := panelCertPath(a.Cfg), panelKeyPath(a.Cfg)
-	if _, err := os.Stat(crt); errors.Is(err, os.ErrNotExist) {
-		host, _ := os.Hostname()
-		hosts := []string{"localhost", "127.0.0.1", host}
-		if h := a.Svc.AdvertisedHost(context.Background()); h != "" {
-			hosts = append(hosts, h)
-		}
-		cp, kp, err := pgconf.SelfSigned("sqsolve", hosts, 2*365*24*time.Hour)
-		if err != nil {
-			return err
-		}
-		os.MkdirAll(filepath.Dir(crt), 0o700)
-		if err := fsx.WriteFileAtomic(key, kp, 0o600); err != nil {
-			return err
-		}
-		if err := fsx.WriteFileAtomic(crt, cp, 0o644); err != nil {
-			return err
-		}
-	}
-	pair, err := tls.LoadX509KeyPair(crt, key)
-	if err != nil {
-		return fmt.Errorf("SQS-C020 panel certificate: %w", err)
-	}
-	a.cert.Store(&pair)
-	return nil
-}
-
-// InstallPanelCert replaces the panel certificate with one provided by the
-// administrator.
-func (a *App) InstallPanelCert(certPEM, keyPEM []byte) error {
-	pair, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return fmt.Errorf("SQS-C021 the certificate and the key do not match: %w", err)
-	}
-	if err := fsx.WriteFileAtomic(panelKeyPath(a.Cfg), keyPEM, 0o600); err != nil {
-		return err
-	}
-	if err := fsx.WriteFileAtomic(panelCertPath(a.Cfg), certPEM, 0o644); err != nil {
-		return err
-	}
-	a.cert.Store(&pair)
-	return nil
-}
-
 // PanelCertInfo describes the panel certificate.
 func (a *App) PanelCertInfo() (pgconf.CertInfo, error) { return pgconf.ReadCert(panelCertPath(a.Cfg)) }
 
-// Background starts PostgreSQL connection, reconciliation and loops.
+// removeStalePartials deletes what an interrupted control plane copy left
+// behind: in the app volume always, in the backups volume only when it
+// carries this installation's marker.
+func (a *App) removeStalePartials() {
+	dirs := []string{stateBackupDir(a.Cfg)}
+	if a.Svc.BackupVolumeOK() == nil {
+		dirs = append(dirs, filepath.Join(a.Cfg.BackupDir, "_system"))
+	}
+	for _, d := range dirs {
+		if n, err := fsx.RemovePartials(d); err != nil {
+			a.Log.Warn("could not remove interrupted copies", "dir", d, "err", err)
+		} else if n > 0 {
+			a.Log.Info("removed interrupted copies", "dir", d, "files", n)
+		}
+	}
+}
+
+// Background starts the monitor, the PostgreSQL connection, reconciliation
+// and the loops. The monitor and the notifier start first, so a PostgreSQL
+// that never answers is reported (postgres.down after the startup grace).
 func (a *App) Background(ctx context.Context) {
 	ctx, a.cancel = context.WithCancel(ctx)
+	a.removeStalePartials()
 	go a.Notify.Run(ctx)
+	go a.Monitor.Run(ctx)
 	go func() {
 		delay := time.Second
 		for {
@@ -258,6 +237,12 @@ func (a *App) Background(ctx context.Context) {
 				delay *= 2
 			}
 		}
+		a.Monitor.CheckPG(ctx)
+		if !a.guardCluster(ctx) {
+			// A different cluster: no reconciliation, no pg_hba.conf, no
+			// jobs until the change is accepted and sqsolve restarts.
+			return
+		}
 		interrupted, err := a.Jobs.MarkInterrupted(ctx)
 		if err != nil {
 			a.Log.Error("marking interrupted jobs", "err", err)
@@ -271,7 +256,6 @@ func (a *App) Background(ctx context.Context) {
 		a.pgReady.Store(true)
 		a.Jobs.Start(ctx)
 		go a.Sched.Run(ctx)
-		go a.Monitor.Run(ctx)
 		go func() {
 			t := time.NewTicker(5 * time.Second)
 			defer t.Stop()

@@ -144,7 +144,7 @@ func (e *env) count(role string, pass secrets.String, db, table string) int {
 
 func (e *env) createActive(slug string) (*core.Library, secrets.String) {
 	e.t.Helper()
-	l, j, err := e.svc.CreateLibrary(e.ctx, admin, core.CreateInput{DisplayName: "Prueba " + slug, Slug: slug})
+	l, j, err := e.svc.CreateLibrary(e.ctx, admin, core.CreateInput{DisplayName: "Test " + slug, Slug: slug})
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -475,7 +475,7 @@ func TestRecreateMissingKeepsPassword(t *testing.T) {
 	if l.State != core.StateMissing {
 		t.Fatalf("state %s", l.State)
 	}
-	j, err := e.svc.Recreate(ctx, admin, l.ID, "")
+	j, err := e.svc.Recreate(ctx, admin, l.ID, "", l.Slug)
 	if err != nil {
 		t.Fatal(err)
 	}

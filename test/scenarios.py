@@ -231,7 +231,7 @@ def fresh():
     rc, out = cli("init")
     check("init on empty volumes", rc == 0, out)
     rc2, out2 = cli("init")
-    check("init is idempotent", rc2 == 0 and "generad" not in out2, out2)
+    check("init is idempotent", rc2 == 0 and "generated" not in out2, out2)
     pwfile = f"{BASE_DIR}/pg/sqsolve/superuser_password"
     r = subprocess.run(["initdb", "-D", ENV["SQSOLVE_PG_DATA_DIR"], "-U", "postgres", f"--pwfile={pwfile}", "--auth=scram-sha-256",
                         "--encoding=UTF8", "--locale-provider=builtin", "--builtin-locale=C.UTF-8"], capture_output=True, text=True)
@@ -506,7 +506,7 @@ def s_delete_purge(lp, user):
     wait_job(job_id(loc), 300)
     st, loc, _ = post(lp + "/purge", {"csrf": TOK["v"], "confirm": user})
     state, jb = wait_job(job_id(loc), 300)
-    check("purgar definitivamente", state == "succeeded", re.sub(r"<[^>]+>", " ", jb)[-500:])
+    check("purge for good", state == "succeeded", re.sub(r"<[^>]+>", " ", jb)[-500:])
     left = superuser(f"SELECT count(*) FROM pg_database WHERE datname LIKE '{user}%'") + "/" + superuser(f"SELECT count(*) FROM pg_roles WHERE rolname LIKE '{user}%'")
     check("no databases or roles remain of the purged library", left == "0/0", left)
 

@@ -85,7 +85,7 @@ Volume details and the reference Compose file are in `12-deployment.md`.
 ```mermaid
 flowchart TB
   subgraph adapters["Input adapters"]
-    WEB["web<br/>HTML + htmx + SSE"]
+    WEB["web<br/>HTML + app.js + SSE"]
     API["api<br/>REST JSON v1"]
     CLI["cli<br/>sqsolve admin, backup, restore, doctor"]
   end
@@ -131,8 +131,10 @@ CLI.
 - Lock per library: two jobs that write to the same library (restore, delete, maintenance)
   never run at the same time. A backup and a verification of the same library can coexist with
   other read-only ones.
-- Jobs receive a `context.Context`; cancelling closes the context and `execx` sends SIGTERM
-  and, after 10 s, SIGKILL only to the child process it launched (its own process group).
+- Jobs receive a `context.Context`; cancelling closes the context and `execx` sends SIGTERM to
+  the process group of the child it launched and SIGKILL to that whole group once the child
+  exits or after 10 s, always before reaping the child, so the group id cannot name anyone
+  else's processes.
 - SQLite in WAL mode with a single serialized write connection and a read pool.
 - Progress events are published on an in-memory bus and reach the browser over SSE.
 
@@ -146,16 +148,16 @@ sequenceDiagram
   participant S as sqsolve
   participant P as PostgreSQL
   actor R as Resolve (workstation)
-  A->>S: New library "Client X" (slug cliente_x)
-  S->>P: CREATE ROLE cliente_x LOGIN CREATEDB PASSWORD (SCRAM)
-  S->>S: pg_hba: allow cliente_x into database cliente_x and into the maintenance database if PoC-01 requires it
+  A->>S: New library "Client X" (slug client_x)
+  S->>P: CREATE ROLE client_x LOGIN CREATEDB PASSWORD (SCRAM)
+  S->>S: pg_hba: allow client_x into database client_x and into the maintenance database if PoC-01 requires it
   S->>P: pg_reload_conf()
   S-->>A: Details for "Create" in Resolve; state "awaiting initialization"
-  R->>P: Create cliente_x (Resolve creates the database and its schema)
+  R->>P: Create client_x (Resolve creates the database and its schema)
   loop every 5 s for up to 60 min
-    S->>P: does database cliente_x exist with owner cliente_x and tables?
+    S->>P: does database client_x exist with owner client_x and tables?
   end
-  S->>P: ALTER ROLE cliente_x NOCREATEDB
+  S->>P: ALTER ROLE client_x NOCREATEDB
   S->>P: Ownership adjustments and GRANT according to PoC-01
   S->>S: Schema fingerprint, default backup policy, first backup
   S-->>A: State "active"
@@ -174,8 +176,8 @@ sequenceDiagram
   participant B as backup
   participant P as PostgreSQL
   participant F as Backups volume
-  C->>J: Enqueue backup(cliente_x) on schedule
-  J->>B: Run with a read lock on cliente_x
+  C->>J: Enqueue backup(client_x) on schedule
+  J->>B: Run with a read lock on client_x
   B->>F: Check volume marker and free space
   B->>P: BEGIN REPEATABLE READ; pg_export_snapshot()
   B->>P: pg_dump --snapshot=ID --format=custom to a .partial file

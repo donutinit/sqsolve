@@ -5,6 +5,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # image.yml calls this workflow and publishes only if every job passes.
+  workflow_call:
 
 permissions:
   contents: read
@@ -28,11 +30,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends postgresql-18
       - name: Format and vet
         run: make fmt vet
-      # staticcheck v0.8.1 cannot read Go 1.27.2 export data; v0.8.2 can, but it was
-      # published on 2026-10-12 and the 7-day rule allows it from 2026-10-19.
       - name: staticcheck
-        if: matrix.go == '1.26.x'
         run: make lint
+      - name: go.mod and go.sum are tidy
+        run: make tidy-check
+      - name: Every error code has one message
+        run: make errors-check
+      - name: The PostgreSQL image is the same in the Dockerfile and in deploy/compose.yaml
+        run: make pg-image-check
       - name: Tests (including integration tests against real PostgreSQL)
         env:
           SQSOLVE_TEST_PG_BIN: /usr/lib/postgresql/18/bin
@@ -57,7 +62,7 @@ jobs:
       - name: Failure scenarios (simulated workstations, dying processes, PostgreSQL down)
         env:
           SQSOLVE_TEST_PG_BIN: /usr/lib/postgresql/18/bin
-          SQSOLVE_SCENARIOS_DIR: ${{ runner.temp }}/escenarios
+          SQSOLVE_SCENARIOS_DIR: ${{ runner.temp }}/scenarios
         run: make scenarios
 
   smoke:
@@ -72,6 +77,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build the image
         run: docker build --build-arg VERSION=ci --build-arg COMMIT=${GITHUB_SHA::7} -t sqsolve:ci .
+      # The binary that ships, not a rebuild from source: same Go toolchain, same modules.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: matrix.uid == '1000'
+        with:
+          go-version: "1.27.x"
+          check-latest: true
+      - name: govulncheck on the binary inside the image
+        if: matrix.uid == '1000'
+        run: |
+          id=$(docker create sqsolve:ci)
+          docker cp "$id:/usr/local/bin/sqsolve" "$RUNNER_TEMP/sqsolve-image-binary"
+          docker rm "$id"
+          make vuln-binary BINARY="$RUNNER_TEMP/sqsolve-image-binary"
       - name: Prepare the reference compose as is, with temporary paths
         run: |
           mkdir -p "$RUNNER_TEMP/sq"

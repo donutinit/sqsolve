@@ -1,0 +1,27 @@
+# Baseline for test/check_error_codes.py (make errors-check).
+#
+# Codes that already carried more than one message when the check was added
+# (2026-10-20). It is existing debt, not an approval: never add a code here, give
+# the second meaning a new code instead. Remove an entry when its code is fixed
+# (the check prints a note for entries that are no longer needed).
+
+# One meaning with several wordings (panel and API text, or extra detail).
+SQS-A030
+SQS-A031
+SQS-B001
+SQS-B041
+SQS-B052
+SQS-C011
+SQS-C020
+SQS-L003
+SQS-L005
+SQS-N011
+SQS-S003
+
+# Probably two meanings under one code: split them the next time the code is touched.
+SQS-A004
+SQS-B050
+SQS-C021
+SQS-E005
+SQS-E006
+SQS-E007

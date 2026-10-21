@@ -132,6 +132,21 @@ func StageRecovery(c *config.Config, keyB64 string) (string, error) {
 	return filepath.Base(chosen), nil
 }
 
+// forgetCluster removes the stored PostgreSQL system identifier from the
+// database at path. The copy is a single file (VACUUM INTO): the change is
+// written into it, without -wal or -shm files left next to it.
+func forgetCluster(path string) error {
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(DELETE)")
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`DELETE FROM settings WHERE key = ?`, pgSystemIDSetting)
+	if cerr := db.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
 func checkCopy(path string, box *secrets.Box) error {
 	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
 	if err != nil {
@@ -157,6 +172,12 @@ func ApplyPendingRecovery(c *config.Config, out io.Writer) error {
 	}
 	if _, err := os.Stat(key); err != nil {
 		return nil
+	}
+	// The copy remembers the cluster of the old server; this one has a new
+	// cluster by design, so its identifier is learnt again (ADR 0023). Done
+	// on the staged file, before anything is moved.
+	if err := forgetCluster(db); err != nil {
+		return fmt.Errorf("SQS-C084 could not prepare the recovered control plane: %w", err)
 	}
 	now := time.Now().UTC().Format("20060102T150405Z")
 	if _, err := os.Stat(c.DBPath()); err == nil {

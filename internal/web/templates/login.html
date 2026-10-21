@@ -1,6 +1,7 @@
 {{define "content"}}
 <section class="card narrow">
   <h1>Sign in</h1>
+  {{with .Data.Error}}<div class="flash error" role="alert">{{.}}</div>{{end}}
   <form method="post" action="/login" class="form">
     <input type="hidden" name="csrf" value="{{.Data.Pre}}">
     <input type="hidden" name="next" value="{{.Data.Next}}">

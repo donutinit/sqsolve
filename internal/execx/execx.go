@@ -140,7 +140,9 @@ func (c *capped) Write(p []byte) (int, error) {
 }
 
 // Run executes the command and waits. Cancelling ctx sends SIGTERM to the
-// child's own process group and SIGKILL after the grace period.
+// child's own process group and, once the child exits or the grace period
+// passes, SIGKILL to the whole group, so no member that ignores SIGTERM
+// outlives the job.
 func (r *Runner) Run(ctx context.Context, c Cmd) (Result, error) {
 	path, err := r.Path(c.Name)
 	if err != nil {
@@ -152,13 +154,20 @@ func (r *Runner) Run(ctx context.Context, c Cmd) (Result, error) {
 	}
 	cmd := exec.CommandContext(ctx, path, c.Args...)
 	cmd.SysProcAttr = sysProcAttr()
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
+	// The group is only signalled while its leader is unreaped: until then
+	// the group id cannot name processes sqsolve did not start.
+	var mu sync.Mutex
+	reaped := false
+	signal := func(sig syscall.Signal) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if reaped || cmd.Process == nil {
+			return os.ErrProcessDone
 		}
 		// Negative pid: the group created for this child only.
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		return syscall.Kill(-cmd.Process.Pid, sig)
 	}
+	cmd.Cancel = func() error { return signal(syscall.SIGTERM) }
 	cmd.WaitDelay = r.GracePeriod
 	env := []string{"PATH=" + filepath.Dir(path) + ":/usr/bin:/bin", "LC_ALL=C.UTF-8", "TZ=UTC"}
 	env = append(env, c.Env...)
@@ -180,7 +189,14 @@ func (r *Runner) Run(ctx context.Context, c Cmd) (Result, error) {
 		cmd.Stdout = stdout
 	}
 	start := time.Now()
-	err = cmd.Run()
+	err = cmd.Start()
+	if err == nil {
+		supervise(ctx, cmd.Process.Pid, r.GracePeriod, signal)
+		mu.Lock()
+		reaped = true
+		mu.Unlock()
+		err = cmd.Wait()
+	}
 	res := Result{Stdout: stdout.buf.String(), Stderr: stderr.buf.String(), Duration: time.Since(start)}
 	if cmd.ProcessState != nil {
 		res.ExitCode = cmd.ProcessState.ExitCode()
@@ -192,6 +208,33 @@ func (r *Runner) Run(ctx context.Context, c Cmd) (Result, error) {
 		return res, &Error{Name: c.Name, ExitCode: res.ExitCode, Stderr: res.Stderr, Err: err}
 	}
 	return res, nil
+}
+
+// supervise returns once the leader pid has exited, without reaping it. If
+// ctx ends first (cmd.Cancel then sends SIGTERM to the group), the whole
+// group gets SIGKILL as soon as the leader exits or the grace period
+// passes, whichever comes first. Only cmd.Wait reaps the leader, after this
+// returns, so the group id still names the group this command started.
+func supervise(ctx context.Context, pid int, grace time.Duration, signal func(syscall.Signal) error) {
+	exited := make(chan error, 1)
+	go func() { exited <- waitExit(pid) }()
+	select {
+	case <-exited:
+		return
+	case <-ctx.Done():
+	}
+	t := time.NewTimer(grace)
+	defer t.Stop()
+	select {
+	case err := <-exited:
+		if err != nil {
+			return // cannot wait without reaping here: WaitDelay kills the leader
+		}
+		signal(syscall.SIGKILL)
+	case <-t.C:
+		signal(syscall.SIGKILL)
+		<-exited
+	}
 }
 
 func escapePass(s string) string {
