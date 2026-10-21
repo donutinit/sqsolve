@@ -159,7 +159,7 @@ and keeps the old files next to them as `.replaced-<time>` (`SQS-C083` in the lo
 
 ### 8.1 sqsolve
 
-1. Change the image tag (or `docker compose pull` if a minor version tag such as `1.1` is used).
+1. Change the image tag (or `docker compose pull` if a minor version tag such as `1.2` is used).
 2. `docker compose up -d`.
 3. On startup: SQLite `VACUUM INTO` copy in `app/state-backups/`
    (`sqsolve-before-<migration>-<time>.db`; one per pending migration, so a migration that fails

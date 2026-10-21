@@ -83,8 +83,8 @@ Copy [`deploy/compose.yaml`](../../deploy/compose.yaml) and change only this:
 1. The three paths marked `Volumes:` (each appears in several services; change them all the
    same way).
 2. `TZ`, your time zone (for example `America/Mexico_City`). Backup schedules use this zone.
-3. The image version in `x-sqsolve`. With `1.1` you receive every fix of the 1.1 series and
-   TrueNAS tells you with "Update available"; with an exact version (`1.1.0`) nothing changes
+3. The image version in `x-sqsolve`. With `1.2` you receive every fix of the 1.2 series and
+   TrueNAS tells you with "Update available"; with an exact version (`1.2.0`) nothing changes
    until you change it. Do not use `edge`: it is the latest of `main`, unreleased.
 4. If port 5432 is already taken on the host (it happens on Synology), publish it only on the
    LAN IP: `"192.168.1.10:5432:5432"`.
@@ -364,15 +364,16 @@ docker compose exec sqsolve sqsolve audit verify
 
 1. First, back everything up (or confirm in the panel that everything has a recent verified
    backup).
-2. With the `1.1` tag, pulling the new image is enough; with an exact version, change it in the
-   compose file first. Then:
+2. With the `1.2` tag, pulling the new image is enough for the fixes of the 1.2 series; for a new
+   series (from `1.1` to `1.2`) or with an exact version, change the tag in the compose file
+   first. Then:
 
 ```
 docker compose pull
 docker compose up -d
 ```
 
-On TrueNAS, with `1.1`, the app shows "Update available" when a fix is released and the Update
+On TrueNAS, with `1.2`, the app shows "Update available" when a fix is released and the Update
 button does the same as those two commands. TrueNAS compares images with the registry once a
 day, so the notice can take up to 24 hours; to skip the wait, from the NAS console:
 `sudo midclt call app.image.op.check_update` forces the check, or directly
@@ -395,8 +396,8 @@ cosign verify ghcr.io/donutinit/sqsolve:X.Y.Z \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-Replace `X.Y.Z` with the exact version you are installing. A `1.1` tag points to the same image
-as the latest `1.1.x`, so it verifies too. The command fails if the image is not signed by that
+Replace `X.Y.Z` with the exact version you are installing. A `1.2` tag points to the same image
+as the latest `1.2.x`, so it verifies too. The command fails if the image is not signed by that
 workflow; images tagged `edge` are not signed.
 
 ### PostgreSQL minor updates
@@ -409,7 +410,7 @@ pins a new PostgreSQL minor version, update it too:
 1. Back up first: PostgreSQL restarts.
 2. Replace the `image:` line of the `postgres` service with the one in the same release's compose
    file (`sqsolve-X.Y.Z-compose.yaml`, attached to the release on GitHub), or paste that whole file
-   and set again your paths, `TZ` and user, and change its `x-sqsolve` line back to `1.1` (the
+   and set again your paths, `TZ` and user, and change its `x-sqsolve` line back to `1.2` (the
    release file pins the exact version).
 3. `docker compose pull`, then `docker compose up -d`. On TrueNAS edit the app's YAML and press
    Update.

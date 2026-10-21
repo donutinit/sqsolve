@@ -1,7 +1,7 @@
 # Runbook: upgrade sqsolve
 
-When: a new version is released. With the compose `1.1` tag, the fixes of the series arrive on
-their own; to change series (`1.2`) edit the `x-sqsolve` line.
+When: a new version is released. With the compose `1.2` tag, the fixes of the series arrive on
+their own; to change series (for example from `1.1` to `1.2`) edit the `x-sqsolve` line.
 
 1. Confirm in the panel that each library has a recent verified backup (protection line in green)
    or run "Back up now". Expected: no amber.

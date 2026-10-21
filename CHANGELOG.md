@@ -5,6 +5,8 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+## [1.2.0] 2026-10-21
+
 Fixes from the audit of 2026-10-20 (stability and long-term operation).
 
 - Data safety:
@@ -89,13 +91,17 @@ Fixes from the audit of 2026-10-20 (stability and long-term operation).
   certificate verification, used by sqsolve's HTTPS and SMTP clients). The 1.1.2 image was built
   with Go 1.27.2. The new CI scan of the binary inside the image found it.
 
-Upgrade: with the `1.1` tag, `docker compose pull` and `docker compose up -d` (TrueNAS:
-Update). Recommended, from the new `deploy/compose.yaml`: the `x-logging` block with
-`logging: *logging` on the three services, and `init: true` on `sqsolve`. Copy those lines into
-your file, or paste the file and set your three paths, `TZ`, UID and GID and the IP where 5432 is
-published again, keeping the `1.1` tag (the compose file attached to the GitHub release pins the
-exact version). Changing the `postgres` service restarts PostgreSQL: do it when no workstation
-has a project open. One migration (`0005`, an index on the backups catalog). At the first start
+Upgrade: this is a new minor version, so the `1.1` tag does not move to it: change the
+`x-sqsolve` line of your compose file to `ghcr.io/donutinit/sqsolve:1.2`, then
+`docker compose pull` and `docker compose up -d` (TrueNAS: edit the app's YAML and Update).
+Recommended, from the new `deploy/compose.yaml`: the `x-logging` block with `logging: *logging`
+on the three services, and `init: true` on `sqsolve`. Copy those lines into your file, or paste
+the file and set your three paths, `TZ`, UID and GID and the IP where 5432 is published again,
+keeping the `1.2` tag (the compose file attached to the GitHub release pins the exact version).
+Changing the `postgres` service restarts PostgreSQL: do it when no workstation has a project
+open. The PostgreSQL image is the same as in 1.1.2 (`postgres:18.6-trixie`). Two migrations
+(`0005`, an index on the backups catalog; `0006`, the reconciliation flag of interrupted jobs).
+At the first start
 `init` writes the db and app markers by itself. The 3 reserved connections take effect the next
 time PostgreSQL restarts (`docs/07` §10). An uptime monitor on `GET /api/v1/system/health` now
 also gets 503 for a stale library or a volume at 90 %.
