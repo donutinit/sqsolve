@@ -84,6 +84,12 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-C082` | could not renew the panel certificate, which expires on ...: ... |
 | `SQS-C083` | the panel certificate and its key did not belong together; a new self-signed certificate was generated and the old files kept aside |
 | `SQS-C084` | could not prepare the recovered control plane: ... |
+| `SQS-C085` | could not set the mode of ... to ...: ... |
+| `SQS-C086` | the recovery stopped and continues at the next start: ... |
+| `SQS-C087` | the recovery cannot continue: ... and ... both exist; keep the one you need outside the app volume, remove the other and start again |
+| `SQS-C088` | the recovery journal ... cannot be read: .... |
+| `SQS-C089` | the staged master key ... is missing while its database waits |
+| `SQS-C090` | a recovery of the installation is being applied (...): start the sqsolve service so it finishes, then run this again |
 | `SQS-C100` | could not read the master key (did you run sqsolve init?): ... |
 | `SQS-E001` | the library does not have the tables and columns the experimental export knows |
 | `SQS-E002` | experimental export is disabled; an administrator can enable it in Settings |
@@ -213,6 +219,8 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-X014` | SQLite integrity: ... |
 | `SQS-X030` | could not copy the database to ...: ... |
 | `SQS-X031` | could not create ...: ... |
+| `SQS-X040` | the audit log could not be written, so the action was not done |
+| `SQS-X041` | the action was done, but its result could not be written to the audit log: ... |
 | `SQS-X900` |  |
 | `SQS-X998` |  |
 | `SQS-X999` | internal error: ... |

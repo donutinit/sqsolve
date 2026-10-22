@@ -120,7 +120,9 @@ func (s *Service) Connection(ctx context.Context, libraryID, credID string) (*Co
 	return &ConnectionInfo{LibraryName: l.DisplayName, Host: s.AdvertisedHost(ctx), Port: s.Cfg.PGPort, Database: l.DBName, User: c.PGRole}, nil
 }
 
-// RevealPassword decrypts a password. Callers enforce reauthentication.
+// RevealPassword decrypts a password. The reveal is in the audit log before
+// the password is returned, or it is not returned (there is no
+// reauthentication, ADR 0021).
 func (s *Service) RevealPassword(ctx context.Context, by audit.Actor, libraryID, credID string) (secrets.String, error) {
 	c, err := s.credential(ctx, libraryID, credID)
 	if err != nil {
@@ -133,7 +135,9 @@ func (s *Service) RevealPassword(ctx context.Context, by audit.Actor, libraryID,
 	if err != nil {
 		return secrets.String{}, err
 	}
-	s.Audit.Record(ctx, by, "library.credential_reveal", "library", libraryID, audit.OK, map[string]any{"role": c.PGRole})
+	if err := s.Audit.Require(ctx, by, "library.credential_reveal", "library", libraryID, audit.OK, map[string]any{"role": c.PGRole}); err != nil {
+		return secrets.String{}, err
+	}
 	s.Events.Emit(ctx, events.Event{Type: events.CredentialRevealed, LibraryID: libraryID,
 		Message: fmt.Sprintf("%s viewed the password of %s", by.Label(), c.PGRole)})
 	return p, nil
@@ -160,15 +164,18 @@ func (s *Service) RotatePassword(ctx context.Context, by audit.Actor, libraryID,
 	// The current password, to put it back if the new one cannot be saved.
 	// Rotating stays possible when it cannot be read: that is the way out.
 	old, oldErr := s.Box.Open(c.passwordEnc, credAAD(c.ID))
-	if err := s.PG.SetRolePassword(ctx, c.PGRole, v); err != nil {
+	err = s.Audit.Do(ctx, by, "library.credential_rotate", "library", libraryID, map[string]any{"role": c.PGRole}, func() error {
+		if err := s.PG.SetRolePassword(ctx, c.PGRole, v); err != nil {
+			return err
+		}
+		if _, err := s.DB.ExecContext(ctx, `UPDATE library_credentials SET password_enc = ?, rotated_at = ? WHERE id = ?`, enc, store.NowT(), c.ID); err != nil {
+			return s.restorePassword(ctx, c.PGRole, old, oldErr, err)
+		}
+		return nil
+	})
+	if err != nil {
 		return err
 	}
-	if _, err := s.DB.ExecContext(ctx, `UPDATE library_credentials SET password_enc = ?, rotated_at = ? WHERE id = ?`, enc, store.NowT(), c.ID); err != nil {
-		err = s.restorePassword(ctx, c.PGRole, old, oldErr, err)
-		s.Audit.Record(ctx, by, "library.credential_rotate", "library", libraryID, audit.Failed, map[string]any{"role": c.PGRole, "error": err.Error()})
-		return err
-	}
-	s.Audit.Record(ctx, by, "library.credential_rotate", "library", libraryID, audit.OK, map[string]any{"role": c.PGRole})
 	s.Events.Emit(ctx, events.Event{Type: events.CredentialRotated, LibraryID: libraryID,
 		Message: fmt.Sprintf("Changed the password of %s. Workstations must use the new one when they reconnect", c.PGRole)})
 	return nil
@@ -264,24 +271,25 @@ func (s *Service) RevokeMember(ctx context.Context, by audit.Actor, libraryID, c
 	if err != nil {
 		return err
 	}
-	if err := s.PG.SetRoleLogin(ctx, c.PGRole, false); err != nil {
-		return err
-	}
-	if sessions, err := s.PG.Sessions(ctx, l.DBName); err == nil {
-		for _, ss := range sessions {
-			if ss.User == c.PGRole {
-				s.PG.TerminateSession(ctx, l.DBName, ss.PID, []string{c.PGRole})
+	return s.Audit.Do(ctx, by, "library.member_revoke", "library", libraryID, map[string]any{"role": c.PGRole}, func() error {
+		if err := s.PG.SetRoleLogin(ctx, c.PGRole, false); err != nil {
+			return err
+		}
+		if sessions, err := s.PG.Sessions(ctx, l.DBName); err == nil {
+			for _, ss := range sessions {
+				if ss.User == c.PGRole {
+					s.PG.TerminateSession(ctx, l.DBName, ss.PID, []string{c.PGRole})
+				}
 			}
 		}
-	}
-	// ADR 0024: every credential that is not revoked gets LOGIN back when
-	// the library's access is applied, so an unrecorded revocation would
-	// come undone at the next start.
-	if _, err := s.DB.ExecContext(ctx, `UPDATE library_credentials SET revoked_at = ? WHERE id = ?`, store.NowT(), c.ID); err != nil {
-		return fmt.Errorf("SQS-L080 the role %s was set NOLOGIN, but its revocation could not be recorded, so the next start would give it its login back; revoke it again: %w", c.PGRole, err)
-	}
-	s.Audit.Record(ctx, by, "library.member_revoke", "library", libraryID, audit.OK, map[string]any{"role": c.PGRole})
-	return s.SyncHBA(ctx)
+		// ADR 0024: every credential that is not revoked gets LOGIN back
+		// when the library's access is applied, so an unrecorded revocation
+		// would come undone at the next start.
+		if _, err := s.DB.ExecContext(ctx, `UPDATE library_credentials SET revoked_at = ? WHERE id = ?`, store.NowT(), c.ID); err != nil {
+			return fmt.Errorf("SQS-L080 the role %s was set NOLOGIN, but its revocation could not be recorded, so the next start would give it its login back; revoke it again: %w", c.PGRole, err)
+		}
+		return s.SyncHBA(ctx)
+	})
 }
 
 // NetworkRule limits where a library can be reached from.
@@ -329,20 +337,22 @@ func (s *Service) SetNetworkRules(ctx context.Context, by audit.Actor, libraryID
 			norm = append(norm, n)
 		}
 	}
-	err := s.DB.Tx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM network_rules WHERE library_id = ?`, libraryID); err != nil {
-			return err
-		}
-		for _, c := range norm {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO network_rules(id, library_id, cidr, created_at) VALUES (?, ?, ?, ?)`, ulid.New(), libraryID, c, store.NowT()); err != nil {
+	// The rules reach PostgreSQL with pg_hba.conf, outside SQLite.
+	return s.Audit.Do(ctx, by, "library.network_rules", "library", libraryID, map[string]any{"cidrs": norm}, func() error {
+		err := s.DB.Tx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM network_rules WHERE library_id = ?`, libraryID); err != nil {
 				return err
 			}
+			for _, c := range norm {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO network_rules(id, library_id, cidr, created_at) VALUES (?, ?, ?, ?)`, ulid.New(), libraryID, c, store.NowT()); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		return nil
+		return s.SyncHBA(ctx)
 	})
-	if err != nil {
-		return err
-	}
-	s.Audit.Record(ctx, by, "library.network_rules", "library", libraryID, audit.OK, map[string]any{"cidrs": norm})
-	return s.SyncHBA(ctx)
 }

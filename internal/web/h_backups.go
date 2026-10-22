@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donutinit/sqsolve/internal/audit"
 	"github.com/donutinit/sqsolve/internal/core"
 	"github.com/donutinit/sqsolve/internal/fsx"
 	"github.com/donutinit/sqsolve/internal/jobs"
@@ -136,7 +137,10 @@ func (s *Server) backupDownload(w http.ResponseWriter, r *http.Request) {
 	if l != nil {
 		slug = l.Slug
 	}
-	s.A.Audit.Record(r.Context(), principalOf(r).Actor(), "backup.download", "backup", b.ID, "ok", nil)
+	if err := s.A.Audit.Require(r.Context(), principalOf(r).Actor(), "backup.download", "backup", b.ID, audit.OK, nil); err != nil {
+		s.renderError(w, r, principalOf(r), http.StatusServiceUnavailable, humanError(err))
+		return
+	}
 	name := fmt.Sprintf("%s_%s.backup", slug, b.StartedAt.UTC().Format("20060102T150405Z"))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)

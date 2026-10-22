@@ -41,7 +41,7 @@ services (optional egress), containers and host (volumes).
 | T-08 | Escalation from SQL injection to command execution | Control role without superuser (no `COPY ... PROGRAM`); the superuser is only used in listed and audited code paths |
 | T-09 | Administrative connection from the network | `pg_hba.conf` rejects `postgres` and `sqsolve_admin` over the network; sqsolve uses the local socket |
 | T-10 | Eavesdropping on the LAN | TLS on PostgreSQL: opportunistic encryption by default (Resolve 21.1.1 negotiates TLS 1.3 on its own, checked on 2026-10-19) and an optional "TLS only" mode that switches `pg_hba.conf` to `hostssl`, with a warning that how each Resolve version implements it is unknown; the sessions view shows whether each connection is encrypted (`pg_stat_ssl`); panel over HTTPS only; VPN recommended outside the LAN |
-| T-11 | Takeover of the setup wizard | Single-use installation code printed in the container log; the wizard closes when the first administrator is created |
+| T-11 | Takeover of the setup wizard | Single-use installation code printed in the container log; the wizard closes when the first administrator is created. The code is held while that administrator is created and spent with it, so concurrent submissions create one; a failed attempt (a weak password) keeps it |
 | T-12 | Destructive operation by mistake or from a stolen session | Typed confirmation with the slug; automatic prior backup; trash; audit log; notification. No reauthentication since ADR 0021 |
 | T-13 | Reading backups | Volume with 0700 permissions owned by the sqsolve UID; age encryption for off-site copies; restic always encrypts |
 | T-14 | Secrets leaking into logs | `secret.String` type that prints as `[redacted]`; `slog` handler that redacts known keys; a test that searches the whole output for test secrets |
@@ -73,7 +73,9 @@ services (optional egress), containers and host (volumes).
   so retrying during the lock leaves no wait behind the unlock. The Users table shows the lock
   while it lasts.
 - TOTP RFC 6238 (SHA-1, 6 digits, 30 s, one-step tolerance), with 10 single-use recovery codes
-  stored as hashes. Administrators: when "Second factor required for administrators" is on, an
+  stored as hashes. A code is accepted once: one conditional update moves the account's last
+  used time step past it, so two sessions presenting the same code at once cannot both pass, and
+  a code whose step cannot be recorded is refused. Administrators: when "Second factor required for administrators" is on, an
   administrator without TOTP goes straight to enrollment after the password, and every other
   page except enrollment and sign out sends them back there; the API refuses that browser
   session with 403 `SQS-A051`. While the option is on, nobody can remove an administrator's
@@ -85,7 +87,10 @@ services (optional egress), containers and host (volumes).
 - Changing a password (one's own in Account, or another user's in Settings, Users) clears a
   lock and closes that user's other sessions. API tokens are separate credentials, each revoked
   on its own in Account or by an administrator, and keep working: after a leak, revoke them
-  too. Disabling a user closes every session and revokes every token.
+  too. Disabling a user closes every session and revokes every token. At least one active
+  administrator always remains (`SQS-A014`): the check and the change are one immediate SQLite
+  transaction, so two administrators demoting or disabling each other at the same time cannot
+  leave none.
 - Recovery: `docker compose exec sqsolve sqsolve admin reset-password <user>` or
   `sqsolve admin create --role admin`. Whoever reaches the container console already controls
   the host.
@@ -138,6 +143,17 @@ libraries.
 | Library passwords | Encrypted in SQLite | sqsolve | Rotation per library |
 | restic password (1.1) | Encrypted in SQLite and in the recovery kit | sqsolve | Not rotatable without rebuilding the repository; documented |
 | TLS certificates | `db/sqsolve/tls` and `app/tls` | PostgreSQL, sqsolve | PostgreSQL: self-signed by `sqsolve-init` for 10 years, generated again when the key or the certificate is missing or they do not match; key 0600 of the PostgreSQL user, certificate readable so sqsolve shows its expiry. Panel: self-signed for 2 years and renewed by sqsolve when fewer than 30 days remain (at start and daily, without a restart); an uploaded certificate is never replaced, sqsolve warns 30 days before and at Error severity in the last 14 days |
+
+Modes are enforced, not only documented. sqsolve refuses to start (`SQS-C010`, wrapped in
+`SQS-C100` or `SQS-C013`) when the master key or the `sqsolve_admin` password can be read by its
+group or by others, or written by anyone but its owner (at most 0600); the `postgres` password is
+the one secret shared with a group, and may be at most 0640. `sqsolve doctor` applies the same
+rule. `sqsolve-init` stops with `SQS-C085` when it cannot set the mode of a secret, a TLS key, or
+the folders of the app volume and of the PostgreSQL configuration that hold them; on the backups
+volume and the db volume root, which hold no secret of sqsolve, it only warns, so a NAS share that
+refuses a mode does not stop PostgreSQL. The TLS key and certificate pairs are written so that a
+power cut never leaves a key next to a certificate of another pair (`fsx.WritePair`: each step
+is synced before the next).
 
 Encryption of recoverable secrets: XChaCha20-Poly1305 with a random 24-byte nonce; the key
 identifier and the column name go as additional authenticated data so that a value cannot be
@@ -196,6 +212,20 @@ superuser use, CLI command execution.
 Format of each entry: `seq`, date, actor (type, id, IP), action, target, result, details without
 secrets, `prev_hash` and `hash = SHA-256(prev_hash || canonical JSON of the entry)`. Verification
 walks the chain; a break raises the critical event `audit.chain_broken`.
+
+The entry of a sensitive action is written with it or before it, never after (ADR 0026): if it
+cannot be written, the action is not done and the caller gets `SQS-X040` (503 in the API).
+
+| Kind of action | When the entry is written | Results |
+|---|---|---|
+| Change inside SQLite (users, roles, panel passwords, API tokens) | In the same transaction | `ok` |
+| Action that runs as a job (library create, delete, purge, untrash; back up now; restores, revert, recreate; import; export preparation; maintenance jobs; Retry; upgrade window) | In the transaction that queues the job, with `job_id` | `accepted`, then `ok` or `failed` (with `state` and `error_code`) when the job ends |
+| Change in PostgreSQL or in files (delete a backup, rotate a password, revoke a member, network rules, maintenance, end a session, reopen the initialization window, close an export workspace, regenerate `pg_hba.conf`) | Before the change; the change does not run without it | `accepted`, then `ok` or `failed` (with `error`) |
+| Disclosure (reveal a password, download a backup, the recovery kit, the diagnostics, an export) | Before anything is sent | `ok` |
+
+Logins, failed logins, logouts and refusals (`denied`) are recorded on a best-effort basis:
+refusing a login because the audit log cannot be written would lock everyone out of the panel
+that shows the problem.
 
 ## 10. Incident response and disclosure
 

@@ -43,6 +43,8 @@ jobs:
           SQSOLVE_TEST_PG_BIN: /usr/lib/postgresql/18/bin
           SQSOLVE_REQUIRE_PG: "1"
         run: go test -race -count=1 ./...
+      - name: Short fuzzing (each target 10 seconds; fuzz.yml runs them longer every night)
+        run: make fuzz FUZZTIME=10s
       - name: govulncheck
         run: make vuln
 

@@ -193,7 +193,8 @@ func TestRetryOfAnIdempotentJobIsAudited(t *testing.T) {
 		t.Fatalf("retried job %+v", nj)
 	}
 	es := auditEntries(t, a, "job.retry")
-	if len(es) != 1 || es[0].Outcome != audit.OK || es[0].TargetID != j.ID || es[0].Details["new_job_id"] != nj.ID || es[0].Actor.Name != "op" {
+	// Written with the new job (jobs.Audited): its result follows when it ends.
+	if len(es) != 1 || es[0].Outcome != audit.Accepted || es[0].TargetID != j.ID || es[0].Details["job_id"] != nj.ID || es[0].Details["type"] != j.Type || es[0].Actor.Name != "op" {
 		t.Fatalf("retry audit %+v", es)
 	}
 	// A failed system job: the operator neither retries nor cancels it.

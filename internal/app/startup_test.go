@@ -298,18 +298,9 @@ func TestPanelCertificatePair(t *testing.T) {
 // its PostgreSQL identifier belongs to the old cluster and must not trip
 // the guard on the new one.
 func TestRecoveryForgetsTheOldCluster(t *testing.T) {
-	ctx := context.Background()
 	cfg := testConfig(t)
-	if err := Init(cfg, io.Discard); err != nil {
-		t.Fatal(err)
-	}
-	db, err := store.Open(ctx, cfg.DBPath()+".recover", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetSetting(ctx, pgSystemIDSetting, "7000000000000000001", "system")
-	db.Close()
-	os.WriteFile(masterKeyPath(cfg)+".recover", []byte("a2V5\n"), 0o400)
+	livePair(t, cfg)
+	stagePair(t, cfg, map[string]string{pgSystemIDSetting: "7000000000000000001"})
 	if err := ApplyPendingRecovery(cfg, io.Discard); err != nil {
 		t.Fatal(err)
 	}
@@ -645,17 +636,21 @@ func TestRecoveryOfAnUnreadableCopy(t *testing.T) {
 	os.WriteFile(cfg.DBPath()+".recover", []byte("this is not a database, just text long enough to be read as a header"), 0o600)
 	os.WriteFile(masterKeyPath(cfg)+".recover", []byte("a2V5\n"), 0o400)
 	keyBefore, _ := os.ReadFile(masterKeyPath(cfg))
-	err := ApplyPendingRecovery(cfg, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "SQS-C084 could not prepare the recovered control plane") {
-		t.Fatalf("want SQS-C084, got %v", err)
+	var out strings.Builder
+	if err := ApplyPendingRecovery(cfg, &out); err != nil {
+		t.Fatal(err)
 	}
-	// Nothing was moved: the installation starts as it was.
+	if !strings.Contains(out.String(), "SQS-C084 could not prepare the recovered control plane") {
+		t.Fatalf("output: %q", out.String())
+	}
+	// Nothing was moved: the installation starts as it was, and the staged
+	// files are kept aside for the operator.
 	if keyNow, _ := os.ReadFile(masterKeyPath(cfg)); !bytes.Equal(keyBefore, keyNow) {
 		t.Fatal("the master key was replaced by a failed recovery")
 	}
 	for _, p := range []string{cfg.DBPath() + ".recover", masterKeyPath(cfg) + ".recover"} {
-		if _, err := os.Stat(p); err != nil {
-			t.Fatalf("the staged %s is gone", filepath.Base(p))
+		if m, _ := filepath.Glob(p + ".refused-*"); len(m) != 1 {
+			t.Fatalf("the staged %s was not set aside: %v", filepath.Base(p), m)
 		}
 	}
 }

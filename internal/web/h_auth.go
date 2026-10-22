@@ -3,8 +3,8 @@
 package web
 
 import (
+	"cmp"
 	"context"
-	"crypto/subtle"
 	"errors"
 	"net"
 	"net/http"
@@ -75,11 +75,9 @@ func (s *Server) setupForm(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "setup", "Setup", "", data)
 }
 
-func (s *Server) checkInstallCode(code string) bool {
-	want := s.A.InstallCode()
-	code = strings.ToUpper(strings.TrimSpace(code))
-	return want != "" && subtle.ConstantTimeCompare([]byte(code), []byte(want)) == 1
-}
+// errSetupDone stops a setup whose installation already has an
+// administrator.
+var errSetupDone = errors.New("the installation already has an administrator")
 
 func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -96,18 +94,31 @@ func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request) {
 		back("The form expired; try again.")
 		return
 	}
-	if !s.checkInstallCode(r.FormValue("code")) {
-		s.A.Audit.Record(ctx, audit.Actor{Type: "anonymous", IP: s.clientIP(r)}, "setup.code", "system", "", audit.Denied, nil)
-		time.Sleep(time.Second)
-		back("The installation code is not correct. Look for it in the sqsolve container log.")
-		return
-	}
 	if r.FormValue("password") != r.FormValue("password2") {
 		back("The passwords do not match.")
 		return
 	}
-	u, err := s.A.Auth.CreateUser(ctx, audit.Actor{Type: "setup", Name: "setup", IP: s.clientIP(r)}, r.FormValue("username"), r.FormValue("display"), r.FormValue("password"), auth.RoleAdmin)
-	if err != nil {
+	// The code is held while the administrator is created and spent with
+	// it: concurrent setups with the same code create one administrator.
+	var u *auth.User
+	matched, err := s.A.UseInstallCode(r.FormValue("code"), func() error {
+		if has, err := s.A.Auth.HasAdmin(ctx); err != nil || has {
+			return cmp.Or(err, errSetupDone)
+		}
+		var err error
+		u, err = s.A.Auth.CreateUser(ctx, audit.Actor{Type: "setup", Name: "setup", IP: s.clientIP(r)}, r.FormValue("username"), r.FormValue("display"), r.FormValue("password"), auth.RoleAdmin)
+		return err
+	})
+	switch {
+	case !matched:
+		s.A.Audit.Record(ctx, audit.Actor{Type: "anonymous", IP: s.clientIP(r)}, "setup.code", "system", "", audit.Denied, nil)
+		time.Sleep(time.Second)
+		back("The installation code is not correct. Look for it in the sqsolve container log.")
+		return
+	case errors.Is(err, errSetupDone):
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	case err != nil:
 		back(humanError(err))
 		return
 	}
@@ -131,7 +142,6 @@ func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request) {
 		back(humanError(err))
 		return
 	}
-	s.A.ClearInstallCode()
 	token, p, _, err := s.A.Auth.Login(ctx, u.Username, r.FormValue("password"), s.clientIP(r), r.UserAgent())
 	if err != nil {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
@@ -155,13 +165,24 @@ func (s *Server) setupRecover(w http.ResponseWriter, r *http.Request) {
 		back("The form expired; try again.")
 		return
 	}
-	if !s.checkInstallCode(r.FormValue("code")) {
+	var name string
+	matched, err := s.A.UseInstallCode(r.FormValue("code"), func() error {
+		if has, err := s.A.Auth.HasAdmin(ctx); err != nil || has {
+			return cmp.Or(err, errSetupDone)
+		}
+		var err error
+		name, err = app.StageRecovery(s.A.Cfg, r.FormValue("key"))
+		return err
+	})
+	switch {
+	case !matched:
 		time.Sleep(time.Second)
 		back("The installation code is not correct.")
 		return
-	}
-	name, err := app.StageRecovery(s.A.Cfg, r.FormValue("key"))
-	if err != nil {
+	case errors.Is(err, errSetupDone):
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	case err != nil:
 		back(humanError(err))
 		return
 	}

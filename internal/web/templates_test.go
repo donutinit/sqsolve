@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/donutinit/sqsolve/internal/app"
+	"github.com/donutinit/sqsolve/internal/audit"
 	"github.com/donutinit/sqsolve/internal/auth"
 	"github.com/donutinit/sqsolve/internal/config"
 	"github.com/donutinit/sqsolve/internal/core"
@@ -138,5 +139,22 @@ func TestSecurityHeaders(t *testing.T) {
 	setSecurityHeaders(plain, false)
 	if plain.Get("Strict-Transport-Security") != "" {
 		t.Error("HSTS must not be sent over plain HTTP")
+	}
+}
+
+// Audit AUD-004: an entry written before its action (a queued job, a change
+// outside SQLite) reads "Accepted" with a neutral outline badge, not as a
+// failure.
+func TestAuditLogShowsAcceptedEntries(t *testing.T) {
+	entries := []audit.Entry{
+		{Seq: 2, TS: time.Now(), Actor: audit.Actor{Type: "user", Name: "diego"}, Action: "library.delete", TargetType: "library", TargetID: "01M5A5X0JZQYHV8GE4H1PK6VG9", Outcome: audit.OK},
+		{Seq: 1, TS: time.Now(), Actor: audit.Actor{Type: "user", Name: "diego"}, Action: "library.delete", TargetType: "library", TargetID: "01M5A5X0JZQYHV8GE4H1PK6VG9", Outcome: audit.Accepted},
+	}
+	page := renderPage(t, "activity", map[string]any{"Tab": "audit", "Audit": entries, "Count": int64(2)})
+	if !strings.Contains(page, `<span class="badge info"><span class="dot" aria-hidden="true"></span>Accepted</span>`) {
+		t.Fatal("the accepted entry has no neutral badge")
+	}
+	if !strings.Contains(page, `<span class="badge ok"><span class="dot" aria-hidden="true"></span>OK</span>`) {
+		t.Fatal("the result entry has no OK badge")
 	}
 }

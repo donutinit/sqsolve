@@ -2,18 +2,29 @@
 
 ## 1. Levels
 
-| Level | What it covers | Tool | Where it runs |
-|---|---|---|---|
-| Unit | Pure functions and services with test doubles | `go test` | Every change, CI |
-| Properties and fuzzing | Identifier validators, cron parser, retention, encryption | `testing.F`, custom generators | CI (short fuzz), nightly (long fuzz) |
-| Integration | Services against real PostgreSQL 18, real SQLite, real `pg_dump`/`pg_restore` | `testcontainers-go` or the test Compose | CI |
-| Contract | API responses against `api/openapi.yaml` | `kin-openapi` | CI |
-| End to end | UI flows in a browser | `chromedp` against the full Compose | CI |
-| Faults and recovery | Outages, full disk, missing volumes, PostgreSQL down | Go scripts that drive Docker on the CI machine | CI (nightly) |
-| Security | Static analysis, vulnerabilities, web scanning, authorization | `gosec`, `govulncheck`, OWASP ZAP, matrix tests | CI |
-| Resolve compatibility | Real Resolve behaviour, including the export kit (`22` §6) | Guided manual script (`14-compatibility.md` §4) | Diego's workstations |
-| Acceptance | Criteria AC-01 to AC-11 | Script in §8, part automated and part manual | Before each release |
-| Performance | Page and backup times | `go test -bench`, synthetic loads | Before each release |
+The plan, and what of it runs today. "In CI" means it gates every pull request and every
+published image (`docs/17` §4); "planned" is not a gate yet, whatever the other columns say. The
+pending items have no target release yet: To be confirmed by Diego.
+
+| Level | What it covers | Tool | Where it runs | Status (1.2.1) |
+|---|---|---|---|---|
+| Unit | Pure functions and services with test doubles | `go test` | Every change, CI | In CI, with `-race`, on Go 1.26 and 1.27 |
+| Properties and fuzzing | Identifier validators, cron parser, retention, encryption, CIDRs, display names | `testing.F` | CI (short fuzz), nightly (long fuzz) | In CI: the seeds with the tests and every target for 10 s (`make fuzz`); nightly 5 min each (`fuzz.yml`). Import paths: planned |
+| Integration | Services against real PostgreSQL 18, real SQLite, real `pg_dump`/`pg_restore` | `go test` with throwaway clusters (`internal/testpg`) | CI | In CI (PostgreSQL 18 from PGDG, `SQSOLVE_REQUIRE_PG=1`) |
+| Contract | API responses against `api/openapi.yaml` | `kin-openapi` | CI | Planned: there is no `api/openapi.yaml`. Meanwhile `internal/api` tests the request contract (authentication, scopes, CSRF, JSON framing, problem documents and their status) |
+| End to end | UI flows in a browser | `chromedp` against the full Compose | CI | Planned. `test/compose_e2e.py` drives the real image over HTTP, without a browser (CI `smoke`) |
+| Faults and recovery | Outages, full disk, missing volumes, PostgreSQL down | `make scenarios`, failpoints and models in the Go tests | CI | Partly: `make scenarios` in CI (real PostgreSQL and server, processes killed mid-job, PostgreSQL down, folders without permission); recovery and pair writes stopped at every step and under a power-loss model; audit and filesystem write failures injected. No Docker-level kills |
+| Security | Static analysis, vulnerabilities, web scanning, authorization | `govulncheck`, `gosec`, OWASP ZAP, matrix tests | CI | `govulncheck` in CI (source and the binary of the image). `gosec` and ZAP planned (ZAP was run by hand for 1.0, `08` §10). Authorization tested per action and per job type, not as one matrix |
+| Resolve compatibility | Real Resolve behaviour, including the export kit (`22` §6) | Guided manual script (`14-compatibility.md` §4) | Diego's workstations | Manual; done for 1.0 on Linux |
+| Acceptance | Criteria AC-01 to AC-11 | Script in §8, part automated and part manual | Before each release | Manual; recorded for 1.0 (`docs/acceptance/1.0.md`) |
+| Performance | Page and backup times | `go test -bench`, synthetic loads | Before each release | Planned: there are no benchmarks |
+
+Coverage (RNF-MAN-01 asks for 80 % of the lines of `internal/`): 70.5 % of the statements of
+`internal/` on 2026-10-22, measured with the integration tests (66.7 % in the 2026-10-21 audit).
+The requirement is not met. Furthest below it: `internal/api` (34.5 %), `internal/web` (59.4 %),
+both handlers that the end-to-end tests over HTTP only partly reach, and `internal/fsx` (67.1 %).
+Coverage is raised first where a failure costs data or access (recovery, audit failures,
+concurrent authentication, request contracts), not with tests of getters.
 
 Resolve cannot run in CI (it needs a GPU and a license). That is why the design avoids depending
 on its behaviour on the automatable paths and concentrates what does depend on it in PoCs and
@@ -21,21 +32,28 @@ manual scripts.
 
 ## 2. Mandatory unit tests
 
+Package names as they are today (`21-tasks.md` §1).
+
 - `internal/pg/ident`: accept and reject slugs and role names; property: every accepted name fits
   in 63 bytes and does not contain `__` except for the generated auxiliary names.
-- `internal/backup/retention`: table cases (no backups, only pinned ones, schedule changes, leap
+- `internal/core` retention (`Retain`): table cases (no backups, only pinned ones, schedule changes, leap
   years, `min_verified` greater than the available ones) and properties: a pinned backup is never
   deleted, an active library is never left without a verified backup if one existed, the result
   does not depend on the input order.
 - `internal/scheduler`: next run with time zones and daylight saving time; missed runs.
-- `internal/auth/policy`: full matrix of role by action by resource.
+- `internal/auth` policy: full matrix of role by action by resource.
 - `internal/secrets`: encrypt and decrypt, rejection with changed additional data, key rotation.
-- `internal/auth/totp`: RFC 6238 vectors.
-- `internal/audit`: valid chain, tampering detected at any position.
+- `internal/auth` TOTP: RFC 6238 vectors; a code is accepted once, also by two sessions at the
+  same time.
+- `internal/audit`: valid chain, tampering detected at any position; an entry written in the
+  transaction of its change, or before a change outside SQLite, and nothing done without it.
 - `internal/pgconf`: `pg_hba.conf` generated for combinations of libraries, credentials and CIDRs;
   the reject lines for administrative roles always come first.
-- `internal/fsx`: atomic write (simulating failures between steps).
-- `internal/errs`: every code has a message and a documentation page.
+- `internal/fsx`: atomic write (simulating failures between steps); key and certificate pairs
+  under a model of what a power cut keeps (`powerloss_test.go`).
+- `internal/app`: control plane recovery stopped at every step and finished by the next start.
+- Error codes: every code has one message (`make errors-check`) and is listed in
+  `docs/manual/errors.md` (`make errors`).
 
 ## 3. Integration tests
 
@@ -84,8 +102,10 @@ children. No test sends signals to PIDs it did not launch.
 
 ## 5. Security tests
 
-- `gosec` and `govulncheck` with no high findings in order to merge.
-- OWASP ZAP in "baseline" mode against the authenticated test Compose; no high alerts.
+- `govulncheck` with no reachable vulnerability in order to merge (in CI, on the source and on the
+  binary of the image). `gosec` with no high findings: planned, not a gate yet.
+- OWASP ZAP in "baseline" mode against the authenticated test Compose; no high alerts. Planned,
+  not a gate yet (run by hand for 1.0, `08` §10).
 - Authorization matrix tested against the web, the API and the CLI (same table, three adapters).
 - CSRF: every `POST` without a token fails.
 - Headers: CSP, `X-Content-Type-Options`, `Referrer-Policy`, HSTS when there is a custom

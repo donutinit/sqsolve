@@ -4,10 +4,13 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -96,5 +99,65 @@ func TestInitRefusesVolumeThatIgnoresChmod(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(pg, "sqsolve", "postgresql.conf")); !os.IsNotExist(err) {
 		t.Fatalf("init wrote PostgreSQL config into a volume it refused: %v", err)
+	}
+}
+
+// Audit AUD-003: init ignored a failed chmod of an existing secret, folder
+// or TLS key and reported success with the old mode in place.
+func TestInitFailsWhenAModeCannotBeSet(t *testing.T) {
+	for _, c := range []struct {
+		path func(*config.Config) string
+		mode os.FileMode
+	}{
+		{masterKeyPath, 0o400},
+		{adminPassPath, 0o400},
+		{instanceIDPath, 0o600},
+		{func(c *config.Config) string { return c.SecretsDir() }, 0o700},
+		{func(c *config.Config) string { return c.SuperuserPasswordFile() }, 0o440},
+		{func(c *config.Config) string { return filepath.Join(c.PGConfDir(), "tls", "server.key") }, 0o600},
+		{func(c *config.Config) string { return c.PGConfDir() }, 0o750},
+	} {
+		cfg := testConfig(t)
+		if err := Init(cfg, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		path := c.path(cfg)
+		chmod = func(p string, m os.FileMode) error {
+			if p == path {
+				return &fs.PathError{Op: "chmod", Path: p, Err: syscall.EPERM}
+			}
+			return os.Chmod(p, m)
+		}
+		err := Init(cfg, io.Discard)
+		chmod = os.Chmod
+		want := fmt.Sprintf("SQS-C085 could not set the mode of %s to %04o: chmod %s: operation not permitted", path, c.mode, path)
+		if err == nil || err.Error() != want {
+			t.Errorf("want %q, got %v", want, err)
+		}
+	}
+}
+
+// The backups volume and the db volume root are not secret: a mode that
+// cannot be set there is a warning, so a NAS share does not stop init.
+func TestInitWarnsWhenAVolumeRootKeepsItsMode(t *testing.T) {
+	cfg := testConfig(t)
+	if err := Init(cfg, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	chmod = func(p string, m os.FileMode) error {
+		if p == cfg.BackupDir || p == cfg.PGDir {
+			return &fs.PathError{Op: "chmod", Path: p, Err: syscall.EPERM}
+		}
+		return os.Chmod(p, m)
+	}
+	defer func() { chmod = os.Chmod }()
+	var out strings.Builder
+	if err := Init(cfg, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{cfg.BackupDir, cfg.PGDir} {
+		if !strings.Contains(out.String(), "warning: could not set the mode of "+p) {
+			t.Errorf("no warning for %s:\n%s", p, out.String())
+		}
 	}
 }

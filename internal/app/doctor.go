@@ -15,6 +15,7 @@ import (
 	"github.com/donutinit/sqsolve/internal/fsx"
 	"github.com/donutinit/sqsolve/internal/health"
 	"github.com/donutinit/sqsolve/internal/pg"
+	"github.com/donutinit/sqsolve/internal/secrets"
 )
 
 // Check is one doctor result.
@@ -110,13 +111,14 @@ func Doctor(ctx context.Context, a *App) []Check {
 			add(v.name, "ok", "belongs to this installation ("+a.InstanceID+")", "")
 		}
 	}
+	// The rule startup applies (secrets.ReadFile), so both agree.
 	for _, f := range []string{masterKeyPath(c), adminPassPath(c)} {
-		st, err := os.Stat(f)
+		_, err := secrets.ReadFile(f)
 		switch {
+		case errors.Is(err, secrets.ErrPermissions):
+			add("Secret "+filepath.Base(f), "fail", err.Error(), "they must be 0400")
 		case err != nil:
 			add("Secret "+filepath.Base(f), "fail", err.Error(), "run sqsolve init")
-		case st.Mode().Perm()&0o077 != 0:
-			add("Secret "+filepath.Base(f), "fail", fmt.Sprintf("permissions %o", st.Mode().Perm()), "they must be 0400")
 		default:
 			add("Secret "+filepath.Base(f), "ok", "present and protected", "")
 		}

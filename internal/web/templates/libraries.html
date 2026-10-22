@@ -10,17 +10,17 @@
 </nav>
 {{if .Data.Rows}}
 <section class="card flush">
-<table class="table cards-on-mobile">
-  <thead><tr><th>Library</th><th>State</th><th>Protection (14 days)</th><th>Last verified</th><th>Connections</th><th>Size</th></tr></thead>
-  <tbody>
+<table role="table" class="table cards-on-mobile">
+  <thead role="rowgroup"><tr role="row"><th role="columnheader">Library</th><th role="columnheader">State</th><th role="columnheader">Protection (14 days)</th><th role="columnheader">Last verified</th><th role="columnheader">Connections</th><th role="columnheader">Size</th></tr></thead>
+  <tbody role="rowgroup">
   {{range .Data.Rows}}
-  <tr>
-    <td data-label="Library"><a href="/libraries/{{.L.ID}}"><strong>{{.L.DisplayName}}</strong></a><br><span class="mono small muted">{{.L.Slug}}</span></td>
-    <td data-label="State">{{template "librarystate" .L}}{{if .L.ResolveVersion}}<br><span class="muted small">Resolve {{.L.ResolveVersion}}</span>{{end}}</td>
-    <td data-label="Protection" class="trackcell">{{template "track" (dict "t" .Track "big" false)}}</td>
-    <td data-label="Last verified">{{template "badge" (dict "tone" .Track.Tone "label" .Track.LastAgo)}}</td>
-    <td data-label="Connections">{{.Sessions}}</td>
-    <td data-label="Size">{{if .Size}}{{bytes .Size}}{{end}}</td>
+  <tr role="row">
+    <td role="cell" data-label="Library"><a href="/libraries/{{.L.ID}}"><strong>{{.L.DisplayName}}</strong></a><br><span class="mono small muted">{{.L.Slug}}</span></td>
+    <td role="cell" data-label="State">{{template "librarystate" .L}}{{if .L.ResolveVersion}}<br><span class="muted small">Resolve {{.L.ResolveVersion}}</span>{{end}}</td>
+    <td role="cell" data-label="Protection" class="trackcell">{{template "track" (dict "t" .Track "big" false)}}</td>
+    <td role="cell" data-label="Last verified">{{template "badge" (dict "tone" .Track.Tone "label" .Track.LastAgo)}}</td>
+    <td role="cell" data-label="Connections">{{.Sessions}}</td>
+    <td role="cell" data-label="Size">{{if .Size}}{{bytes .Size}}{{end}}</td>
   </tr>
   {{end}}
   </tbody>

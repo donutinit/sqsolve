@@ -226,8 +226,8 @@ func (s *Service) RestoreAsNew(ctx context.Context, by audit.Actor, backupID, sl
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, p.Enabled, p.Cron, p.Timezone, p.KeepLast, p.KeepDaily, p.KeepWeekly, p.KeepMonthly, p.MinVerified, now)
 		}
 	}
-	s.Audit.Record(ctx, by, "restore.new", "library", id, audit.OK, map[string]any{"backup_id": backupID, "slug": slug})
-	j, err := s.Jobs.Enqueue(ctx, JobRestoreNew, id, RestoreParams{BackupID: backupID, Slug: slug, DisplayName: name}, by, jobs.Priority(100))
+	j, err := s.Jobs.Enqueue(ctx, JobRestoreNew, id, RestoreParams{BackupID: backupID, Slug: slug, DisplayName: name}, by, jobs.Priority(100),
+		jobs.Audited("restore.new", "library", id, map[string]any{"backup_id": backupID, "slug": slug}))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -392,8 +392,8 @@ func (s *Service) RestoreReplace(ctx context.Context, by audit.Actor, backupID, 
 	if l.State != StateActive && l.State != StateMaintenance {
 		return nil, fmt.Errorf("SQS-R003 cannot replace a library in state %s", l.State.Label())
 	}
-	s.Audit.Record(ctx, by, "restore.replace", "library", l.ID, audit.OK, map[string]any{"backup_id": backupID, "terminate_sessions": terminate})
-	return s.Jobs.Enqueue(ctx, JobRestoreReplace, l.ID, RestoreParams{BackupID: backupID, TerminateSessions: terminate}, by, jobs.Priority(100))
+	return s.Jobs.Enqueue(ctx, JobRestoreReplace, l.ID, RestoreParams{BackupID: backupID, TerminateSessions: terminate}, by, jobs.Priority(100),
+		jobs.Audited("restore.replace", "library", l.ID, map[string]any{"backup_id": backupID, "terminate_sessions": terminate}))
 }
 
 // swapJournal is stored before locking and before each rename (docs 11 §7.3).
@@ -750,8 +750,8 @@ func (s *Service) Revert(ctx context.Context, by audit.Actor, libraryID, confirm
 	if err := revertable(l); err != nil {
 		return nil, err
 	}
-	s.Audit.Record(ctx, by, "restore.revert", "library", l.ID, audit.OK, map[string]any{"prev": l.PrevDB})
-	return s.Jobs.Enqueue(ctx, JobRestoreRevert, l.ID, RestoreParams{TerminateSessions: true}, by, jobs.Priority(100), jobs.Unique())
+	return s.Jobs.Enqueue(ctx, JobRestoreRevert, l.ID, RestoreParams{TerminateSessions: true}, by, jobs.Priority(100), jobs.Unique(),
+		jobs.Audited("restore.revert", "library", l.ID, map[string]any{"prev": l.PrevDB}))
 }
 
 func revertable(l *Library) error {
@@ -917,8 +917,8 @@ func (s *Service) Import(ctx context.Context, by audit.Actor, libraryID, name st
 	if _, err := s.Library(ctx, libraryID); err != nil {
 		return nil, err
 	}
-	s.Audit.Record(ctx, by, "backup.import", "library", libraryID, audit.OK, map[string]any{"file": name})
-	return s.Jobs.Enqueue(ctx, JobBackupImport, libraryID, ImportParams{Path: name, DeleteSource: deleteSource}, by)
+	return s.Jobs.Enqueue(ctx, JobBackupImport, libraryID, ImportParams{Path: name, DeleteSource: deleteSource}, by,
+		jobs.Audited("backup.import", "library", libraryID, map[string]any{"file": name}))
 }
 
 func (s *Service) runImport(ctx context.Context, r *jobs.Run) error {
@@ -1133,8 +1133,8 @@ func (s *Service) Recreate(ctx context.Context, by audit.Actor, libraryID, backu
 		}
 		backupID = b.ID
 	}
-	s.Audit.Record(ctx, by, "restore.recreate", "library", l.ID, audit.OK, map[string]any{"backup_id": backupID})
-	return s.Jobs.Enqueue(ctx, JobRestoreRecreate, l.ID, RestoreParams{BackupID: backupID}, by, jobs.Priority(100), jobs.Unique())
+	return s.Jobs.Enqueue(ctx, JobRestoreRecreate, l.ID, RestoreParams{BackupID: backupID}, by, jobs.Priority(100), jobs.Unique(),
+		jobs.Audited("restore.recreate", "library", l.ID, map[string]any{"backup_id": backupID}))
 }
 
 // dropCreated drops the database a failed recreate created. A drop that

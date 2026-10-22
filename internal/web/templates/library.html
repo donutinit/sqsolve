@@ -101,18 +101,18 @@
   <div class="cardhead pad"><h2>Backups</h2>
     <div class="actions">{{if $p.Can "backup.import"}}<a href="/backups/import?library={{$id}}">Import</a>{{end}}</div></div>
   {{if .Data.Backups}}
-  <table class="table cards-on-mobile">
-    <thead><tr><th>Date</th><th>Type</th><th>State</th><th>Verification</th><th>Size</th><th>Duration</th><th></th></tr></thead>
-    <tbody>
+  <table role="table" class="table cards-on-mobile">
+    <thead role="rowgroup"><tr role="row"><th role="columnheader">Date</th><th role="columnheader">Type</th><th role="columnheader">State</th><th role="columnheader">Verification</th><th role="columnheader">Size</th><th role="columnheader">Duration</th><th role="columnheader"></th></tr></thead>
+    <tbody role="rowgroup">
     {{range .Data.Backups}}
-      <tr>
-        <td data-label="Date"><a href="/backups/{{.ID}}">{{dt .StartedAt}}</a>{{if .Pinned}} {{template "badge" (dict "tone" "info" "label" "Pinned")}}{{end}}</td>
-        <td data-label="Type">{{kind .Kind}}</td>
-        <td data-label="State">{{template "badge" (dict "tone" (backuptone .Status) "label" (backuplabel .Status))}}</td>
-        <td data-label="Verification">{{if eq .Status "ok"}}{{template "badge" (dict "tone" (verifytone .VerifyStatus) "label" (verifylabel .VerifyStatus))}}{{end}}</td>
-        <td data-label="Size">{{if .SizeBytes}}{{bytes .SizeBytes}}{{end}}</td>
-        <td data-label="Duration">{{dur .Duration}}</td>
-        <td>{{if eq .Status "ok"}}<a href="/backups/{{.ID}}/restore">Restore</a>{{end}}</td>
+      <tr role="row">
+        <td role="cell" data-label="Date"><a href="/backups/{{.ID}}">{{dt .StartedAt}}</a>{{if .Pinned}} {{template "badge" (dict "tone" "info" "label" "Pinned")}}{{end}}</td>
+        <td role="cell" data-label="Type">{{kind .Kind}}</td>
+        <td role="cell" data-label="State">{{template "badge" (dict "tone" (backuptone .Status) "label" (backuplabel .Status))}}</td>
+        <td role="cell" data-label="Verification">{{if eq .Status "ok"}}{{template "badge" (dict "tone" (verifytone .VerifyStatus) "label" (verifylabel .VerifyStatus))}}{{end}}</td>
+        <td role="cell" data-label="Size">{{if .SizeBytes}}{{bytes .SizeBytes}}{{end}}</td>
+        <td role="cell" data-label="Duration">{{dur .Duration}}</td>
+        <td role="cell">{{if eq .Status "ok"}}<a href="/backups/{{.ID}}/restore">Restore</a>{{end}}</td>
       </tr>
     {{end}}
     </tbody>

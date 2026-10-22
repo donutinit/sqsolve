@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/donutinit/sqsolve/internal/app"
@@ -44,5 +45,47 @@ func TestBusyIsServiceUnavailable(t *testing.T) {
 	// The type points at the error page of docs 10 §1.
 	if p.Type != "/docs/errors/SQS-A050" {
 		t.Fatalf("problem type %q", p.Type)
+	}
+}
+
+// Audit AUD-008: an empty body decoded as the zero value (maintenance off)
+// and a second JSON value after the first was ignored.
+func TestDecodeRequiresExactlyOneJSONValue(t *testing.T) {
+	type in struct {
+		Enabled bool `json:"enabled"`
+	}
+	for body, want := range map[string]string{
+		"":                                  "SQS-C061 invalid JSON body: the body is empty",
+		"  \n\t ":                           "SQS-C061 invalid JSON body: the body is empty",
+		`{"enabled":true}{"enabled":false}`: "SQS-C061 invalid JSON body: more than one JSON value",
+		`{"enabled":true} {}`:               "SQS-C061 invalid JSON body: more than one JSON value",
+		`{"enabled":true} x`:                "SQS-C061 invalid JSON body: more than one JSON value",
+		`{"enabled":true,"other":1}`:        `SQS-C061 invalid JSON body: json: unknown field "other"`,
+		`{"enabled":`:                       "SQS-C061 invalid JSON body: unexpected EOF",
+	} {
+		r := httptest.NewRequest("POST", "/api/v1/x", strings.NewReader(body))
+		var v in
+		if err := decode(r, &v); err == nil || err.Error() != want {
+			t.Errorf("body %q: want %q, got %v", body, want, err)
+		}
+	}
+	r := httptest.NewRequest("POST", "/api/v1/x", strings.NewReader(" {\"enabled\": true}\n"))
+	var v in
+	if err := decode(r, &v); err != nil || !v.Enabled {
+		t.Fatalf("a valid body: %v %+v", err, v)
+	}
+}
+
+// A body over the limit set by guard is refused with the same code.
+func TestDecodeOversizedBody(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/v1/x", strings.NewReader(`{"name":"`+strings.Repeat("a", 2<<20)+`"}`))
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var v struct {
+		Name string `json:"name"`
+	}
+	err := decode(r, &v)
+	if err == nil || err.Error() != "SQS-C061 invalid JSON body: http: request body too large" {
+		t.Fatalf("want SQS-C061 for an oversized body, got %v", err)
 	}
 }

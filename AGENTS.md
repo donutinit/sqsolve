@@ -5,11 +5,12 @@ Read this in full before touching the repo. The global rules in `~/.claude/CLAUD
 
 ## Project status
 
-Versions 0.1 to 0.6 implemented (2026-10-18) on Diego's request, before running the proofs of
-concept with Resolve. The architecture is in `docs/` and the progress in `docs/21-tasks.md` §12.
-Whatever depends on a PoC (the "Blocks" column of `docs/02-proofs-of-concept.md`) is written
-according to the plan's hypothesis and is **not validated with real Resolve**: do not extend it
-or take it for granted until the PoC confirms it.
+Version 1.2.1 (2026-10-22); the history is in `CHANGELOG.md`, the architecture in `docs/` and the
+progress in `docs/21-tasks.md` §12. Resolve was tested with 1.0 on Linux (`docs/acceptance/1.0.md`,
+`docs/poc/`). Whatever depends on a PoC (the "Blocks" column of `docs/02-proofs-of-concept.md`) or
+on Resolve behavior that those records do not cover is written according to the plan's hypothesis
+and is **not validated with real Resolve**: do not extend it or take it for granted until a PoC or
+an acceptance test confirms it.
 
 ## How to pick and close a task
 

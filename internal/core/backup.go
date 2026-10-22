@@ -923,8 +923,8 @@ func (s *Service) BackupNow(ctx context.Context, by audit.Actor, libraryID strin
 	if l.State != StateActive && l.State != StateMaintenance {
 		return nil, fmt.Errorf("SQS-B003 cannot back up a library in state %s", l.State.Label())
 	}
-	s.Audit.Record(ctx, by, "backup.create", "library", libraryID, audit.OK, nil)
-	return s.Jobs.Enqueue(ctx, JobBackupCreate, libraryID, BackupParams{Kind: KindManual}, by, jobs.Priority(80))
+	return s.Jobs.Enqueue(ctx, JobBackupCreate, libraryID, BackupParams{Kind: KindManual}, by, jobs.Priority(80),
+		jobs.Audited("backup.create", "library", libraryID, nil))
 }
 
 // SetPinned fixes or releases a backup from retention.
@@ -954,10 +954,9 @@ func (s *Service) DeleteBackup(ctx context.Context, by audit.Actor, id string) e
 			return errors.New("SQS-B034 it is the most recent verified backup of the library; it cannot be deleted manually")
 		}
 	}
-	if err := s.removeBackupFiles(ctx, b, "deleted manually"); err != nil {
-		return err
-	}
-	return s.Audit.Record(ctx, by, "backup.delete", "backup", id, audit.OK, map[string]any{"library_id": b.LibraryID})
+	return s.Audit.Do(ctx, by, "backup.delete", "backup", id, map[string]any{"library_id": b.LibraryID}, func() error {
+		return s.removeBackupFiles(ctx, b, "deleted manually")
+	})
 }
 
 func (s *Service) removeBackupFiles(ctx context.Context, b *Backup, reason string) error {

@@ -326,10 +326,14 @@ progress::-moz-progress-bar { background: var(--run); }
   .grid2 { grid-template-columns: 1fr; }
   .copyfield { grid-template-columns: minmax(0, 1fr) auto; }
   .copyfield .label { grid-column: 1 / -1; }
-  .table.cards-on-mobile thead { display: none; }
+  /* Rows become cards. The header is hidden only visually and the cells keep
+     their table roles in the markup, so screen readers still hear the column
+     names; the label drawn before each cell has empty alternative text so it
+     is not read a second time (where "/" is not supported it is). */
+  .table.cards-on-mobile thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .table.cards-on-mobile tr { display: block; border-bottom: 1px solid var(--line); padding: 8px 0; }
   .table.cards-on-mobile td { display: flex; justify-content: space-between; gap: 12px; border: 0; padding: 4px 16px; }
-  .table.cards-on-mobile td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 0.87rem; }
+  .table.cards-on-mobile td[data-label]::before { content: attr(data-label); content: attr(data-label) / ""; color: var(--muted); font-size: 0.87rem; }
   .meter { grid-template-columns: 90px minmax(0, 1fr) 96px; }
   .codes { columns: 1; }
   .trackrow { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "head tail" "track track"; }

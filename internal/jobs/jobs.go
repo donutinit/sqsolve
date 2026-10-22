@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"regexp"
 	"runtime/debug"
 	"sort"
@@ -119,6 +120,16 @@ type Job struct {
 	Result       json.RawMessage `json:"result"`
 	Cancellable  bool            `json:"cancellable"`
 	Retryable    bool            `json:"retryable"`
+
+	audit jobAudit
+}
+
+// jobAudit names the audit entry of the action that queued a job, so its
+// result is written under the same action when the job ends.
+type jobAudit struct {
+	Action     string `json:"action"`
+	TargetType string `json:"target_type"`
+	TargetID   string `json:"target_id"`
 }
 
 // Duration of the run so far or in total.
@@ -167,6 +178,7 @@ type Manager struct {
 	ev    *events.Recorder
 	bus   *events.Bus
 	log   *slog.Logger
+	audit *audit.Log
 	specs map[string]Spec
 
 	workers int
@@ -215,6 +227,9 @@ func NewManager(db *store.DB, ev *events.Recorder, bus *events.Bus, log *slog.Lo
 	}
 }
 
+// SetAudit gives the manager the audit log that Audited jobs write to.
+func (m *Manager) SetAudit(l *audit.Log) { m.audit = l }
+
 // Register adds a job type.
 func (m *Manager) Register(s Spec) {
 	if s.Priority == 0 {
@@ -260,6 +275,8 @@ type enqueueOpts struct {
 	priority   int
 	unique     bool
 	attempt    int
+	audit      *jobAudit
+	details    map[string]any
 }
 
 // At delays a job.
@@ -278,6 +295,19 @@ func Unique() Option { return func(o *enqueueOpts) { o.unique = true } }
 
 func attempt(n int) Option { return func(o *enqueueOpts) { o.attempt = n } }
 
+// Audited writes the audit entry of the action that queues the job in the
+// same transaction as the job: outcome accepted, with the job's id in the
+// details. There is never a job without its entry, nor an entry without its
+// job (docs 08 §9). When the job ends, its result (ok, or failed with the
+// final state and error code) is written under the same action. The manager
+// needs SetAudit.
+func Audited(action, targetType, targetID string, details map[string]any) Option {
+	return func(o *enqueueOpts) {
+		o.audit = &jobAudit{action, targetType, targetID}
+		o.details = details
+	}
+}
+
 // ErrUnknownType is returned for unregistered job types.
 var ErrUnknownType = errors.New("SQS-J001 unknown job type")
 
@@ -291,15 +321,6 @@ func (m *Manager) Enqueue(ctx context.Context, typ, libraryID string, params any
 	for _, f := range opts {
 		f(&o)
 	}
-	if o.unique {
-		id, err := m.pending(ctx, typ, libraryID)
-		if err != nil {
-			return nil, err
-		}
-		if id != "" {
-			return m.Get(ctx, id)
-		}
-	}
 	p, err := json.Marshal(params)
 	if err != nil {
 		return nil, err
@@ -307,13 +328,47 @@ func (m *Manager) Enqueue(ctx context.Context, typ, libraryID string, params any
 	if params == nil {
 		p = []byte("{}")
 	}
+	auditCol := ""
+	if o.audit != nil {
+		if m.audit == nil {
+			return nil, fmt.Errorf("%w: the job manager has no audit log", audit.ErrUnavailable)
+		}
+		b, _ := json.Marshal(o.audit)
+		auditCol = string(b)
+	}
 	id := ulid.New()
 	now := store.NowT()
-	_, err = m.db.ExecContext(ctx, `INSERT INTO jobs(id, type, library_id, params, state, priority, scheduled_for, created_at, created_by_type, created_by_id, created_by_name, schedule_id, attempt)
-		VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, typ, libraryID, string(p), o.priority, store.T(o.at), now, by.Type, by.ID, by.Name, o.scheduleID, o.attempt)
+	existing := ""
+	// One immediate transaction: the check of Unique, the job and its audit
+	// entry.
+	err = m.db.Tx(ctx, func(tx *sql.Tx) error {
+		if o.unique {
+			var err error
+			if existing, err = m.pending(ctx, tx, typ, libraryID); err != nil || existing != "" {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO jobs(id, type, library_id, params, state, priority, scheduled_for, created_at, created_by_type, created_by_id, created_by_name, schedule_id, attempt, audit)
+			VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, typ, libraryID, string(p), o.priority, store.T(o.at), now, by.Type, by.ID, by.Name, o.scheduleID, o.attempt, auditCol); err != nil {
+			return err
+		}
+		if o.audit == nil {
+			return nil
+		}
+		details := map[string]any{}
+		maps.Copy(details, o.details)
+		details["job_id"] = id
+		if err := m.audit.RecordTx(ctx, tx, by, o.audit.Action, o.audit.TargetType, o.audit.TargetID, audit.Accepted, details); err != nil {
+			return fmt.Errorf("%w: %v", audit.ErrUnavailable, err)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
+	}
+	if existing != "" {
+		return m.Get(ctx, existing)
 	}
 	m.Wake()
 	m.bus.Publish("jobs", Update{JobID: id, State: Queued})
@@ -322,8 +377,8 @@ func (m *Manager) Enqueue(ctx context.Context, typ, libraryID string, params any
 
 // pending returns the oldest queued job of the type and library, or a
 // running one this process is actually running; "" when there is none.
-func (m *Manager) pending(ctx context.Context, typ, libraryID string) (string, error) {
-	rows, err := m.db.QueryContext(ctx, `SELECT id, state FROM jobs WHERE type = ? AND library_id = ? AND state IN ('queued', 'running') ORDER BY created_at`, typ, libraryID)
+func (m *Manager) pending(ctx context.Context, tx *sql.Tx, typ, libraryID string) (string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, state FROM jobs WHERE type = ? AND library_id = ? AND state IN ('queued', 'running') ORDER BY created_at`, typ, libraryID)
 	if err != nil {
 		return "", err
 	}
@@ -356,17 +411,20 @@ func (m *Manager) Wake() {
 }
 
 const jobCols = `id, type, library_id, params, state, priority, scheduled_for, created_at, started_at, finished_at, progress, current_step,
-	error_code, error_detail, created_by_type, created_by_id, created_by_name, schedule_id, attempt, result`
+	error_code, error_detail, created_by_type, created_by_id, created_by_name, schedule_id, attempt, result, audit`
 
 func (m *Manager) scanJob(row interface{ Scan(...any) error }) (*Job, error) {
 	var j Job
-	var params, result, sched, created string
+	var params, result, sched, created, aud string
 	var started, finished sql.NullString
 	var state string
 	err := row.Scan(&j.ID, &j.Type, &j.LibraryID, &params, &state, &j.Priority, &sched, &created, &started, &finished, &j.Progress,
-		&j.CurrentStep, &j.ErrorCode, &j.ErrorDetail, &j.CreatedBy.Type, &j.CreatedBy.ID, &j.CreatedBy.Name, &j.ScheduleID, &j.Attempt, &result)
+		&j.CurrentStep, &j.ErrorCode, &j.ErrorDetail, &j.CreatedBy.Type, &j.CreatedBy.ID, &j.CreatedBy.Name, &j.ScheduleID, &j.Attempt, &result, &aud)
 	if err != nil {
 		return nil, err
+	}
+	if aud != "" {
+		json.Unmarshal([]byte(aud), &j.audit)
 	}
 	j.State = State(state)
 	j.Params = json.RawMessage(params)
@@ -518,6 +576,9 @@ func (m *Manager) Cancel(ctx context.Context, id string) error {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 1 {
+		if j, err := m.Get(ctx, id); err == nil {
+			m.recordResult(ctx, j, Cancelled, "")
+		}
 		m.bus.Publish("job:"+id, Update{JobID: id, State: Cancelled})
 		m.bus.Publish("jobs", Update{JobID: id, State: Cancelled})
 		return nil
@@ -542,8 +603,8 @@ var ErrNotRetryable = errors.New("SQS-J030 this type of job cannot be retried; s
 
 // Retry re-enqueues a failed, cancelled or interrupted job of a retryable
 // type with its original parameters. The caller checks the permission of
-// the type (Action) and records the audit entry.
-func (m *Manager) Retry(ctx context.Context, id string, by audit.Actor) (*Job, error) {
+// the type (Action) and passes jobs.Audited for its audit entry.
+func (m *Manager) Retry(ctx context.Context, id string, by audit.Actor, opts ...Option) (*Job, error) {
 	j, err := m.Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -562,7 +623,7 @@ func (m *Manager) Retry(ctx context.Context, id string, by audit.Actor) (*Job, e
 	if err := json.Unmarshal(j.Params, &params); err != nil {
 		return nil, fmt.Errorf("SQS-J031 the stored parameters of job %s are not valid: %w", j.ID, err)
 	}
-	return m.Enqueue(ctx, j.Type, j.LibraryID, params, by, attempt(j.Attempt+1))
+	return m.Enqueue(ctx, j.Type, j.LibraryID, params, by, append(opts, attempt(j.Attempt+1))...)
 }
 
 // MarkInterrupted turns running jobs left by a previous process into
@@ -584,6 +645,7 @@ func (m *Manager) MarkInterrupted(ctx context.Context) ([]*Job, error) {
 		m.ev.Emit(ctx, events.Event{Type: events.JobInterrupted, Severity: events.Warning, LibraryID: j.LibraryID, JobID: j.ID,
 			Message: fmt.Sprintf("The job %q was interrupted by a restart", m.Title(j.Type)), Data: map[string]any{"job_type": j.Type}})
 		j.State = Interrupted
+		m.recordResult(ctx, j, Interrupted, "SQS-J010")
 	}
 	return running, nil
 }
@@ -899,9 +961,11 @@ func (m *Manager) finish(j *Job, state State, err error) {
 	if stepState == "" {
 		stepState = "cancelled"
 	}
+	recorded := false
 	for i := 0; ; i++ {
 		uerr := m.recordFinal(ctx, j.ID, state, code, detail, progress, stepState)
 		if uerr == nil {
+			recorded = true
 			break
 		}
 		if i >= len(m.finishWaits) {
@@ -910,6 +974,11 @@ func (m *Manager) finish(j *Job, state State, err error) {
 		}
 		m.log.Warn("could not record the final state of a job; retrying", "job", j.ID, "state", state, "err", uerr)
 		time.Sleep(m.finishWaits[i])
+	}
+	// The audit result follows the recorded state: a row left running gets
+	// its result (interrupted) from MarkInterrupted at the next start.
+	if recorded {
+		m.recordResult(ctx, j, state, code)
 	}
 	u := Update{JobID: j.ID, State: state, Progress: progress, Error: detail}
 	m.bus.Publish("job:"+j.ID, u)
@@ -921,6 +990,25 @@ func (m *Manager) finish(j *Job, state State, err error) {
 	case Interrupted:
 		m.ev.Emit(ctx, events.Event{Type: events.JobInterrupted, Severity: events.Warning, LibraryID: j.LibraryID, JobID: j.ID,
 			Message: fmt.Sprintf("The job %q was interrupted because sqsolve stopped", m.Title(j.Type)), Data: map[string]any{"job_type": j.Type}})
+	}
+}
+
+// recordResult writes the result of an Audited job under the action that
+// queued it, with the job's creator as actor. The job keeps its final state
+// when the entry cannot be written; the failure is logged.
+func (m *Manager) recordResult(ctx context.Context, j *Job, state State, code string) {
+	if j.audit.Action == "" || m.audit == nil {
+		return
+	}
+	outcome, details := audit.OK, map[string]any{"job_id": j.ID, "state": string(state)}
+	if state != Succeeded {
+		outcome = audit.Failed
+	}
+	if code != "" {
+		details["error_code"] = code
+	}
+	if err := m.audit.Record(ctx, j.CreatedBy, j.audit.Action, j.audit.TargetType, j.audit.TargetID, outcome, details); err != nil {
+		m.log.Error("could not write the result of a job to the audit log", "job", j.ID, "action", j.audit.Action, "err", err)
 	}
 }
 

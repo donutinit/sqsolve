@@ -5,7 +5,7 @@ STATICCHECK = honnef.co/go/tools/cmd/staticcheck@v0.8.2
 GOVULNCHECK = golang.org/x/vuln/cmd/govulncheck@v1.9.0
 LDFLAGS = -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 
-.PHONY: build check fmt vet lint vuln test test-integration scenarios image clean errors errors-check tidy-check pg-image-check vuln-binary
+.PHONY: build check fmt vet lint vuln test test-integration scenarios image clean errors errors-check tidy-check pg-image-check vuln-binary fuzz
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o sqsolve ./cmd/sqsolve
@@ -47,6 +47,14 @@ pg-image-check:
 ## test: tests; integration tests are skipped when PostgreSQL is not installed
 test:
 	go test -race -count=1 ./...
+
+## fuzz: runs every fuzz target (func Fuzz... in a _test.go file) for FUZZTIME each; `make test` already runs their seeds
+FUZZTIME ?= 30s
+fuzz:
+	@grep -rHo --include='*_test.go' '^func Fuzz[A-Za-z0-9_]*' cmd internal | sort -u | while IFS=: read -r file fn; do \
+	  name=$${fn#func }; pkg=./$$(dirname $$file); echo "fuzz $$name in $$pkg for $(FUZZTIME)"; \
+	  go test -run '^$$' -fuzz "^$$name\$$" -fuzztime $(FUZZTIME) $$pkg || exit 1; \
+	done
 
 ## test-integration: requires PostgreSQL (set SQSOLVE_TEST_PG_BIN if it is not in PATH)
 test-integration:

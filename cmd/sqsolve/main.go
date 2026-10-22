@@ -508,8 +508,8 @@ func backupCmd(args []string) error {
 	}
 	switch args[0] {
 	case "create":
-		a.Audit.Record(ctx, audit.CLI, "backup.create", "library", l.ID, audit.OK, nil)
-		j, err := a.Jobs.Enqueue(ctx, core.JobBackupCreate, l.ID, core.BackupParams{Kind: core.KindManual}, audit.CLI, jobs.Priority(80))
+		j, err := a.Jobs.Enqueue(ctx, core.JobBackupCreate, l.ID, core.BackupParams{Kind: core.KindManual}, audit.CLI, jobs.Priority(80),
+			jobs.Audited("backup.create", "library", l.ID, nil))
 		if err != nil {
 			return err
 		}

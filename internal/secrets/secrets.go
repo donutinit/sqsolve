@@ -82,15 +82,22 @@ func RandomToken(n int) string {
 // ErrPermissions is returned for secret files readable by others.
 var ErrPermissions = errors.New("SQS-C010 permissions too open on a secrets file")
 
-// ReadFile reads a secret file and rejects files that others can read or
-// anyone can write.
-func ReadFile(path string) (String, error) {
+// ReadFile reads a private secret file, such as the master key: only its
+// owner may read it (0400, or 0600 at most).
+func ReadFile(path string) (String, error) { return readSecret(path, 0o600) }
+
+// ReadGroupFile reads a secret shared with one group, such as the PostgreSQL
+// superuser password (0440): its group may read it, nobody else may, and
+// only its owner may write it.
+func ReadGroupFile(path string) (String, error) { return readSecret(path, 0o640) }
+
+func readSecret(path string, most os.FileMode) (String, error) {
 	st, err := os.Stat(path)
 	if err != nil {
 		return String{}, err
 	}
-	if st.Mode().Perm()&0o037 != 0 {
-		return String{}, fmt.Errorf("%w: %s has mode %o", ErrPermissions, path, st.Mode().Perm())
+	if p := st.Mode().Perm(); p&^most != 0 {
+		return String{}, fmt.Errorf("%w: %s has mode %o and may have at most %o", ErrPermissions, path, p, most)
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

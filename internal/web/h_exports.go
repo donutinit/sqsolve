@@ -118,7 +118,10 @@ func (s *Server) exportDownload(w http.ResponseWriter, r *http.Request, kind, id
 		return
 	}
 	// The session is closed by now: a slow download holds no snapshot or lock.
-	s.A.Svc.AuditExport(ctx, p.Actor(), l, sess, kind, strings.ToLower(id), info)
+	if err := s.A.Svc.AuditExport(ctx, p.Actor(), l, sess, kind, strings.ToLower(id), info); err != nil {
+		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
+		return
+	}
 	serveAttachment(w, name, data)
 }
 
@@ -233,7 +236,10 @@ func (s *Server) backupExportDownload(w http.ResponseWriter, r *http.Request, ki
 		return
 	}
 	// The session is closed by now: a slow download holds no snapshot or lock.
-	s.A.Svc.AuditBackupExport(ctx, p.Actor(), b, sess, kind, strings.ToLower(id), info)
+	if err := s.A.Svc.AuditBackupExport(ctx, p.Actor(), b, sess, kind, strings.ToLower(id), info); err != nil {
+		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
+		return
+	}
 	serveAttachment(w, name, data)
 }
 

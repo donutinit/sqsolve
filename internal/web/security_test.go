@@ -343,3 +343,112 @@ func TestPanelCertificateUpload(t *testing.T) {
 		t.Fatal("settings does not show the new certificate")
 	}
 }
+
+// Audit AUD-007: the installation code was checked and cleared in separate
+// steps, so concurrent setups with the same code each created an
+// administrator.
+func TestInstallationCodeCreatesOneAdministrator(t *testing.T) {
+	ctx := context.Background()
+	a, srv := sqliteApp(t)
+	a.PrepareInstallCode(ctx)
+	code := a.InstallCode()
+	const n = 3
+	forms := make([]url.Values, n)
+	browsers := make([]*browser, n)
+	for i := range forms {
+		browsers[i] = newBrowser(t, srv)
+		forms[i] = url.Values{"csrf": {csrf(t, browsers[i].page("/setup"))}, "code": {code}, "username": {"admin" + string(rune('a'+i))},
+			"password": {"tungsten light 3200K"}, "password2": {"tungsten light 3200K"}, "host": {"192.168.1.10"}, "preset": {"daily"}}
+	}
+	gate := make(chan struct{})
+	done := make(chan string, n)
+	for i := range forms {
+		go func() {
+			<-gate
+			_, loc, _ := browsers[i].do("POST", "/setup", forms[i])
+			done <- loc
+		}()
+	}
+	close(gate)
+	kits := 0
+	for range forms {
+		if <-done == "/setup/kit" {
+			kits++
+		}
+	}
+	users, err := a.Auth.Users(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kits != 1 || len(users) != 1 {
+		t.Fatalf("%d setups completed, %d users created", kits, len(users))
+	}
+	if a.InstallCode() != "" {
+		t.Fatal("the installation code still works after the first administrator")
+	}
+}
+
+// A setup that fails (here a weak password) keeps the code for the next try.
+func TestFailedSetupKeepsTheInstallationCode(t *testing.T) {
+	ctx := context.Background()
+	a, srv := sqliteApp(t)
+	a.PrepareInstallCode(ctx)
+	code := a.InstallCode()
+	b := newBrowser(t, srv)
+	form := url.Values{"csrf": {csrf(t, b.page("/setup"))}, "code": {code}, "username": {"diego"},
+		"password": {"short"}, "password2": {"short"}, "host": {"192.168.1.10"}, "preset": {"daily"}}
+	if _, loc, _ := b.do("POST", "/setup", form); !strings.HasPrefix(loc, "/setup?") {
+		t.Fatalf("a weak password completed the setup: %s", loc)
+	}
+	if a.InstallCode() != code {
+		t.Fatal("a failed setup spent the installation code")
+	}
+	form.Set("csrf", csrf(t, b.page("/setup")))
+	form.Set("password", "tungsten light 3200K")
+	form.Set("password2", "tungsten light 3200K")
+	if _, loc, _ := b.do("POST", "/setup", form); loc != "/setup/kit" {
+		t.Fatalf("setup failed: %s", loc)
+	}
+}
+
+// Audit AUD-004: a backup file, the recovery kit and the diagnostics were
+// served even when their audit entry could not be written. Now they are not.
+func TestDisclosuresNeedTheirAuditEntry(t *testing.T) {
+	ctx := context.Background()
+	a, srv := sqliteApp(t)
+	a.Auth.CreateUser(ctx, audit.System, "boss", "", "tungsten light 3200K", auth.RoleAdmin)
+	b := mustSignIn(t, srv, "boss", "tungsten light 3200K")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := a.DB.ExecContext(ctx, `INSERT INTO libraries(id, slug, display_name, state, db_name, owner_role, creation_strategy, created_at, updated_at)
+		VALUES ('L1', 'lib', 'Lib', 'active', 'lib', 'lib', 'resolve', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DB.ExecContext(ctx, `INSERT INTO backups(id, library_id, kind, status, file_path, started_at) VALUES ('B1', 'L1', 'manual', 'ok', 'libraries/B1.backup', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(a.Cfg.BackupDir, "libraries"), 0o700)
+	os.WriteFile(filepath.Join(a.Cfg.BackupDir, "libraries", "B1.backup"), []byte("the dump bytes"), 0o600)
+	for _, path := range []string{"/backups/B1/download", "/api/v1/backups/B1/download"} {
+		if st, _, body := b.do("GET", path, nil); st != 200 || body != "the dump bytes" {
+			t.Fatalf("%s with a working audit log: %d", path, st)
+		}
+	}
+	if _, err := a.DB.Exec(`CREATE TRIGGER audit_down BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/backups/B1/download", "/api/v1/backups/B1/download"} {
+		st, _, body := b.do("GET", path, nil)
+		if st != http.StatusServiceUnavailable || strings.Contains(body, "the dump bytes") || !strings.Contains(body, "SQS-X040") {
+			t.Errorf("%s without its audit entry: %d %q", path, st, body[:min(len(body), 200)])
+		}
+	}
+	for _, path := range []string{"/settings/kit", "/settings/diagnostics"} {
+		st, loc, body := b.do("GET", path, nil)
+		if st != http.StatusSeeOther || loc != "/settings?tab=maintenance" || strings.Contains(body, "MASTER KEY") {
+			t.Errorf("%s without its audit entry: %d %s", path, st, loc)
+		}
+		if f := flashOf(b); !strings.HasPrefix(f, "SQS-X040 the audit log could not be written, so the action was not done: ") {
+			t.Errorf("%s notice: %q", path, f)
+		}
+	}
+}

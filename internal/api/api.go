@@ -75,6 +75,8 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, jobs.ErrNotCancellable):
 		return http.StatusConflict
+	case errors.Is(err, audit.ErrUnavailable):
+		return http.StatusServiceUnavailable
 	}
 	msg := err.Error()
 	switch {
@@ -137,10 +139,18 @@ func (a *API) guard(action auth.Action, h handler) http.HandlerFunc {
 	}
 }
 
+// decode reads a body that holds exactly one JSON value: an empty body is
+// not the zero value, and nothing may follow the value.
 func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil && !errors.Is(err, io.EOF) {
+	err := dec.Decode(v)
+	if errors.Is(err, io.EOF) {
+		err = errors.New("the body is empty")
+	} else if err == nil && !errors.Is(dec.Decode(&json.RawMessage{}), io.EOF) {
+		err = errors.New("more than one JSON value")
+	}
+	if err != nil {
 		return fmt.Errorf("SQS-C061 invalid JSON body: %w", err)
 	}
 	return nil
@@ -627,7 +637,10 @@ func (a *API) download(w http.ResponseWriter, r *http.Request, p *auth.Principal
 		return
 	}
 	defer f.Close()
-	a.A.Audit.Record(r.Context(), p.Actor(), "backup.download", "backup", b.ID, "ok", nil)
+	if err := a.A.Audit.Require(r.Context(), p.Actor(), "backup.download", "backup", b.ID, audit.OK, nil); err != nil {
+		problem(w, r, statusFor(err), err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+b.ID+`.backup"`)
 	w.Header().Set("X-Sqsolve-SHA256", b.SHA256)

@@ -104,20 +104,20 @@
 {{if eq $cat.View "projects"}}
 <section class="card flush">
   <div class="cardhead pad"><h2>Projects</h2><span class="muted small">{{if $cat.Query}}{{len $cat.Projects}} of {{$cat.TotalProjects}} match{{else}}{{$cat.TotalProjects}} in the library{{end}}</span></div>
-  <table class="table cards-on-mobile">
-    <thead><tr><th>Thumbnail</th><th>Project</th><th>Folder</th><th>Modified</th><th>Stills</th><th></th></tr></thead>
-    <tbody>
+  <table role="table" class="table cards-on-mobile">
+    <thead role="rowgroup"><tr role="row"><th role="columnheader">Thumbnail</th><th role="columnheader">Project</th><th role="columnheader">Folder</th><th role="columnheader">Modified</th><th role="columnheader">Stills</th><th role="columnheader"></th></tr></thead>
+    <tbody role="rowgroup">
     {{range $cat.Projects}}
-      <tr>
-        <td data-label="Thumbnail">{{if .Thumb}}<img class="thumb" src="{{jpeg .Thumb}}" alt="" width="96" height="54">{{else}}<span class="muted small">No thumbnail</span>{{end}}</td>
-        <td data-label="Project">{{.Name}}</td>
-        <td data-label="Folder" class="mono small">{{if .Path}}{{.Path}}{{else}}<span class="muted">root</span>{{end}}</td>
-        <td data-label="Modified">{{if .Modified.IsZero}}<span class="muted">To be confirmed</span>{{else}}<time datetime="{{iso .Modified}}" title="{{dt .Modified}}">{{ago .Modified}}</time>{{end}}</td>
-        <td data-label="Stills">{{if .Stills}}<a href="{{$.base}}?view=stills&project={{.ID}}">{{.Stills}} {{if eq .Stills 1}}still{{else}}stills{{end}}</a>{{else}}<span class="muted">0</span>{{end}}</td>
-        <td data-label="" class="actions">{{if $.can}}<a class="button ghost small" href="{{$.base}}/projects/{{.ID}}">Download .drp</a>{{end}}</td>
+      <tr role="row">
+        <td role="cell" data-label="Thumbnail">{{if .Thumb}}<img class="thumb" src="{{jpeg .Thumb}}" alt="" width="96" height="54">{{else}}<span class="muted small">No thumbnail</span>{{end}}</td>
+        <td role="cell" data-label="Project">{{.Name}}</td>
+        <td role="cell" data-label="Folder" class="mono small">{{if .Path}}{{.Path}}{{else}}<span class="muted">root</span>{{end}}</td>
+        <td role="cell" data-label="Modified">{{if .Modified.IsZero}}<span class="muted">To be confirmed</span>{{else}}<time datetime="{{iso .Modified}}" title="{{dt .Modified}}">{{ago .Modified}}</time>{{end}}</td>
+        <td role="cell" data-label="Stills">{{if .Stills}}<a href="{{$.base}}?view=stills&project={{.ID}}">{{.Stills}} {{if eq .Stills 1}}still{{else}}stills{{end}}</a>{{else}}<span class="muted">0</span>{{end}}</td>
+        <td role="cell" data-label="" class="actions">{{if $.can}}<a class="button ghost small" href="{{$.base}}/projects/{{.ID}}">Download .drp</a>{{end}}</td>
       </tr>
     {{else}}
-      <tr><td colspan="6" class="muted">{{if $cat.Query}}No projects match "{{$cat.Query}}".{{else}}No projects.{{end}}</td></tr>
+      <tr role="row"><td role="cell" colspan="6" class="muted">{{if $cat.Query}}No projects match "{{$cat.Query}}".{{else}}No projects.{{end}}</td></tr>
     {{end}}
     </tbody>
   </table>

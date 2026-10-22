@@ -60,6 +60,9 @@ const (
 // administrators.
 func (s *Service) Register() {
 	j := s.Jobs
+	if s.Audit != nil {
+		j.SetAudit(s.Audit)
+	}
 	const admin = "settings.edit"
 	j.Register(jobs.Spec{Type: JobLibraryCreate, Title: "Create library", Priority: 90, Lock: jobs.LockWrite, Action: "library.create", Run: s.runLibraryCreate})
 	j.Register(jobs.Spec{Type: JobLibraryDelete, Title: "Move to trash", Priority: 90, Lock: jobs.LockWrite, Heavy: true, Reconcile: true, Action: "library.delete", Run: s.runTrash})
@@ -414,8 +417,8 @@ func (s *Service) UpgradeWindow(ctx context.Context, by audit.Actor, target stri
 	if target == "" || len(target) > 20 {
 		return nil, errors.New("SQS-C040 type the target Resolve version")
 	}
-	s.Audit.Record(ctx, by, "system.upgrade_window", "system", "", audit.OK, map[string]any{"target": target})
-	return s.Jobs.Enqueue(ctx, JobUpgradeWindow, "", map[string]string{"target": target}, by)
+	return s.Jobs.Enqueue(ctx, JobUpgradeWindow, "", map[string]string{"target": target}, by,
+		jobs.Audited("system.upgrade_window", "system", "", map[string]any{"target": target}))
 }
 
 func (s *Service) runUpgradeWindow(ctx context.Context, r *jobs.Run) error {

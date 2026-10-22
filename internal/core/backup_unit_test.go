@@ -380,10 +380,11 @@ func TestDeleteBackup(t *testing.T) {
 	if got.Status != BackupDeleted || got.ExpiredReason != "deleted manually" || got.DeletedAt == nil || onDisk(abs) || onDisk(manifestPath(abs)) {
 		t.Fatalf("not deleted: %+v", got)
 	}
-	var n int
-	e.svc.DB.QueryRowContext(e.ctx, `SELECT count(*) FROM audit_log WHERE action = 'backup.delete' AND target_id = ?`, old.ID).Scan(&n)
-	if n != 1 {
-		t.Fatalf("%d audit entries", n)
+	// Written before the files go (accepted) and after (ok): docs 08 §9.
+	var outcomes string
+	e.svc.DB.QueryRowContext(e.ctx, `SELECT group_concat(outcome, ' ') FROM (SELECT outcome FROM audit_log WHERE action = 'backup.delete' AND target_id = ? ORDER BY seq)`, old.ID).Scan(&outcomes)
+	if outcomes != "accepted ok" {
+		t.Fatalf("audit entries: %q", outcomes)
 	}
 	// Deleting again is a no-op.
 	if err := e.svc.DeleteBackup(e.ctx, bkActor, old.ID); err != nil {

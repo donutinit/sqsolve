@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Long fuzzing of every fuzz target (docs 16 §1); ci.yml runs them for 10 seconds on every change.
+# A failing input is printed so it can be added to the target's testdata.
+name: fuzz
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.x"
+          check-latest: true
+      - name: Each fuzz target for 5 minutes
+        run: make fuzz FUZZTIME=5m
+      - name: Failing inputs
+        if: failure()
+        run: find internal -path '*/testdata/fuzz/*' -type f -print -exec cat {} \;

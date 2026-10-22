@@ -36,6 +36,9 @@ Makefile
 
 ## 4. Continuous integration
 
+The plan. What runs today is listed after the table; a job of the table that is not there is not
+a gate.
+
 | Job | Trigger | Content |
 |---|---|---|
 | `check` | Every push and PR | `gofmt -l`, `go vet`, `staticcheck`, `go mod tidy -diff`, one-message-per-code check, `go test ./...` with `-race`, coverage, `govulncheck`, `gosec` |
@@ -49,7 +52,7 @@ Makefile
 | `zap` | Nightly | OWASP ZAP baseline |
 | `release` | `v*` tag | All of the above, publish images, SBOM, signatures, notes |
 
-Implemented today (2026-10-20) in `.github/workflows`:
+Implemented today (2026-10-22) in `.github/workflows`:
 
 - `ci.yml` (push to `main`, pull requests, and `workflow_call` from `image.yml`):
   - `check`, with the latest patch of Go 1.26 (the minimum in `go.mod`) and of Go 1.27 (the one
@@ -58,8 +61,9 @@ Implemented today (2026-10-20) in `.github/workflows`:
     the codes that already had several wordings are the baseline in
     `test/errors-multi-message.txt` and must not grow), `make pg-image-check` (the PostgreSQL tag
     and digest of the `Dockerfile` and of `deploy/compose.yaml` are the same), tests with `-race`
-    including the integration tests against PostgreSQL 18 from the PGDG repository, and
-    govulncheck.
+    including the integration tests against PostgreSQL 18 from the PGDG repository, each fuzz
+    target for 10 seconds (`make fuzz FUZZTIME=10s`), and govulncheck. Coverage is measured by
+    hand (`docs/16` §1), not gated.
   - `scenarios`: `test/scenarios.py` with real PostgreSQL and sqsolve. It simulates Resolve
     workstations over TCP and provokes failures: a workstation writing during the backup,
     restoring with Resolve open, sqsolve killed mid-job (no `pg_dump` survives and no `.partial`
@@ -95,9 +99,15 @@ Implemented today (2026-10-20) in `.github/workflows`:
   request already runs the full CI, including the smoke test with the new PostgreSQL. Go modules
   are not covered: they follow section 7.
 
-Pending from the table: OpenAPI contract, `e2e` with a browser, `reproducible` (two builds
-compared in CI; checked by hand on 2026-10-20, see `06-stack.md` section 10), `faults` (partly
-covered by `scenarios`), `fuzz`, `zap` and `gosec`.
+- `fuzz.yml`: every night (and by hand), each fuzz target for 5 minutes (`make fuzz
+  FUZZTIME=5m`); a failing input is printed in the log so it can be added to the target's
+  `testdata`. The `check` job of `ci.yml` runs each target for 10 seconds.
+
+Pending from the table, none of them a gate yet and none with a target release (To be confirmed
+by Diego): OpenAPI contract, `e2e` with a browser, `reproducible` (two builds compared in CI;
+checked by hand on 2026-10-20, see `06-stack.md` section 10), `faults` (partly covered by
+`scenarios` and by the failpoint and power-loss tests), `zap`, `gosec` and benchmarks.
+`docs/16` §1 says which level runs where.
 
 Actions used, all pinned by commit SHA: `actions/checkout`, `actions/setup-go`, the Docker ones
 (`setup-buildx`, `login`, `metadata`, `build-push`), `sigstore/cosign-installer` and

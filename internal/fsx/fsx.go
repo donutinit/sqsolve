@@ -42,7 +42,8 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	return SyncDir(filepath.Dir(path))
 }
 
-// writePartial writes and fsyncs tmp with the given mode.
+// writePartial writes and fsyncs tmp with the given mode. The mode is set
+// before the fsync so it is as durable as the content.
 func writePartial(tmp string, data []byte, perm os.FileMode) error {
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
@@ -57,6 +58,11 @@ func writePartial(tmp string, data []byte, perm os.FileMode) error {
 		f.Close()
 		return err
 	}
+	if err := f.Chmod(perm); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
 	if err := f.Sync(); err != nil {
 		f.Close()
 		os.Remove(tmp)
@@ -66,10 +72,7 @@ func writePartial(tmp string, data []byte, perm os.FileMode) error {
 		os.Remove(tmp)
 		return err
 	}
-	if err := os.Chmod(tmp, perm); err != nil {
-		os.Remove(tmp)
-		return err
-	}
+	note("create", tmp, "")
 	return nil
 }
 
@@ -77,36 +80,66 @@ func writePartial(tmp string, data []byte, perm os.FileMode) error {
 // and its certificate. Both go to .partial files first and are renamed
 // first, then second; a crash in between leaves only second's .partial file,
 // which RecoverPair renames into place.
+//
+// Each step is made durable (a sync of its folder) before the next one, so
+// that after a power loss second's .partial file without first's always
+// means first is already in place: a folder that was not synced may keep any
+// subset of its recent changes (audit AUD-002, powerloss_test.go).
 func WritePair(first string, firstData []byte, firstPerm os.FileMode, second string, secondData []byte, secondPerm os.FileMode) error {
 	fp, sp := first+".partial", second+".partial"
+	// An earlier write of this pair that stopped between its renames is
+	// finished first: this one reuses its .partial names.
+	if _, err := RecoverPair(first, second); err != nil {
+		return err
+	}
 	if err := writePartial(fp, firstData, firstPerm); err != nil {
 		return err
 	}
+	if err := SyncDir(filepath.Dir(fp)); err != nil {
+		discard(fp, sp)
+		return err
+	}
 	if err := writePartial(sp, secondData, secondPerm); err != nil {
-		os.Remove(fp)
+		discard(fp, sp)
+		return err
+	}
+	if err := SyncDir(filepath.Dir(sp)); err != nil {
+		discard(fp, sp)
 		return err
 	}
 	if err := fail("pair-first"); err != nil {
 		return err
 	}
-	if err := os.Rename(fp, first); err != nil {
-		os.Remove(fp)
-		os.Remove(sp)
+	if err := rename(fp, first); err != nil {
+		discard(fp, sp)
+		return err
+	}
+	// From here RecoverPair completes the pair after a crash.
+	if err := SyncDir(filepath.Dir(first)); err != nil {
 		return err
 	}
 	if err := fail("pair-second"); err != nil {
 		return err
 	}
-	if err := os.Rename(sp, second); err != nil {
+	if err := rename(sp, second); err != nil {
 		return err
 	}
-	if err := SyncDir(filepath.Dir(first)); err != nil {
+	return SyncDir(filepath.Dir(second))
+}
+
+// discard removes the .partial files of a pair that was not renamed, second's
+// first and durably, so a power loss never leaves it alone.
+func discard(fp, sp string) error {
+	if err := remove(sp); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if filepath.Dir(second) != filepath.Dir(first) {
-		return SyncDir(filepath.Dir(second))
+	if err := SyncDir(filepath.Dir(sp)); err != nil {
+		return err
 	}
-	return nil
+	if err := remove(fp); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return SyncDir(filepath.Dir(fp))
 }
 
 // RecoverPair finishes a WritePair that stopped between its two renames and
@@ -116,15 +149,18 @@ func RecoverPair(first, second string) (bool, error) {
 	fp, sp := first+".partial", second+".partial"
 	_, ferr := os.Lstat(fp)
 	_, serr := os.Lstat(sp)
+	for _, err := range []error{ferr, serr} {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+	}
 	switch {
 	case ferr == nil:
 		// Stopped before the renames: the old pair is intact.
-		os.Remove(fp)
-		os.Remove(sp)
-		return true, SyncDir(filepath.Dir(first))
+		return true, discard(fp, sp)
 	case serr == nil:
 		// first is already the new one: complete the pair.
-		if err := os.Rename(sp, second); err != nil {
+		if err := rename(sp, second); err != nil {
 			return false, err
 		}
 		return true, SyncDir(filepath.Dir(second))
@@ -186,6 +222,7 @@ func SyncDir(dir string) error {
 	if err := d.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) {
 		return err
 	}
+	note("sync", dir, "")
 	return nil
 }
 
@@ -321,4 +358,30 @@ func Within(dir, path string) (bool, error) {
 		return false, nil
 	}
 	return rel != ".." && !filepath.IsAbs(rel) && (len(rel) < 3 || rel[:3] != "../"), nil
+}
+
+// trace, when set, sees each change made to a folder and each folder sync,
+// in order (tests model what a power loss keeps).
+var trace func(op, path, to string)
+
+func note(op, path, to string) {
+	if trace != nil {
+		trace(op, path, to)
+	}
+}
+
+func rename(from, to string) error {
+	if err := os.Rename(from, to); err != nil {
+		return err
+	}
+	note("rename", from, to)
+	return nil
+}
+
+func remove(path string) error {
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	note("remove", path, "")
+	return nil
 }

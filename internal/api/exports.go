@@ -137,7 +137,10 @@ func (a *API) exportDownload(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		return
 	}
 	name := drp.FileName(kind, l.Slug, id, info)
-	a.A.Svc.AuditExport(ctx, p.Actor(), l, s, kind, strings.ToLower(id), info)
+	if err := a.A.Svc.AuditExport(ctx, p.Actor(), l, s, kind, strings.ToLower(id), info); err != nil {
+		problem(w, r, core.ExportStatus(err), err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ToLower(id)+`"`)
 	w.Header().Set("X-Sqsolve-Name", name)
@@ -271,7 +274,10 @@ func (a *API) backupExportDownload(w http.ResponseWriter, r *http.Request, p *au
 		return
 	}
 	name := drp.FileName(kind, slug+"_"+b.StartedAt.UTC().Format("20060102T1504"), id, info)
-	a.A.Svc.AuditBackupExport(ctx, p.Actor(), b, s, kind, strings.ToLower(id), info)
+	if err := a.A.Svc.AuditBackupExport(ctx, p.Actor(), b, s, kind, strings.ToLower(id), info); err != nil {
+		problem(w, r, core.ExportStatus(err), err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ToLower(id)+`"`)
 	w.Header().Set("X-Sqsolve-Name", name)

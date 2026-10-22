@@ -6,34 +6,40 @@ Each task can be executed by a programming agent with this document, the ones it
 
 ## 1. Package structure
 
+The tree as it is (1.2.1). The plan had more packages; their work lives in the ones below (noted
+in brackets), and this list wins over older mentions in the tasks.
+
 ```
-cmd/sqsolve/main.go          subcommands: serve, init, doctor, healthcheck, admin, library, backup, restore, catalog, audit, version
+cmd/sqsolve/main.go          subcommands: serve, init, doctor, healthcheck, admin, library, backup, restore, catalog, audit, version; slog with redaction
 internal/config              SQSOLVE_* variables, validation
-internal/errs                catalog of SQS- codes, error types
-internal/logx                slog, redaction, circular buffer
-internal/secret              secret.String type
-internal/secrets             secret files, AEAD encryption, master key
-internal/fsx                 atomic writes, markers, statfs
+internal/secrets             secret.String type, secret files and their modes, AEAD encryption, passwords
+internal/fsx                 atomic writes, key and certificate pairs, markers, statfs
 internal/execx               execution of allowed binaries, PGPASSFILE, cancellation of own children
-internal/store               SQLite, migrations, per-table repositories
+internal/store               SQLite, migrations, settings, copies before migrating
 internal/pg                  socket connection, ident, safe DDL, catalog queries
-internal/pgconf              postgresql.conf, pg_hba.conf, certificates, reload
-internal/jobs                queue, workers, locks, steps, logs
-internal/scheduler           cron, presets, missed runs
+internal/pgconf              postgresql.conf, pg_hba.conf, certificates
+internal/jobs                queue, workers, locks, steps, logs, audited jobs, interrupted jobs
+internal/scheduler           cron, presets, missed runs, activity gate
 internal/events              in-memory bus, event persistence
-internal/audit               chained log, verification, export
-internal/auth                users, sessions, CSRF, TOTP, tokens, policy
-internal/library             lifecycle, credentials, sessions, fingerprint
-internal/backup              backup, manifest, verification, catalog, retention, restore
+internal/audit               chained log, verification, export, entries written with or before the action
+internal/auth                users, sessions, CSRF, TOTP, tokens, policy, client IP
+internal/core                libraries (lifecycle, credentials, sessions, fingerprint), backups (manifest, verification, catalog, retention, restore, import, export from backups), startup reconciliation [plan: library, backup, reconcile]
 internal/notify              webhook, SMTP, ntfy, rules, grouping
-internal/health              status, indicators, doctor, diagnostics
+internal/health              status, indicators, diagnostics
 internal/compat              known fingerprints with what is verified per version
 internal/drp                 experimental export of .drp and .drx from the library (ADR 0019)
+internal/app                 wiring of the server, init, doctor, volume identity, panel certificate, control plane recovery
 internal/api                 JSON v1 handlers
 internal/web                 HTML handlers, templates, embedded assets
-internal/reconcile           startup reconciliation
-internal/clock               clock injectable for tests
+internal/ulid                identifiers
+internal/testpg              throwaway PostgreSQL clusters for the tests
 ```
+
+Error codes have no package of their own: they are written where they happen, `make errors`
+lists them in `docs/manual/errors.md` and `make errors-check` refuses a code with two messages
+[plan: errs]. Logging and redaction live in `cmd/sqsolve` [plan: logx]; the clock is injected
+where it matters (`Service.Now` in `core` and `auth`, the reference time of the scheduler and of the
+retention function) [plan: clock].
 
 ## 2. Conventions for each task
 
@@ -527,4 +533,9 @@ publishable; the rest moves to 1.1 and is noted in each task.
 | Export from backup | docs/22 §7 | Implemented (2026-10-19): `backup.export` job, temporary database, page and API, audit log |
 | Stability audit | ADR 0023, 0024, 0025 | Implemented (2026-10-20): every finding of the 2026-10-20 audit (data safety of restores, recreate and import; verification outcomes; jobs runtime; volume identity and startup; health and alerts; login lockout and web hardening; PostgreSQL client; build, CI and deploy). Not validated with real Resolve: maintenance through `NOLOGIN` (what Resolve shows is To be confirmed) and the reserved connections |
 
-The `[ ]` criteria of each task were not ticked one by one in this pass; the table summarizes.
+| Repository audit | ADR 0026 | Implemented (2026-10-22): every finding of the 2026-10-21 audit (journaled control plane recovery; key and certificate pairs that survive a power cut; enforced secret modes; audit entries written with or before their action; atomic TOTP replay check, last administrator and installation code; strict JSON bodies; accessible mobile tables; fuzzing in CI; documentation) |
+
+The `[ ]` criteria of each task were not ticked one by one; the table summarizes. The evidence for
+a row is executable or recorded: the CI jobs of `docs/17` §4 (unit and integration tests against
+PostgreSQL 18, `make scenarios`, the image smoke test), `docs/acceptance/1.0.md` and `docs/poc/`.
+What depends on Resolve and is not in those records is not validated (see the README).

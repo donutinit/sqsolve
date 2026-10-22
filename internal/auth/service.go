@@ -227,15 +227,21 @@ func (s *Service) CreateUser(ctx context.Context, by audit.Actor, username, disp
 	}
 	id := ulid.New()
 	now := store.NowT()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO admin_users(id, username, display_name, password_hash, role, created_at, password_changed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, username, strings.TrimSpace(display), hash, string(role), now, now)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
-			return nil, errors.New("SQS-A013 a user with that name already exists")
+	// The user and its audit entry are one transaction (docs 08 §9).
+	err = s.db.Tx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO admin_users(id, username, display_name, password_hash, role, created_at, password_changed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			id, username, strings.TrimSpace(display), hash, string(role), now, now)
+		if err != nil {
+			if strings.Contains(err.Error(), "UNIQUE") {
+				return errors.New("SQS-A013 a user with that name already exists")
+			}
+			return err
 		}
+		return s.audit.RecordTx(ctx, tx, by, "user.create", "user", id, audit.OK, map[string]any{"username": username, "role": role})
+	})
+	if err != nil {
 		return nil, err
 	}
-	s.audit.Record(ctx, by, "user.create", "user", id, audit.OK, map[string]any{"username": username, "role": role})
 	return s.UserByID(ctx, id)
 }
 
@@ -254,12 +260,22 @@ func (s *Service) SetPassword(ctx context.Context, by audit.Actor, userID, passw
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET password_hash = ?, password_changed_at = ?, failed_logins = 0, locked_at = NULL WHERE id = ?`, hash, store.NowT(), userID); err != nil {
+	err = s.db.Tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE admin_users SET password_hash = ?, password_changed_at = ?, failed_logins = 0, locked_at = NULL WHERE id = ?`, hash, store.NowT(), userID); err != nil {
+			return err
+		}
+		return s.audit.RecordTx(ctx, tx, by, "user.password", "user", userID, audit.OK, map[string]any{"username": u.Username})
+	})
+	if err != nil {
 		return err
 	}
 	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND id_hash <> ?`, userID, keepSession)
-	return s.audit.Record(ctx, by, "user.password", "user", userID, audit.OK, map[string]any{"username": u.Username})
+	return nil
 }
+
+// hookAdminGuard, when set, runs between the last-administrator check and
+// the write (tests).
+var hookAdminGuard func()
 
 // UpdateUser changes display name and role, and enables or disables.
 func (s *Service) UpdateUser(ctx context.Context, by audit.Actor, userID, display string, role Role, disabled bool) error {
@@ -270,28 +286,48 @@ func (s *Service) UpdateUser(ctx context.Context, by audit.Actor, userID, displa
 	if err != nil {
 		return err
 	}
-	if u.Role == RoleAdmin && (role != RoleAdmin || disabled) {
-		var n int
-		s.db.QueryRowContext(ctx, `SELECT count(*) FROM admin_users WHERE role = 'admin' AND disabled_at IS NULL AND id <> ?`, userID).Scan(&n)
-		if n == 0 {
-			return errors.New("SQS-A014 at least one active administrator must remain")
+	// The check and the write share one immediate transaction: two requests
+	// that each remove one of two administrators cannot both see the other.
+	err = s.db.Tx(ctx, func(tx *sql.Tx) error {
+		var cur string
+		var curDisabled sql.NullString
+		if err := tx.QueryRowContext(ctx, `SELECT role, disabled_at FROM admin_users WHERE id = ?`, userID).Scan(&cur, &curDisabled); err != nil {
+			return err
 		}
-	}
-	var dis any
-	if disabled {
-		dis = store.NowT()
-		if u.DisabledAt != nil {
-			dis = store.T(*u.DisabledAt)
+		if Role(cur) == RoleAdmin && !curDisabled.Valid && (role != RoleAdmin || disabled) {
+			var n int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM admin_users WHERE role = 'admin' AND disabled_at IS NULL AND id <> ?`, userID).Scan(&n); err != nil {
+				return err
+			}
+			if n == 0 {
+				return errors.New("SQS-A014 at least one active administrator must remain")
+			}
 		}
-	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET display_name = ?, role = ?, disabled_at = ? WHERE id = ?`, strings.TrimSpace(display), string(role), dis, userID); err != nil {
+		if hookAdminGuard != nil {
+			hookAdminGuard()
+		}
+		var dis any
+		if disabled {
+			dis = store.NowT()
+			if curDisabled.Valid {
+				dis = curDisabled.String
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE admin_users SET display_name = ?, role = ?, disabled_at = ? WHERE id = ?`, strings.TrimSpace(display), string(role), dis, userID); err != nil {
+			return err
+		}
+		return s.audit.RecordTx(ctx, tx, by, "user.update", "user", userID, audit.OK, map[string]any{"username": u.Username, "role": role, "disabled": disabled})
+	})
+	if err != nil {
 		return err
 	}
+	// A disabled user is refused on every request (Principal.Can, Session,
+	// TokenPrincipal); these only tidy up.
 	if disabled {
 		s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
 		s.db.ExecContext(ctx, `UPDATE api_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`, store.NowT(), userID)
 	}
-	return s.audit.Record(ctx, by, "user.update", "user", userID, audit.OK, map[string]any{"username": u.Username, "role": role, "disabled": disabled})
+	return nil
 }
 
 // ErrBadCredentials hides whether the user exists.
@@ -515,10 +551,18 @@ func (s *Service) checkSecondFactor(ctx context.Context, u *User, code string) e
 		return err
 	}
 	if n, ok := VerifyTOTP(secret.Reveal(), code, s.Now()); ok {
-		if int64(n) <= u.totpLast {
+		// One conditional update: of two sessions presenting the same code,
+		// only the first moves the counter past it.
+		res, err := s.db.ExecContext(ctx, `UPDATE admin_users SET totp_last_counter = ? WHERE id = ? AND totp_last_counter < ?`, int64(n), u.ID, int64(n))
+		if err != nil {
+			return err
+		}
+		if k, err := res.RowsAffected(); err != nil {
+			return err
+		} else if k != 1 {
 			return ErrBadCode
 		}
-		s.db.ExecContext(ctx, `UPDATE admin_users SET totp_last_counter = ? WHERE id = ?`, int64(n), u.ID)
+		u.totpLast = int64(n)
 		return nil
 	}
 	// Recovery code.
@@ -654,12 +698,16 @@ func (s *Service) CreateToken(ctx context.Context, p *Principal, name string, sc
 	id := ulid.New()
 	sc, _ := json.Marshal(scopes)
 	exp := s.Now().Add(ttl)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO api_tokens(id, user_id, name, token_hash, scopes, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, p.User.ID, name, hashToken(raw), string(sc), store.NowT(), store.T(exp))
+	err := s.db.Tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO api_tokens(id, user_id, name, token_hash, scopes, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			id, p.User.ID, name, hashToken(raw), string(sc), store.NowT(), store.T(exp)); err != nil {
+			return err
+		}
+		return s.audit.RecordTx(ctx, tx, p.Actor(), "token.create", "token", id, audit.OK, map[string]any{"name": name, "scopes": scopes})
+	})
 	if err != nil {
 		return "", nil, err
 	}
-	s.audit.Record(ctx, p.Actor(), "token.create", "token", id, audit.OK, map[string]any{"name": name, "scopes": scopes})
 	return raw, &Token{ID: id, UserID: p.User.ID, Name: name, Scopes: scopes, CreatedAt: s.Now(), ExpiresAt: &exp}, nil
 }
 
@@ -700,14 +748,16 @@ func (s *Service) RevokeToken(ctx context.Context, p *Principal, id string) erro
 		q += ` AND user_id = ?`
 		args = append(args, p.User.ID)
 	}
-	res, err := s.db.ExecContext(ctx, q, args...)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return errors.New("SQS-A023 token not found")
-	}
-	return s.audit.Record(ctx, p.Actor(), "token.revoke", "token", id, audit.OK, nil)
+	return s.db.Tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return errors.New("SQS-A023 token not found")
+		}
+		return s.audit.RecordTx(ctx, tx, p.Actor(), "token.revoke", "token", id, audit.OK, nil)
+	})
 }
 
 // ErrBadToken is returned for invalid API tokens.

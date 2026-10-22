@@ -38,6 +38,12 @@ It is a snapshot: if this list and the code disagree, the code wins and the coun
 - [ ] Wide tables: inside a normal card they are wrapped in `<div class="scroll-x">` to scroll
       sideways on narrow screens (7 tables on 2026-10-19); `cards-on-mobile` tables that are the
       whole page go in `card flush`, which already scrolls.
+- [ ] Tables shown as cards on narrow screens (`cards-on-mobile`): every element carries its
+      table role (`table`, `rowgroup`, `row`, `columnheader`, `cell`), because changing the
+      display of rows and cells makes some browsers drop the table semantics; the header is
+      hidden only visually; each cell has `data-label`, drawn with empty alternative text so it
+      is not read twice. 8 of 8 tables since 2026-10-22 (audit AUD-009), checked by
+      `internal/web/a11y_test.go`.
 - [ ] Action list with explanation: `<div class="actionrow">` with `h3`, a paragraph saying what
       it does and a short button ("Run"); never a long button that describes the action and
       wraps onto two lines (maintenance, 7 actions, fixed on 2026-10-19).

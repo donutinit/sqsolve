@@ -29,6 +29,10 @@ func panelCertPath(c *config.Config) string  { return filepath.Join(c.AppDir, "t
 func panelKeyPath(c *config.Config) string   { return filepath.Join(c.AppDir, "tls", "panel.key") }
 func stateBackupDir(c *config.Config) string { return filepath.Join(c.AppDir, "state-backups") }
 
+// chmod is os.Chmod; tests replace it to simulate a volume that refuses a
+// mode.
+var chmod = os.Chmod
+
 // dataDirCheck checks PGDATA once init has prepared it. A variable so tests
 // can simulate a volume that does not keep the mode.
 var dataDirCheck = dataDirMode
@@ -72,17 +76,40 @@ func Init(c *config.Config, out io.Writer) error {
 			}
 		}
 	}
-	mkdir := func(path string, mode os.FileMode, uid, gid int) error {
+	// setMode fails when the mode cannot be set: a secret, or a folder that
+	// holds secrets, left with a wider mode is not a success.
+	setMode := func(path string, mode os.FileMode) error {
+		if err := chmod(path, mode); err != nil {
+			return fmt.Errorf("SQS-C085 could not set the mode of %s to %04o: %w", path, mode.Perm(), err)
+		}
+		return nil
+	}
+	// looseMode is for the backups volume and the db volume root, which hold
+	// no secret of sqsolve: a NAS share that refuses a mode must not stop
+	// init (and with it PostgreSQL).
+	looseMode := func(path string, mode os.FileMode) {
+		if err := chmod(path, mode); err != nil {
+			say("warning: could not set the mode of %s to %04o: %v", path, mode.Perm(), err)
+		}
+	}
+	mkdirMode := func(path string, mode os.FileMode, uid, gid int, strict bool) error {
 		if err := os.MkdirAll(path, mode); err != nil {
 			return fmt.Errorf("SQS-C050 could not create %s: %w", path, err)
 		}
-		os.Chmod(path, mode)
+		if !strict {
+			looseMode(path, mode)
+		} else if err := setMode(path, mode); err != nil {
+			return err
+		}
 		chown(path, uid, gid)
 		return nil
 	}
+	mkdir := func(path string, mode os.FileMode, uid, gid int) error { return mkdirMode(path, mode, uid, gid, true) }
 	writeIfMissing := func(path string, data []byte, mode os.FileMode, uid, gid int) (bool, error) {
 		if _, err := os.Stat(path); err == nil {
-			os.Chmod(path, mode)
+			if err := setMode(path, mode); err != nil {
+				return false, err
+			}
 			chown(path, uid, gid)
 			return false, nil
 		}
@@ -151,20 +178,24 @@ func Init(c *config.Config, out io.Writer) error {
 	}
 	if plan.BackupsOK {
 		for _, d := range []string{"libraries", "_system", "_import"} {
-			if err := mkdir(filepath.Join(c.BackupDir, d), 0o700, c.UID, c.GID); err != nil {
+			if err := mkdirMode(filepath.Join(c.BackupDir, d), 0o700, c.UID, c.GID, false); err != nil {
 				return err
 			}
 		}
-		os.Chmod(c.BackupDir, 0o700)
+		looseMode(c.BackupDir, 0o700)
 		chown(c.BackupDir, c.UID, c.GID)
 		chown(filepath.Join(c.BackupDir, fsx.MarkerName), c.UID, c.GID)
 	}
 
-	// Secrets of sqsolve.
-	if created, err := writeIfMissing(masterKeyPath(c), []byte(base64.StdEncoding.EncodeToString(secrets.RandomBytes(32))+"\n"), 0o400, c.UID, c.GID); err != nil {
-		return err
-	} else if created {
-		say("master key generated")
+	// Secrets of sqsolve. While a recovery waits with its own master key
+	// (a start stopped while applying it), none is generated: the next start
+	// installs the staged one.
+	if exists(masterKeyPath(c)) || !exists(stagedKeyPath(c)) {
+		if created, err := writeIfMissing(masterKeyPath(c), []byte(base64.StdEncoding.EncodeToString(secrets.RandomBytes(32))+"\n"), 0o400, c.UID, c.GID); err != nil {
+			return err
+		} else if created {
+			say("master key generated")
+		}
 	}
 	if _, err := writeIfMissing(adminPassPath(c), []byte(secrets.GeneratePassword(32).Reveal()+"\n"), 0o400, c.UID, c.GID); err != nil {
 		return err
@@ -172,7 +203,7 @@ func Init(c *config.Config, out io.Writer) error {
 
 	// PostgreSQL configuration inside the db volume.
 	conf := c.PGConfDir()
-	if err := mkdir(c.PGDir, 0o755, -1, -1); err != nil {
+	if err := mkdirMode(c.PGDir, 0o755, -1, -1, false); err != nil {
 		return err
 	}
 	if plan.MarkDB {
@@ -213,7 +244,9 @@ func Init(c *config.Config, out io.Writer) error {
 	}
 	// setgid: files that sqsolve rewrites later (pg_hba.conf) keep the
 	// postgres group, so the server can read them.
-	os.Chmod(conf, 0o750|os.ModeSetgid)
+	if err := setMode(conf, 0o750|os.ModeSetgid); err != nil {
+		return err
+	}
 	if created, err := writeIfMissing(c.SuperuserPasswordFile(), []byte(secrets.GeneratePassword(32).Reveal()+"\n"), 0o440, c.UID, c.PGGID); err != nil {
 		return err
 	} else if created {
@@ -263,9 +296,13 @@ func Init(c *config.Config, out io.Writer) error {
 		say("PostgreSQL TLS certificate generated")
 	}
 	chown(crt, tlsOwner, c.PGGID)
-	os.Chmod(crt, 0o644)
+	if err := setMode(crt, 0o644); err != nil {
+		return err
+	}
 	chown(key, c.PGUID, c.PGGID)
-	os.Chmod(key, 0o600)
+	if err := setMode(key, 0o600); err != nil {
+		return err
+	}
 
 	if c.FixPerms && root {
 		dirs := []string{c.AppDir}

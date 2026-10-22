@@ -115,7 +115,8 @@ func (s *Service) PrepareBackupExport(ctx context.Context, by audit.Actor, backu
 	if err != nil {
 		return nil, nil, err
 	}
-	j, err := s.Jobs.Enqueue(ctx, JobBackupExport, b.LibraryID, ExportWorkspaceParams{WorkspaceID: w.ID}, by, jobs.Priority(50))
+	j, err := s.Jobs.Enqueue(ctx, JobBackupExport, b.LibraryID, ExportWorkspaceParams{WorkspaceID: w.ID}, by, jobs.Priority(50),
+		jobs.Audited("backup.export_prepare", "backup", b.ID, map[string]any{"workspace": w.ID}))
 	if err != nil {
 		s.DB.ExecContext(context.WithoutCancel(ctx), `DELETE FROM export_workspaces WHERE id = ?`, w.ID)
 		return nil, nil, err
@@ -127,7 +128,6 @@ func (s *Service) PrepareBackupExport(ctx context.Context, by audit.Actor, backu
 	if _, err := s.DB.ExecContext(ctx, `UPDATE export_workspaces SET job_id = ? WHERE id = ?`, w.JobID, w.ID); err != nil {
 		return nil, nil, err
 	}
-	s.Audit.Record(ctx, by, "backup.export_prepare", "backup", b.ID, audit.OK, map[string]any{"workspace": w.ID})
 	return w, j, nil
 }
 
@@ -201,11 +201,9 @@ func (s *Service) CloseBackupExport(ctx context.Context, by audit.Actor, backupI
 	if err != nil || w == nil || w.State == WorkspaceClosed {
 		return err
 	}
-	if err := s.closeWorkspace(ctx, w); err != nil {
-		return err
-	}
-	s.Audit.Record(ctx, by, "backup.export_close", "backup", backupID, audit.OK, map[string]any{"workspace": w.ID})
-	return nil
+	return s.Audit.Do(ctx, by, "backup.export_close", "backup", backupID, map[string]any{"workspace": w.ID}, func() error {
+		return s.closeWorkspace(ctx, w)
+	})
 }
 
 func (s *Service) closeWorkspace(ctx context.Context, w *ExportWorkspace) error {
@@ -239,9 +237,10 @@ func (s *Service) PurgeExportWorkspaces(ctx context.Context) int {
 	return n
 }
 
-// AuditBackupExport records a download from a backup in the audit log.
-func (s *Service) AuditBackupExport(ctx context.Context, by audit.Actor, b *Backup, sess *drp.Session, kind, id string, info *drp.ExportInfo) {
-	s.Audit.Record(ctx, by, "backup.export", "backup", b.ID, audit.OK, map[string]any{
+// AuditBackupExport records a download from a backup in the audit log. The
+// download is not served when it returns an error (audit.ErrUnavailable).
+func (s *Service) AuditBackupExport(ctx context.Context, by audit.Actor, b *Backup, sess *drp.Session, kind, id string, info *drp.ExportInfo) error {
+	return s.Audit.Require(ctx, by, "backup.export", "backup", b.ID, audit.OK, map[string]any{
 		"library_id": b.LibraryID, "kind": kind, "id": id, "name": info.Name, "files": info.Files, "bytes": info.Bytes,
 		"fingerprint": sess.Fingerprint, "verified": sess.KnownOK, "notes": info.Notes,
 	})

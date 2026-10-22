@@ -35,9 +35,10 @@ func (s *Service) OpenExport(ctx context.Context, l *Library) (*drp.Session, err
 	return drp.Open(ctx, conn)
 }
 
-// AuditExport records a download in the audit log.
-func (s *Service) AuditExport(ctx context.Context, by audit.Actor, l *Library, sess *drp.Session, kind, id string, info *drp.ExportInfo) {
-	s.Audit.Record(ctx, by, "library.export", "library", l.ID, audit.OK, map[string]any{
+// AuditExport records a download in the audit log. The download is not
+// served when it returns an error (audit.ErrUnavailable).
+func (s *Service) AuditExport(ctx context.Context, by audit.Actor, l *Library, sess *drp.Session, kind, id string, info *drp.ExportInfo) error {
+	return s.Audit.Require(ctx, by, "library.export", "library", l.ID, audit.OK, map[string]any{
 		"kind": kind, "id": id, "name": info.Name, "files": info.Files, "bytes": info.Bytes,
 		"fingerprint": sess.Fingerprint, "verified": sess.KnownOK, "notes": info.Notes,
 	})
@@ -50,7 +51,7 @@ func ExportStatus(err error) int {
 		return 409
 	case errors.Is(err, drp.ErrNotFound):
 		return 404
-	case errors.Is(err, ErrExportUnavailable):
+	case errors.Is(err, ErrExportUnavailable), errors.Is(err, audit.ErrUnavailable):
 		return 503
 	}
 	return 422

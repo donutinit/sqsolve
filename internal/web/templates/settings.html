@@ -71,14 +71,14 @@
 <section class="card">
   <h2>Panel users</h2>
   <p class="hint">These are accounts to administer sqsolve. They are not the users Resolve connects to the libraries with.</p>
-  <div class="scroll-x"><table class="table compact cards-on-mobile"><thead><tr><th>User</th><th>Role</th><th>Second factor</th><th>Last access</th><th>Changes</th></tr></thead><tbody>
+  <div class="scroll-x"><table role="table" class="table compact cards-on-mobile"><thead role="rowgroup"><tr role="row"><th role="columnheader">User</th><th role="columnheader">Role</th><th role="columnheader">Second factor</th><th role="columnheader">Last access</th><th role="columnheader">Changes</th></tr></thead><tbody role="rowgroup">
   {{range .Data.Users}}
-  <tr>
-    <td data-label="User"><strong>{{.Username}}</strong>{{if .DisplayName}}<br><span class="muted small">{{.DisplayName}}</span>{{end}}{{if .DisabledAt}} {{template "badge" (dict "tone" "off" "label" "Disabled")}}{{end}}{{if .IsLocked $.Now}} {{template "badge" (dict "tone" "bad" "label" "Locked")}}<br><span class="muted small">Password logins refused until {{dt .LockedUntil}}</span>{{end}}</td>
-    <td data-label="Role">{{.Role.Label}}</td>
-    <td data-label="Second factor">{{if .TOTPEnabled}}Yes <form method="post" action="/settings/users/{{.ID}}/totp" class="inline-form" data-confirm="The account of {{.Username}} will be protected by the password only. Remove their second factor?">{{template "csrf" $.CSRF}}<button class="ghost small danger" type="submit">Remove</button></form>{{else}}No{{end}}</td>
-    <td data-label="Last access">{{if .LastLoginAt}}{{ago .LastLoginAt}}{{else}}never{{end}}</td>
-    <td data-label="Changes">
+  <tr role="row">
+    <td role="cell" data-label="User"><strong>{{.Username}}</strong>{{if .DisplayName}}<br><span class="muted small">{{.DisplayName}}</span>{{end}}{{if .DisabledAt}} {{template "badge" (dict "tone" "off" "label" "Disabled")}}{{end}}{{if .IsLocked $.Now}} {{template "badge" (dict "tone" "bad" "label" "Locked")}}<br><span class="muted small">Password logins refused until {{dt .LockedUntil}}</span>{{end}}</td>
+    <td role="cell" data-label="Role">{{.Role.Label}}</td>
+    <td role="cell" data-label="Second factor">{{if .TOTPEnabled}}Yes <form method="post" action="/settings/users/{{.ID}}/totp" class="inline-form" data-confirm="The account of {{.Username}} will be protected by the password only. Remove their second factor?">{{template "csrf" $.CSRF}}<button class="ghost small danger" type="submit">Remove</button></form>{{else}}No{{end}}</td>
+    <td role="cell" data-label="Last access">{{if .LastLoginAt}}{{ago .LastLoginAt}}{{else}}never{{end}}</td>
+    <td role="cell" data-label="Changes">
       <details class="more"><summary>Edit</summary>
         <form method="post" action="/settings/users/{{.ID}}" class="form">
           {{template "csrf" $.CSRF}}
@@ -117,15 +117,15 @@
 <section class="card">
   <h2>Channels</h2>
   {{if .Data.Channels}}
-  <div class="scroll-x"><table class="table compact cards-on-mobile"><thead><tr><th>Name</th><th>Type</th><th>Minimum severity</th><th>Events</th><th>Last sent</th><th></th></tr></thead><tbody>
+  <div class="scroll-x"><table role="table" class="table compact cards-on-mobile"><thead role="rowgroup"><tr role="row"><th role="columnheader">Name</th><th role="columnheader">Type</th><th role="columnheader">Minimum severity</th><th role="columnheader">Events</th><th role="columnheader">Last sent</th><th role="columnheader"></th></tr></thead><tbody role="rowgroup">
   {{range .Data.Channels}}
-  <tr>
-    <td data-label="Name">{{.Name}}{{if not .Enabled}} {{template "badge" (dict "tone" "off" "label" "Paused")}}{{end}}</td>
-    <td data-label="Type">{{.Kind}}</td>
-    <td data-label="Severity">{{sev .MinSeverity}}</td>
-    <td data-label="Events" class="mono small">{{.Pattern}}</td>
-    <td data-label="Last sent">{{if .LastOK}}{{ago .LastOK}}{{else}}never{{end}}{{if and .LastError ($p.Can "notify.manage")}}<br><span class="bad small">{{.LastError}}</span>{{end}}</td>
-    <td class="actions">
+  <tr role="row">
+    <td role="cell" data-label="Name">{{.Name}}{{if not .Enabled}} {{template "badge" (dict "tone" "off" "label" "Paused")}}{{end}}</td>
+    <td role="cell" data-label="Type">{{.Kind}}</td>
+    <td role="cell" data-label="Severity">{{sev .MinSeverity}}</td>
+    <td role="cell" data-label="Events" class="mono small">{{.Pattern}}</td>
+    <td role="cell" data-label="Last sent">{{if .LastOK}}{{ago .LastOK}}{{else}}never{{end}}{{if and .LastError ($p.Can "notify.manage")}}<br><span class="bad small">{{.LastError}}</span>{{end}}</td>
+    <td role="cell" class="actions">
       {{if $p.Can "notify.manage"}}
       <form method="post" action="/settings/notifications/{{.ID}}/test">{{template "csrf" $.CSRF}}<button class="ghost small" type="submit">Test</button></form>
       <a class="small" href="/settings?tab=notifications&edit={{.ID}}">Edit</a>

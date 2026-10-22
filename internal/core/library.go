@@ -315,8 +315,8 @@ func (s *Service) CreateLibrary(ctx context.Context, by audit.Actor, in CreateIn
 		}
 		return nil, nil, err
 	}
-	s.Audit.Record(ctx, by, "library.create", "library", id, audit.OK, map[string]any{"slug": in.Slug, "name": name, "strategy": in.Strategy})
-	j, err := s.Jobs.Enqueue(ctx, JobLibraryCreate, id, map[string]string{"library_id": id}, by)
+	j, err := s.Jobs.Enqueue(ctx, JobLibraryCreate, id, map[string]string{"library_id": id}, by,
+		jobs.Audited("library.create", "library", id, map[string]any{"slug": in.Slug, "name": name, "strategy": in.Strategy}))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -429,13 +429,14 @@ func (s *Service) ReopenInitWindow(ctx context.Context, by audit.Actor, id strin
 	if l.State != StateInitExpired && l.State != StateAwaitingInit {
 		return errors.New("SQS-L011 the library is not waiting for initialization")
 	}
-	if err := s.PG.SetRoleCreateDB(ctx, l.OwnerRole, true); err != nil {
-		return err
-	}
-	exp := s.now().Add(time.Duration(s.Settings(ctx).InitWindowMinutes) * time.Minute)
-	s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'awaiting_init', init_window_expires_at = ?, init_table_count = -1, updated_at = ? WHERE id = ?`, store.T(exp), store.NowT(), id)
-	s.Audit.Record(ctx, by, "library.init_window", "library", id, audit.OK, nil)
-	return s.SyncHBA(ctx)
+	return s.Audit.Do(ctx, by, "library.init_window", "library", id, nil, func() error {
+		if err := s.PG.SetRoleCreateDB(ctx, l.OwnerRole, true); err != nil {
+			return err
+		}
+		exp := s.now().Add(time.Duration(s.Settings(ctx).InitWindowMinutes) * time.Minute)
+		s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'awaiting_init', init_window_expires_at = ?, init_table_count = -1, updated_at = ? WHERE id = ?`, store.T(exp), store.NowT(), id)
+		return s.SyncHBA(ctx)
+	})
 }
 
 // WatchInit checks libraries waiting for Resolve to create their database.
@@ -629,17 +630,24 @@ func (s *Service) SetMaintenance(ctx context.Context, by audit.Actor, id string,
 	if on {
 		st, typ, msg = StateMaintenance, events.LibraryMaintenanceOn, "%q is in maintenance: it does not accept new connections"
 	}
-	if _, err := s.applyAccess(ctx, l, st); err != nil {
-		// Put back the access of the state the library stays in.
-		s.applyAccess(context.WithoutCancel(ctx), l, l.State)
+	n := 0
+	details := map[string]any{"on": on, "terminate_sessions": terminate}
+	err = s.Audit.Do(ctx, by, "library.maintenance", "library", id, details, func() error {
+		if _, err := s.applyAccess(ctx, l, st); err != nil {
+			// Put back the access of the state the library stays in.
+			s.applyAccess(context.WithoutCancel(ctx), l, l.State)
+			return err
+		}
+		if on && terminate {
+			n = s.terminateRoleSessions(ctx, l)
+		}
+		s.setState(ctx, id, st)
+		details["terminated"] = n
+		return nil
+	})
+	if err != nil {
 		return 0, err
 	}
-	n := 0
-	if on && terminate {
-		n = s.terminateRoleSessions(ctx, l)
-	}
-	s.setState(ctx, id, st)
-	s.Audit.Record(ctx, by, "library.maintenance", "library", id, audit.OK, map[string]any{"on": on, "terminated": n})
 	s.Events.Emit(ctx, events.Event{Type: typ, LibraryID: id, Message: fmt.Sprintf(msg, l.DisplayName)})
 	return n, nil
 }
@@ -769,14 +777,16 @@ func (s *Service) TerminateSession(ctx context.Context, by audit.Actor, id strin
 	if err != nil {
 		return err
 	}
-	ok, err := s.PG.TerminateSession(ctx, l.DBName, pid, roles)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errors.New("SQS-L016 the session no longer exists or does not belong to this library")
-	}
-	return s.Audit.Record(ctx, by, "library.session_terminate", "library", id, audit.OK, map[string]any{"pid": pid})
+	return s.Audit.Do(ctx, by, "library.session_terminate", "library", id, map[string]any{"pid": pid}, func() error {
+		ok, err := s.PG.TerminateSession(ctx, l.DBName, pid, roles)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.New("SQS-L016 the session no longer exists or does not belong to this library")
+		}
+		return nil
+	})
 }
 
 // FingerprintAll refreshes the schema fingerprint of live libraries.

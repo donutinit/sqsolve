@@ -11,17 +11,17 @@
 <p class="muted">Space used by the listed backups: {{bytes .Data.Total}}.</p>
 {{if .Data.Rows}}
 <section class="card flush">
-<table class="table cards-on-mobile">
-  <thead><tr><th>Date</th><th>Library</th><th>Type</th><th>State</th><th>Verification</th><th>Size</th></tr></thead>
-  <tbody>
+<table role="table" class="table cards-on-mobile">
+  <thead role="rowgroup"><tr role="row"><th role="columnheader">Date</th><th role="columnheader">Library</th><th role="columnheader">Type</th><th role="columnheader">State</th><th role="columnheader">Verification</th><th role="columnheader">Size</th></tr></thead>
+  <tbody role="rowgroup">
   {{range .Data.Rows}}
-  <tr>
-    <td data-label="Date"><a href="/backups/{{.B.ID}}">{{dt .B.StartedAt}}</a>{{if .B.Pinned}} {{template "badge" (dict "tone" "info" "label" "Pinned")}}{{end}}</td>
-    <td data-label="Library">{{with .L}}<a href="/libraries/{{.ID}}">{{.DisplayName}}</a>{{if eq .State "purged"}} <span class="muted small">(purged)</span>{{end}}{{end}}</td>
-    <td data-label="Type">{{kind .B.Kind}}</td>
-    <td data-label="State">{{template "badge" (dict "tone" (backuptone .B.Status) "label" (backuplabel .B.Status))}}</td>
-    <td data-label="Verification">{{if eq .B.Status "ok"}}{{template "badge" (dict "tone" (verifytone .B.VerifyStatus) "label" (verifylabel .B.VerifyStatus))}}{{end}}</td>
-    <td data-label="Size">{{if .B.SizeBytes}}{{bytes .B.SizeBytes}}{{end}}</td>
+  <tr role="row">
+    <td role="cell" data-label="Date"><a href="/backups/{{.B.ID}}">{{dt .B.StartedAt}}</a>{{if .B.Pinned}} {{template "badge" (dict "tone" "info" "label" "Pinned")}}{{end}}</td>
+    <td role="cell" data-label="Library">{{with .L}}<a href="/libraries/{{.ID}}">{{.DisplayName}}</a>{{if eq .State "purged"}} <span class="muted small">(purged)</span>{{end}}{{end}}</td>
+    <td role="cell" data-label="Type">{{kind .B.Kind}}</td>
+    <td role="cell" data-label="State">{{template "badge" (dict "tone" (backuptone .B.Status) "label" (backuplabel .B.Status))}}</td>
+    <td role="cell" data-label="Verification">{{if eq .B.Status "ok"}}{{template "badge" (dict "tone" (verifytone .B.VerifyStatus) "label" (verifylabel .B.VerifyStatus))}}{{end}}</td>
+    <td role="cell" data-label="Size">{{if .B.SizeBytes}}{{bytes .B.SizeBytes}}{{end}}</td>
   </tr>
   {{end}}
   </tbody>

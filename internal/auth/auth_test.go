@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -235,6 +236,121 @@ func TestTOTPFlowAndTokens(t *testing.T) {
 	}
 }
 
+// enrolledTOTP creates an operator with a second factor enabled at now and
+// returns its secret.
+func enrolledTOTP(t *testing.T, s *Service, now time.Time) string {
+	t.Helper()
+	ctx := context.Background()
+	s.Now = func() time.Time { return now }
+	if _, err := s.CreateUser(ctx, audit.System, "ana", "", "reference monitor 709", RoleOperator); err != nil {
+		t.Fatal(err)
+	}
+	_, p, _, err := s.Login(ctx, "ana", "reference monitor 709", "1.1.1.1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, _ := s.BeginTOTP(p.User)
+	code, _ := TOTPCode(secret, Counter(now))
+	if _, err := s.EnableTOTP(ctx, p, secret, code); err != nil {
+		t.Fatal(err)
+	}
+	return secret
+}
+
+// Audit AUD-005: the replay check compared the counter loaded at login, so
+// a second pending session that loaded the same counter accepted a code the
+// first one had already used.
+func TestTOTPCodeAcceptedOnceAcrossSessions(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t)
+	start := time.Now()
+	secret := enrolledTOTP(t, s, start)
+	s.Now = func() time.Time { return start.Add(time.Minute) }
+	var pending []*Principal
+	for i := 0; i < 2; i++ {
+		_, p, mfa, err := s.Login(ctx, "ana", "reference monitor 709", "1.1.1.1", "")
+		if err != nil || !mfa {
+			t.Fatalf("login %d: mfa %v, %v", i, mfa, err)
+		}
+		pending = append(pending, p)
+	}
+	code, _ := TOTPCode(secret, Counter(s.Now()))
+	if err := s.VerifySecondFactor(ctx, pending[0], code); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.VerifySecondFactor(ctx, pending[1], code); !errors.Is(err, ErrBadCode) {
+		t.Fatalf("the code was accepted twice: %v", err)
+	}
+}
+
+func TestTOTPCodeAcceptedOnceUnderConcurrency(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t)
+	start := time.Now()
+	secret := enrolledTOTP(t, s, start)
+	s.Now = func() time.Time { return start.Add(time.Minute) }
+	const n = 4
+	pending := make([]*Principal, n)
+	for i := range pending {
+		_, p, _, err := s.Login(ctx, "ana", "reference monitor 709", "10.0.0."+string(rune('1'+i)), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending[i] = p
+	}
+	code, _ := TOTPCode(secret, Counter(s.Now()))
+	var wg sync.WaitGroup
+	gate := make(chan struct{})
+	errs := make([]error, n)
+	for i := range pending {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-gate
+			errs[i] = s.VerifySecondFactor(ctx, pending[i], code)
+		}()
+	}
+	close(gate)
+	wg.Wait()
+	ok := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case !errors.Is(err, ErrBadCode):
+			t.Fatalf("want SQS-A006, got %v", err)
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("the same code was accepted %d times", ok)
+	}
+}
+
+// A failed write of the used counter must not accept the code: the replay
+// protection would be gone for it.
+func TestTOTPCounterWriteFailureRefusesTheCode(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t)
+	start := time.Now()
+	secret := enrolledTOTP(t, s, start)
+	s.Now = func() time.Time { return start.Add(time.Minute) }
+	raw, p, _, err := s.Login(ctx, "ana", "reference monitor 709", "1.1.1.1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER no_counter BEFORE UPDATE OF totp_last_counter ON admin_users BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	code, _ := TOTPCode(secret, Counter(s.Now()))
+	err = s.VerifySecondFactor(ctx, p, code)
+	if err == nil || !strings.Contains(err.Error(), "disk I/O error") {
+		t.Fatalf("want the write error, got %v", err)
+	}
+	if _, err := s.Session(ctx, raw, "", false); !errors.Is(err, ErrMFAPending) {
+		t.Fatalf("the session left the second factor step: %v", err)
+	}
+}
+
 func TestLastAdminProtected(t *testing.T) {
 	ctx := context.Background()
 	s := newService(t)
@@ -244,5 +360,95 @@ func TestLastAdminProtected(t *testing.T) {
 	}
 	if err := s.UpdateUser(ctx, audit.System, u.ID, "", RoleAdmin, true); err == nil {
 		t.Fatal("last admin disabled")
+	}
+}
+
+// Audit AUD-006: with two administrators, two requests that each demote or
+// disable one of them both counted the other as remaining and left none.
+func TestLastAdminProtectedUnderConcurrency(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t)
+	a, _ := s.CreateUser(ctx, audit.System, "root1", "", "a long and odd password", RoleAdmin)
+	b, _ := s.CreateUser(ctx, audit.System, "root2", "", "another long odd password", RoleAdmin)
+	// Widen the window between the check and the write.
+	hookAdminGuard = func() { time.Sleep(100 * time.Millisecond) }
+	defer func() { hookAdminGuard = nil }()
+	var wg sync.WaitGroup
+	gate := make(chan struct{})
+	errs := make([]error, 2)
+	for i, change := range []func() error{
+		func() error { return s.UpdateUser(ctx, audit.System, a.ID, "", RoleViewer, false) },
+		func() error { return s.UpdateUser(ctx, audit.System, b.ID, "", RoleAdmin, true) },
+	} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-gate
+			errs[i] = change()
+		}()
+	}
+	close(gate)
+	wg.Wait()
+	refused := 0
+	for _, err := range errs {
+		if err != nil {
+			if err.Error() != "SQS-A014 at least one active administrator must remain" {
+				t.Fatalf("want SQS-A014, got %v", err)
+			}
+			refused++
+		}
+	}
+	var n int
+	s.db.QueryRowContext(ctx, `SELECT count(*) FROM admin_users WHERE role = 'admin' AND disabled_at IS NULL`).Scan(&n)
+	if refused != 1 || n != 1 {
+		t.Fatalf("%d refused, %d active administrators left", refused, n)
+	}
+}
+
+// Audit AUD-004: user and token changes are written with their audit entry
+// in one transaction; without the entry the change does not happen.
+func TestUserAndTokenChangesNeedTheirAuditEntry(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t)
+	admin, err := s.CreateUser(ctx, audit.System, "root1", "", "a long and odd password", RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := s.CreateUser(ctx, audit.System, "ana", "", "reference monitor 709", RoleOperator)
+	_, p, _, _ := s.Login(ctx, "root1", "a long and odd password", "1.1.1.1", "")
+	_, tok, err := s.CreateToken(ctx, p, "ci", []string{"backup"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER audit_down BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	fails := func(what string, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "disk I/O error") {
+			t.Errorf("%s without its audit entry: %v", what, err)
+		}
+	}
+	_, err = s.CreateUser(ctx, audit.System, "luis", "", "tungsten light 3200K", RoleViewer)
+	fails("user.create", err)
+	if _, err := s.UserByName(ctx, "luis"); err == nil {
+		t.Error("the user was created")
+	}
+	fails("user.update", s.UpdateUser(ctx, audit.System, other.ID, "", RoleOperator, true))
+	if u, _ := s.UserByID(ctx, other.ID); u.DisabledAt != nil {
+		t.Error("the user was disabled")
+	}
+	fails("user.password", s.SetPassword(ctx, audit.System, other.ID, "tungsten light 3200K", ""))
+	if _, _, _, err := s.Login(ctx, "ana", "reference monitor 709", "1.1.1.2", ""); err != nil {
+		t.Errorf("the password was changed: %v", err)
+	}
+	_, _, err = s.CreateToken(ctx, p, "ci2", []string{"backup"}, 0)
+	fails("token.create", err)
+	if ts, _ := s.Tokens(ctx, admin.ID); len(ts) != 1 {
+		t.Errorf("%d tokens", len(ts))
+	}
+	fails("token.revoke", s.RevokeToken(ctx, p, tok.ID))
+	if ts, _ := s.Tokens(ctx, admin.ID); ts[0].RevokedAt != nil {
+		t.Error("the token was revoked")
 	}
 }

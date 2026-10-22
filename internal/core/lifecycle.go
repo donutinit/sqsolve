@@ -42,8 +42,8 @@ func (s *Service) Trash(ctx context.Context, by audit.Actor, id, confirm string)
 	if err := trashable(l); err != nil {
 		return nil, err
 	}
-	s.Audit.Record(ctx, by, "library.delete", "library", id, audit.OK, map[string]any{"slug": l.Slug})
-	return s.Jobs.Enqueue(ctx, JobLibraryDelete, id, nil, by, jobs.Priority(90))
+	return s.Jobs.Enqueue(ctx, JobLibraryDelete, id, nil, by, jobs.Priority(90),
+		jobs.Audited("library.delete", "library", id, map[string]any{"slug": l.Slug}))
 }
 
 func trashable(l *Library) error {
@@ -183,8 +183,7 @@ func (s *Service) RestoreFromTrash(ctx context.Context, by audit.Actor, id strin
 	if other, err := s.LibraryBySlug(ctx, l.Slug); err == nil && other.ID != l.ID {
 		return nil, fmt.Errorf("SQS-L043 another library with identifier %q already exists", l.Slug)
 	}
-	s.Audit.Record(ctx, by, "library.untrash", "library", id, audit.OK, nil)
-	return s.Jobs.Enqueue(ctx, JobLibraryUntrash, id, nil, by, jobs.Priority(90))
+	return s.Jobs.Enqueue(ctx, JobLibraryUntrash, id, nil, by, jobs.Priority(90), jobs.Audited("library.untrash", "library", id, nil))
 }
 
 func (s *Service) runUntrash(ctx context.Context, r *jobs.Run) error {
@@ -262,8 +261,7 @@ func (s *Service) Purge(ctx context.Context, by audit.Actor, id, confirm string)
 	if confirm != l.Slug {
 		return nil, errors.New("SQS-L040 type the library identifier to confirm")
 	}
-	s.Audit.Record(ctx, by, "library.purge", "library", id, audit.OK, nil)
-	return s.Jobs.Enqueue(ctx, JobLibraryPurge, id, nil, by)
+	return s.Jobs.Enqueue(ctx, JobLibraryPurge, id, nil, by, jobs.Audited("library.purge", "library", id, nil))
 }
 
 func (s *Service) runPurge(ctx context.Context, r *jobs.Run) error {

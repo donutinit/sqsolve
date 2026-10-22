@@ -76,16 +76,49 @@ func TestBoxRoundTripAndAAD(t *testing.T) {
 	}
 }
 
+// Audit AUD-003: one reader accepted group read for every secret, so a
+// master key left at 0440 started although docs 08 and doctor require 0400.
 func TestReadFilePermissions(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "s")
-	os.WriteFile(p, []byte("val\n"), 0o644)
-	if _, err := ReadFile(p); !errors.Is(err, ErrPermissions) {
-		t.Fatalf("expected permission error, got %v", err)
+	os.WriteFile(p, []byte("val\n"), 0o400)
+	for _, mode := range []os.FileMode{0o644, 0o440, 0o404, 0o410, 0o420} {
+		os.Chmod(p, mode)
+		_, err := ReadFile(p)
+		want := fmt.Sprintf("SQS-C010 permissions too open on a secrets file: %s has mode %o and may have at most 600", p, mode)
+		if !errors.Is(err, ErrPermissions) || err.Error() != want {
+			t.Fatalf("mode %o: want %q, got %v", mode, want, err)
+		}
+	}
+	for _, mode := range []os.FileMode{0o400, 0o600} {
+		os.Chmod(p, mode)
+		if s, err := ReadFile(p); err != nil || s.Reveal() != "val" {
+			t.Fatalf("mode %o: %v %q", mode, err, s.Reveal())
+		}
+	}
+}
+
+// The PostgreSQL superuser password is shared with the postgres group.
+func TestReadGroupFilePermissions(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "s")
+	os.WriteFile(p, []byte("val\n"), 0o440)
+	for _, mode := range []os.FileMode{0o444, 0o460, 0o441, 0o640} {
+		os.Chmod(p, mode)
+		_, err := ReadGroupFile(p)
+		want := fmt.Sprintf("SQS-C010 permissions too open on a secrets file: %s has mode %o and may have at most 640", p, mode)
+		if mode == 0o640 {
+			if err != nil {
+				t.Fatalf("mode 640: %v", err)
+			}
+			continue
+		}
+		if !errors.Is(err, ErrPermissions) || err.Error() != want {
+			t.Fatalf("mode %o: want %q, got %v", mode, want, err)
+		}
 	}
 	os.Chmod(p, 0o440)
-	s, err := ReadFile(p)
-	if err != nil || s.Reveal() != "val" {
+	if s, err := ReadGroupFile(p); err != nil || s.Reveal() != "val" {
 		t.Fatalf("%v %q", err, s.Reveal())
 	}
 }

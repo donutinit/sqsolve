@@ -10,7 +10,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"sync"
 	"time"
 
@@ -47,12 +49,19 @@ func (a Actor) Label() string {
 	return a.ID
 }
 
-// Outcomes.
+// Outcomes. Accepted is written before the action it records: a queued job
+// (its result follows when the job ends) or a change outside SQLite (its
+// result, ok or failed, follows when the change returns).
 const (
-	OK     = "ok"
-	Denied = "denied"
-	Failed = "failed"
+	OK       = "ok"
+	Denied   = "denied"
+	Failed   = "failed"
+	Accepted = "accepted"
 )
+
+// ErrUnavailable is returned when an entry an action depends on cannot be
+// written: the action is not done (docs 08 §9).
+var ErrUnavailable = errors.New("SQS-X040 the audit log could not be written, so the action was not done")
 
 // Entry is one audit record.
 type Entry struct {
@@ -105,6 +114,53 @@ func (l *Log) Record(ctx context.Context, a Actor, action, targetType, targetID,
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	ctx = context.WithoutCancel(ctx)
+	return l.db.Tx(ctx, func(tx *sql.Tx) error {
+		return appendEntry(ctx, tx, a, action, targetType, targetID, outcome, details)
+	})
+}
+
+// RecordTx appends an entry inside tx, so it is written if and only if the
+// change tx makes is. The transactions of the store are immediate (one
+// writer at a time), which keeps the chain in order without Record's lock.
+func (l *Log) RecordTx(ctx context.Context, tx *sql.Tx, a Actor, action, targetType, targetID, outcome string, details map[string]any) error {
+	return appendEntry(context.WithoutCancel(ctx), tx, a, action, targetType, targetID, outcome, details)
+}
+
+// Require appends an entry that the action it records depends on: on error
+// (ErrUnavailable) the caller must not do the action.
+func (l *Log) Require(ctx context.Context, a Actor, action, targetType, targetID, outcome string, details map[string]any) error {
+	if err := l.Record(ctx, a, action, targetType, targetID, outcome, details); err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	return nil
+}
+
+// Do runs change, a change outside SQLite (PostgreSQL, files) that cannot
+// share a transaction with its entry: an accepted entry is written first, and
+// change does not run without it; its result, ok or failed with the error,
+// is written after; change may add to details what the result should carry.
+// The error of change is returned; a result that cannot be written is
+// returned only when change succeeded.
+func (l *Log) Do(ctx context.Context, a Actor, action, targetType, targetID string, details map[string]any, change func() error) error {
+	if err := l.Require(ctx, a, action, targetType, targetID, Accepted, details); err != nil {
+		return err
+	}
+	err := change()
+	outcome, result := OK, details
+	if err != nil {
+		outcome, result = Failed, maps.Clone(details)
+		if result == nil {
+			result = map[string]any{}
+		}
+		result["error"] = err.Error()
+	}
+	if rerr := l.Record(ctx, a, action, targetType, targetID, outcome, result); rerr != nil && err == nil {
+		return fmt.Errorf("SQS-X041 the action was done, but its result could not be written to the audit log: %w", rerr)
+	}
+	return err
+}
+
+func appendEntry(ctx context.Context, tx *sql.Tx, a Actor, action, targetType, targetID, outcome string, details map[string]any) error {
 	if details == nil {
 		details = map[string]any{}
 	}
@@ -113,18 +169,16 @@ func (l *Log) Record(ctx context.Context, a Actor, action, targetType, targetID,
 	var norm map[string]any
 	json.Unmarshal(db, &norm)
 	c := canonical{store.NowT(), a.Type, a.ID, a.Name, a.IP, action, targetType, targetID, outcome, norm}
-	return l.db.Tx(ctx, func(tx *sql.Tx) error {
-		var prev string
-		err := tx.QueryRowContext(ctx, `SELECT hash FROM audit_log ORDER BY seq DESC LIMIT 1`).Scan(&prev)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		h := hashOf(prev, c)
-		_, err = tx.ExecContext(ctx, `INSERT INTO audit_log(ts, actor_type, actor_id, actor_name, actor_ip, action, target_type, target_id, outcome, details, prev_hash, hash)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			c.TS, c.ActorType, c.ActorID, c.ActorName, c.ActorIP, c.Action, c.TargetType, c.TargetID, c.Outcome, string(db), prev, h)
+	var prev string
+	err := tx.QueryRowContext(ctx, `SELECT hash FROM audit_log ORDER BY seq DESC LIMIT 1`).Scan(&prev)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
-	})
+	}
+	h := hashOf(prev, c)
+	_, err = tx.ExecContext(ctx, `INSERT INTO audit_log(ts, actor_type, actor_id, actor_name, actor_ip, action, target_type, target_id, outcome, details, prev_hash, hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.TS, c.ActorType, c.ActorID, c.ActorName, c.ActorIP, c.Action, c.TargetType, c.TargetID, c.Outcome, string(db), prev, h)
+	return err
 }
 
 func scanEntry(rows interface{ Scan(...any) error }) (Entry, canonical, error) {

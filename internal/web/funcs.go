@@ -90,8 +90,11 @@ func funcs(a *app.App) template.FuncMap {
 			return "off"
 		},
 		"outcometone": func(o string) string {
-			if o == audit.OK {
+			switch o {
+			case audit.OK:
 				return "ok"
+			case audit.Accepted:
+				return "info"
 			}
 			return "bad"
 		},
@@ -103,6 +106,8 @@ func funcs(a *app.App) template.FuncMap {
 				return "Denied"
 			case audit.Failed:
 				return "Failed"
+			case audit.Accepted:
+				return "Accepted"
 			}
 			return o
 		},

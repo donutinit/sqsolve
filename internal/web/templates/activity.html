@@ -8,14 +8,14 @@
 <section class="card">
   <div class="cardhead"><h2>Audit log</h2><a href="/activity/audit.jsonl">Export JSON Lines</a></div>
   {{if .Data.VerifyErr}}<div class="flash error" role="alert">{{.Data.VerifyErr}}</div>{{else if .Data.Broken}}<div class="flash error" role="alert">The audit chain is broken at entry {{.Data.Broken}}: someone modified the sqsolve database.</div>{{else}}<p>{{template "badge" (dict "tone" "ok" "label" (printf "Chain intact: %d entries" .Data.Count))}}</p>{{end}}
-  <table class="table compact cards-on-mobile">
-    <thead><tr><th>Date</th><th>Who</th><th>Action</th><th>Target</th><th>Result</th></tr></thead>
-    <tbody>
+  <table role="table" class="table compact cards-on-mobile">
+    <thead role="rowgroup"><tr role="row"><th role="columnheader">Date</th><th role="columnheader">Who</th><th role="columnheader">Action</th><th role="columnheader">Target</th><th role="columnheader">Result</th></tr></thead>
+    <tbody role="rowgroup">
     {{range .Data.Audit}}
-      <tr><td data-label="Date">{{dt .TS}}</td><td data-label="Who">{{.Actor.Label}} <span class="muted small mono">{{.Actor.IP}}</span></td>
-      <td data-label="Action" class="mono small">{{.Action}}</td><td data-label="Target" class="mono small">{{.TargetType}} {{short .TargetID}}</td>
-      <td data-label="Result">{{template "badge" (dict "tone" (outcometone .Outcome) "label" (outcomelabel .Outcome))}}</td></tr>
-    {{else}}<tr><td colspan="5" class="muted">No entries.</td></tr>{{end}}
+      <tr role="row"><td role="cell" data-label="Date">{{dt .TS}}</td><td role="cell" data-label="Who">{{.Actor.Label}} <span class="muted small mono">{{.Actor.IP}}</span></td>
+      <td role="cell" data-label="Action" class="mono small">{{.Action}}</td><td role="cell" data-label="Target" class="mono small">{{.TargetType}} {{short .TargetID}}</td>
+      <td role="cell" data-label="Result">{{template "badge" (dict "tone" (outcometone .Outcome) "label" (outcomelabel .Outcome))}}</td></tr>
+    {{else}}<tr role="row"><td role="cell" colspan="5" class="muted">No entries.</td></tr>{{end}}
     </tbody>
   </table>
 </section>
@@ -25,14 +25,14 @@
   <button type="submit" class="ghost">Filter</button>
 </form>
 <section class="card flush">
-  <table class="table compact cards-on-mobile">
-    <thead><tr><th>Date</th><th>Severity</th><th>Message</th><th>Type</th></tr></thead>
-    <tbody>
+  <table role="table" class="table compact cards-on-mobile">
+    <thead role="rowgroup"><tr role="row"><th role="columnheader">Date</th><th role="columnheader">Severity</th><th role="columnheader">Message</th><th role="columnheader">Type</th></tr></thead>
+    <tbody role="rowgroup">
     {{range .Data.Events}}
-      <tr><td data-label="Date">{{dt .TS}}</td><td data-label="Severity">{{template "badge" (dict "tone" (sevtone .Severity) "label" (sev .Severity))}}</td>
-      <td data-label="Message">{{.Message}}{{if .JobID}} <a class="small" href="/jobs/{{.JobID}}">job</a>{{end}}{{if .LibraryID}} <a class="small" href="/libraries/{{.LibraryID}}">library</a>{{end}}</td>
-      <td data-label="Type" class="mono small muted">{{.Type}}</td></tr>
-    {{else}}<tr><td colspan="4" class="muted">No events.</td></tr>{{end}}
+      <tr role="row"><td role="cell" data-label="Date">{{dt .TS}}</td><td role="cell" data-label="Severity">{{template "badge" (dict "tone" (sevtone .Severity) "label" (sev .Severity))}}</td>
+      <td role="cell" data-label="Message">{{.Message}}{{if .JobID}} <a class="small" href="/jobs/{{.JobID}}">job</a>{{end}}{{if .LibraryID}} <a class="small" href="/libraries/{{.LibraryID}}">library</a>{{end}}</td>
+      <td role="cell" data-label="Type" class="mono small muted">{{.Type}}</td></tr>
+    {{else}}<tr role="row"><td role="cell" colspan="4" class="muted">No events.</td></tr>{{end}}
     </tbody>
   </table>
 </section>

@@ -5,6 +5,63 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+Fixes from the repository audit of 2026-10-21 (recovery, durability, secrets, audit log,
+authentication races, API framing, accessibility, assurance and documentation).
+
+- Recovery of the installation: the recovered database and master key are applied through a
+  journal (`app/recovery-journal.json`). The staged key must open the staged copy before anything
+  is touched (`SQS-C084`); the current database (with its `-wal` and `-shm` files) and key are set
+  aside as a pair, every move is checked and synced before the next, and a start cut at any point
+  finishes the recovery at the next start (`SQS-C086`) instead of leaving a database next to a
+  key it does not match. A staging that cannot be applied is set aside and sqsolve starts as it
+  was, so the setup page stays reachable (`SQS-C084`, `SQS-C089`); a file in the way stops it for
+  the operator (`SQS-C087`, `SQS-C088`, `docs/runbooks/recover-installation.md`). Staging writes
+  the copy through a `.partial` file and the key last; while a recovery is applied,
+  `sqsolve-init` generates no new master key and console commands refuse to open the
+  installation (`SQS-C090`).
+- Key and certificate pairs (panel and PostgreSQL TLS) survive a power cut: each `.partial`
+  file and each rename is synced before the next step, the recovery of an interrupted pair
+  removes its files in a safe order and reports what it cannot remove, and a new write of a pair
+  (a renewal, an upload) first finishes one that was interrupted. File modes are now set
+  before the content is synced. A model of what a power cut keeps checks every state.
+- Secrets: sqsolve no longer starts with a master key or `sqsolve_admin` password readable by
+  its group (only the PostgreSQL superuser password is shared, at 0440), the same rule
+  `sqsolve doctor` applies. `sqsolve-init` stops with `SQS-C085` when it cannot set the mode of
+  a secret, a TLS key or the folders that hold them; on the backups volume and the db volume root
+  it only warns.
+- Audit log (ADR 0026): the entry of a sensitive action is written with it or before it, and
+  without it the action is not done (`SQS-X040`, 503 in the API). Actions that run as a job write
+  an `accepted` entry with the job in one transaction and the job's result when it ends; changes
+  in PostgreSQL or in files (delete a backup, rotate or revoke a credential, network rules,
+  maintenance, end a session) write `accepted` before and `ok` or `failed` after; user, role,
+  password and token changes are one transaction with their entry; a password, a backup file,
+  the recovery kit, the diagnostics and exports are not served without their entry. The Activity
+  page shows `accepted` as a neutral badge.
+- Authentication: a TOTP code is accepted once even by two sessions at the same time, and a code
+  whose use cannot be recorded is refused; two administrators demoting or disabling each other
+  at the same time can no longer leave none (`SQS-A014`); concurrent setups with the installation
+  code create one administrator, and a failed one keeps the code. Two requests to revert or
+  recreate the same library queue one job.
+- API: a request body must be exactly one JSON object; an empty body or anything after the
+  object is refused with `SQS-C061` (an empty request to maintenance no longer means "off").
+- Interface: tables shown as cards on narrow screens keep their headers and table roles for
+  screen readers.
+- Tests and CI: fuzz targets for CIDRs, cron, retention, display names and encryption, run for
+  10 seconds in CI and 5 minutes every night (`make fuzz`, `fuzz.yml`); request contract tests
+  for the API; `docs/16` now says which test levels are gates and which are planned.
+- Documentation: the package map of `docs/21`, the status in the README and `AGENTS.md`, and the
+  API conventions that are not implemented yet (OpenAPI contract, `Idempotency-Key`, `ETag`).
+
+Upgrade: with the `1.2` tag, `docker compose pull` and `docker compose up -d` (TrueNAS: Update).
+One migration (`0007`, the audit column of jobs). API clients that sent an empty body to an
+endpoint that reads JSON must send `{}` or the fields it expects. If `sqsolve-init` now stops
+with `SQS-C085`, the volume refuses permission changes: on TrueNAS, use a dataset with the
+Generic preset for the app and db volumes.
+
+Rollback: image `1.2.0` with the SQLite copy `app/state-backups/sqsolve-before-0007-*.db`
+(`docs/runbooks/upgrade.md`); 1.2.0 refuses the migrated catalog (`SQS-X012`). Changes made since
+the upgrade are lost with the copy; "Rebuild the catalog" brings back the backups taken since.
+
 ## [1.2.0] 2026-10-21
 
 Fixes from the audit of 2026-10-20 (stability and long-term operation).

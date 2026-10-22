@@ -31,3 +31,4 @@ Format: context, decision, alternatives, consequences. Statuses: **Proposed**, *
 | [0023](0023-volume-identity.md) | Every volume carries a marker with the installation and its role; init refuses an empty or foreign db or app volume and never adopts an unmarked backups folder; backups problems do not stop init; sqsolve holds when the PostgreSQL cluster identifier changes | Accepted |
 | [0024](0024-maintenance-blocks-roles.md) | Maintenance sets the library roles `NOLOGIN` and leaves the database open to `sqsolve_admin`, so backups, restores and deletes go on in maintenance | Accepted |
 | [0025](0025-temporary-login-lockout.md) | The login lockout lasts 15 minutes, spares open sessions and API tokens, and password hashing runs in at most 4 slots | Accepted |
+| [0026](0026-audit-before-action.md) | The audit entry of a sensitive action is written with it (same SQLite transaction) or before it; without the entry the action is not done | Accepted |

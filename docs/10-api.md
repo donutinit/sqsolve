@@ -2,8 +2,9 @@
 
 ## 1. REST API conventions
 
-- Base: `https://<server>:9432/api/v1`. JSON UTF-8. Contract in `api/openapi.yaml`
-  (OpenAPI 3.1), which is written before the handlers and validated in tests (SQS-410).
+- Base: `https://<server>:9432/api/v1`. JSON UTF-8. The OpenAPI 3.1 contract
+  (`api/openapi.yaml`, validated in tests, SQS-410) is not written yet; until it is, this
+  document and the handler tests in `internal/api` are the reference.
 - Authentication: `Authorization: Bearer sqs_...` (tokens with scope `read`, `backup`,
   `restore`, `export` or `admin`) or a session cookie plus the `X-CSRF-Token` header (browser
   use). With a session cookie, an administrator who has no second factor while the
@@ -27,13 +28,22 @@
   The `type` domain is to be confirmed; meanwhile the relative path
   `/docs/errors/SQS-B012` is used.
 - Long operations: `202 Accepted` with `Location: /api/v1/jobs/{id}` and the job object.
-- Idempotency: `POST`s that create or launch accept `Idempotency-Key`; the same key within 24 h
-  returns the same response.
-- Optimistic concurrency: editable resources return `ETag`; `PATCH` requires `If-Match`.
+- Idempotency (planned, not implemented): `POST`s that create or launch would accept
+  `Idempotency-Key`, and the same key within 24 h would return the same response. Today a repeated
+  revert or recreate of the same library returns the job already queued.
+- Optimistic concurrency (planned, not implemented): editable resources would return `ETag` and
+  `PATCH` would require `If-Match`.
 - Cursor pagination: `?limit=50&cursor=...`, response with `next_cursor`.
 - Dates RFC 3339 in UTC. Sizes in bytes. Identifiers are ULIDs.
 - Dangerous operations require `"confirm": "<slug>"` in the body and, with a token, the scope
   `admin` or `restore`. There is no reauthentication (ADR 0021).
+- Request bodies hold exactly one JSON object: an empty body, unknown fields, or anything after
+  the object (a second value, stray text) are refused with `400` and `SQS-C061`, so an empty
+  request to `POST /libraries/{id}/maintenance` never means `"enabled": false`. Bodies are
+  limited to 1 MiB.
+- An action whose audit entry cannot be written is not done: `503` with `SQS-X040` (ADR 0026).
+  Actions that queue a job record it as `accepted` with the job's id, and the job's result when
+  it ends.
 
 ## 2. Resources
 

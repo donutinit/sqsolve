@@ -186,3 +186,42 @@ func TestRemovePartials(t *testing.T) {
 		t.Fatalf("a missing folder is not an error: %d %v", n, err)
 	}
 }
+
+// A second WritePair after one that stopped between its renames (a
+// renewal the next day, a new upload) first finishes the old pair: before,
+// a failure in the second write discarded the pending half of the first and
+// left its new key next to the old certificate.
+func TestWritePairAfterAnInterruptedOne(t *testing.T) {
+	defer func() { failpoint = nil }()
+	dir := t.TempDir()
+	key, crt := filepath.Join(dir, "k"), filepath.Join(dir, "c")
+	if err := WritePair(key, []byte("k1"), 0o600, crt, []byte("c1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	failpoint = func(s string) error {
+		if s == "pair-second" {
+			return errors.New("crash")
+		}
+		return nil
+	}
+	WritePair(key, []byte("k2"), 0o600, crt, []byte("c2"), 0o644)
+	writes := 0
+	failpoint = func(s string) error {
+		if s == "write" {
+			if writes++; writes == 2 {
+				return errors.New("disk full")
+			}
+		}
+		return nil
+	}
+	if err := WritePair(key, []byte("k3"), 0o600, crt, []byte("c3"), 0o644); err == nil {
+		t.Fatal("expected the simulated failure")
+	}
+	failpoint = nil
+	if _, err := RecoverPair(key, crt); err != nil {
+		t.Fatal(err)
+	}
+	if got := readPair(t, key, crt); got != "k2+c2" {
+		t.Fatalf("the pair is %s", got)
+	}
+}

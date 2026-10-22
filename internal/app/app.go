@@ -5,6 +5,7 @@ package app
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
@@ -84,6 +85,11 @@ func ReadMasterKey(c *config.Config) ([]byte, error) {
 
 // Open builds the application without starting background work.
 func Open(ctx context.Context, c *config.Config, log *slog.Logger) (*App, error) {
+	// A recovery in the middle of its moves may have no database in place:
+	// opening would create an empty one where the recovery puts its own.
+	if _, err := os.Lstat(recoveryJournalPath(c)); err == nil {
+		return nil, fmt.Errorf("SQS-C090 a recovery of the installation is being applied (%s): start the sqsolve service so it finishes, then run this again", recoveryJournalPath(c))
+	}
 	a := &App{Cfg: c, Log: log, Started: time.Now()}
 	idb, err := os.ReadFile(instanceIDPath(c))
 	if err != nil {
@@ -101,7 +107,7 @@ func Open(ctx context.Context, c *config.Config, log *slog.Logger) (*App, error)
 	if err != nil {
 		return nil, fmt.Errorf("SQS-C013 sqsolve_admin password: %w", err)
 	}
-	superPass, err := secrets.ReadFile(c.SuperuserPasswordFile())
+	superPass, err := secrets.ReadGroupFile(c.SuperuserPasswordFile())
 	if err != nil {
 		return nil, fmt.Errorf("SQS-C014 superuser password: %w", err)
 	}
@@ -182,6 +188,24 @@ func (a *App) ClearInstallCode() {
 	a.installMu.Lock()
 	a.installCode = ""
 	a.installMu.Unlock()
+}
+
+// UseInstallCode runs use only when code is the setup code, holding the code
+// meanwhile so concurrent setups run one at a time, and spends the code when
+// use succeeds. A failed use keeps it for the next try. It reports whether
+// the code matched.
+func (a *App) UseInstallCode(code string, use func() error) (bool, error) {
+	a.installMu.Lock()
+	defer a.installMu.Unlock()
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if a.installCode == "" || subtle.ConstantTimeCompare([]byte(code), []byte(a.installCode)) != 1 {
+		return false, nil
+	}
+	if err := use(); err != nil {
+		return true, err
+	}
+	a.installCode = ""
+	return true, nil
 }
 
 // Certificate returns the current panel certificate.

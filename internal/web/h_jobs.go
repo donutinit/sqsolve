@@ -206,11 +206,10 @@ func (s *Server) jobRetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principalOf(r)
-	nj, err := s.A.Jobs.Retry(r.Context(), j.ID, p.Actor())
+	nj, err := s.A.Jobs.Retry(r.Context(), j.ID, p.Actor(), jobs.Audited("job.retry", "job", j.ID, map[string]any{"type": j.Type}))
 	if err != nil {
 		s.fail(w, r, "/jobs/"+j.ID, err)
 		return
 	}
-	s.A.Audit.Record(r.Context(), p.Actor(), "job.retry", "job", j.ID, audit.OK, map[string]any{"type": j.Type, "new_job_id": nj.ID})
 	s.ok(w, r, "/jobs/"+nj.ID, "Job queued again.")
 }

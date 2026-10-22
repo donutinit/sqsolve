@@ -198,7 +198,10 @@ Recovering on a new server:
 1. Install with the reference YAML pointing `backups` at the copy of the backups.
 2. In the wizard choose "Recover existing installation" and paste the kit's master key.
 3. sqsolve restores the control plane from `_system/` (users, policies, encrypted credentials)
-   or, if there is none, rebuilds the catalog from the manifests.
+   or, if there is none, rebuilds the catalog from the manifests. The restored database and key
+   are staged and applied at the next start through a journal, so a power cut in the middle is
+   finished by the following start, and the replaced database and key are kept aside as a pair
+   (`docs/runbooks/recover-installation.md`).
 4. "Restore all" creates each library from its most recent verified backup with the same slug
    and the original passwords (if the master key is available; otherwise it generates new ones).
 5. Workstations reconnect with the new IP if it changed.

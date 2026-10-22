@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/donutinit/sqsolve/internal/app"
+	"github.com/donutinit/sqsolve/internal/audit"
 	"github.com/donutinit/sqsolve/internal/auth"
 	"github.com/donutinit/sqsolve/internal/core"
 	"github.com/donutinit/sqsolve/internal/events"
@@ -193,7 +194,7 @@ func (s *Server) settingsCert(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "/settings", err)
 		return
 	}
-	s.A.Audit.Record(r.Context(), principalOf(r).Actor(), "settings.certificate", "system", "", "ok", nil)
+	s.A.Audit.Record(r.Context(), principalOf(r).Actor(), "settings.certificate", "system", "", audit.OK, nil)
 	s.ok(w, r, "/settings", "Certificate installed. It is already in use.")
 }
 
@@ -299,21 +300,26 @@ func (s *Server) maintenanceAction(w http.ResponseWriter, r *http.Request) {
 	back := "/settings?tab=maintenance"
 	var j *jobs.Job
 	var err error
-	switch r.PathValue("action") {
+	action := r.PathValue("action")
+	// The entry of a job is written with the job (jobs.Audited).
+	enqueue := func(typ string) (*jobs.Job, error) {
+		return s.A.Jobs.Enqueue(ctx, typ, "", nil, p.Actor(), jobs.Audited("maintenance."+action, "system", "", nil))
+	}
+	switch action {
 	case "catalog":
-		j, err = s.A.Jobs.Enqueue(ctx, core.JobCatalogRebuild, "", nil, p.Actor())
+		j, err = enqueue(core.JobCatalogRebuild)
 	case "check":
-		j, err = s.A.Jobs.Enqueue(ctx, core.JobCatalogCheck, "", nil, p.Actor())
+		j, err = enqueue(core.JobCatalogCheck)
 	case "verify":
-		j, err = s.A.Jobs.Enqueue(ctx, core.JobVerifyAll, "", nil, p.Actor())
+		j, err = enqueue(core.JobVerifyAll)
 	case "retention":
-		j, err = s.A.Jobs.Enqueue(ctx, core.JobRetention, "", nil, p.Actor())
+		j, err = enqueue(core.JobRetention)
 	case "optimize":
-		j, err = s.A.Jobs.Enqueue(ctx, core.JobVacuum, "", nil, p.Actor())
+		j, err = enqueue(core.JobVacuum)
 	case "control":
-		j, err = s.A.Jobs.Enqueue(ctx, core.JobControlBackup, "", nil, p.Actor())
+		j, err = enqueue(core.JobControlBackup)
 	case "hba":
-		err = s.A.Svc.SyncHBA(ctx)
+		err = s.A.Audit.Do(ctx, p.Actor(), "maintenance.hba", "system", "", nil, func() error { return s.A.Svc.SyncHBA(ctx) })
 		if err == nil {
 			s.ok(w, r, back, "pg_hba.conf regenerated and PostgreSQL reloaded.")
 			return
@@ -327,7 +333,6 @@ func (s *Server) maintenanceAction(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, back, err)
 		return
 	}
-	s.A.Audit.Record(ctx, p.Actor(), "maintenance."+r.PathValue("action"), "system", "", "ok", nil)
 	s.ok(w, r, "/jobs/"+j.ID, "")
 }
 
@@ -337,7 +342,10 @@ func (s *Server) recoveryKit(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "/settings?tab=maintenance", err)
 		return
 	}
-	s.A.Audit.Record(r.Context(), principalOf(r).Actor(), "settings.recovery_kit", "system", "", "ok", nil)
+	if err := s.A.Audit.Require(r.Context(), principalOf(r).Actor(), "settings.recovery_kit", "system", "", audit.OK, nil); err != nil {
+		s.fail(w, r, "/settings?tab=maintenance", err)
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="sqsolve-recovery-`+strings.ToLower(s.A.InstanceID[len(s.A.InstanceID)-6:])+`.txt"`)
 	w.Header().Set("Cache-Control", "no-store")
@@ -346,7 +354,10 @@ func (s *Server) recoveryKit(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	s.A.Audit.Record(ctx, principalOf(r).Actor(), "diagnostics.download", "system", "", "ok", nil)
+	if err := s.A.Audit.Require(ctx, principalOf(r).Actor(), "diagnostics.download", "system", "", audit.OK, nil); err != nil {
+		s.fail(w, r, "/settings?tab=maintenance", err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="sqsolve-diag-`+time.Now().UTC().Format("20060102T150405Z")+`.zip"`)
 	z := zip.NewWriter(w)
