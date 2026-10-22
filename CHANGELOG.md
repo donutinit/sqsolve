@@ -5,6 +5,8 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+## [1.2.1] 2026-10-22
+
 Fixes from the repository audit of 2026-10-21 (recovery, durability, secrets, audit log,
 authentication races, API framing, accessibility, assurance and documentation).
 
