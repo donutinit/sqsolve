@@ -30,15 +30,15 @@ jobs:
             on { print }
           ' CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then echo "No notes in CHANGELOG.md for $v" > notes.md; fi
-          # The asset pins the image of its own release (X.Y.Z), not the moving X.Y tag of the
+          # The asset pins the image of its own release (X.Y.Z), not the moving X tag of the
           # reference file in the repository, so a file downloaded later installs this version.
           sed -E "s#\"ghcr\.io/donutinit/sqsolve:[0-9][0-9.]*\"#\"ghcr.io/donutinit/sqsolve:$v\"#" \
             deploy/compose.yaml > "sqsolve-$v-compose.yaml"
           if [ "$(grep -c "\"ghcr.io/donutinit/sqsolve:$v\"" "sqsolve-$v-compose.yaml")" != 1 ]; then
             echo "The compose asset does not pin ghcr.io/donutinit/sqsolve:$v exactly once"; exit 1
           fi
-          if grep -Eq 'ghcr\.io/donutinit/sqsolve:[0-9]+\.[0-9]+"' "sqsolve-$v-compose.yaml"; then
-            echo "The compose asset still has a moving X.Y tag"; exit 1
+          if grep -Eq 'ghcr\.io/donutinit/sqsolve:[0-9]+(\.[0-9]+)?"' "sqsolve-$v-compose.yaml"; then
+            echo "The compose asset still has a moving X or X.Y tag"; exit 1
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3

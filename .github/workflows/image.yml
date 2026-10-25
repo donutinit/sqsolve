@@ -44,9 +44,12 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/${{ github.repository }}
+          # X is the tag of the reference compose (ADR 0027): every X.Y.Z release moves it, so
+          # TrueNAS offers it as "Update available". A prerelease moves neither X nor X.Y.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
             type=edge,branch=main
             type=sha,format=short
       - name: Version

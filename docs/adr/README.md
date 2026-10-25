@@ -32,3 +32,4 @@ Format: context, decision, alternatives, consequences. Statuses: **Proposed**, *
 | [0024](0024-maintenance-blocks-roles.md) | Maintenance sets the library roles `NOLOGIN` and leaves the database open to `sqsolve_admin`, so backups, restores and deletes go on in maintenance | Accepted |
 | [0025](0025-temporary-login-lockout.md) | The login lockout lasts 15 minutes, spares open sessions and API tokens, and password hashing runs in at most 4 slots | Accepted |
 | [0026](0026-audit-before-action.md) | The audit entry of a sensitive action is written with it (same SQLite transaction) or before it; without the entry the action is not done | Accepted |
+| [0027](0027-major-version-image-tag.md) | The reference compose uses the major version image tag (`1`), so TrueNAS offers every 1.x release as an update; 2.0 never arrives through it | Accepted |

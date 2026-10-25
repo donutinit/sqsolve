@@ -37,18 +37,36 @@ stopping PostgreSQL.
 The current file is [`deploy/compose.yaml`](../deploy/compose.yaml) and CI brings it up on every
 change (`smoke` job). Services:
 
-- `sqsolve-init`: as root and without network, prepares volumes, secrets, `postgresql.conf`, the
-  initial `pg_hba.conf` and the PostgreSQL TLS certificate. It runs on every `up` and is
-  idempotent.
+- `sqsolve-init`: as root, without network, with a read-only root file system and only the
+  capabilities `CHOWN`, `DAC_OVERRIDE`, `FOWNER` and `FSETID`, prepares volumes, secrets,
+  `postgresql.conf`, the initial `pg_hba.conf` and the PostgreSQL TLS certificate. It runs on
+  every `up` and is idempotent.
 - `postgres`: official image pinned by digest, started with
   `postgres -c config_file=/var/lib/postgresql/sqsolve/postgresql.conf` and with the image's
-  user 999 (`user: "999:999"`); it never runs as root, just like in TrueNAS apps.
+  user 999 (`user: "999:999"`) and no capabilities; it never runs as root, just like in TrueNAS
+  apps.
 - `sqsolve`: unprivileged user, read-only file system, no capabilities; publishes 9432. It
   starts even if PostgreSQL is not ready, so it can be diagnosed.
 
-To install, change the three paths, `TZ` and, if needed, the IP where 5432 is published.
+To install, change the three paths (the `x-volumes` block, where each is written once), `TZ`
+and, if needed, the IP where 5432 is published.
 
 Decisions of the reference file that are not obvious:
+
+- **The image tag is the major version (`1`).** Every `1.x.y` release moves it, so TrueNAS
+  shows "Update available" for each release and `docker compose pull` gets it elsewhere; 2.0, a
+  PostgreSQL major migration, never arrives through it (ADR 0027).
+- **`sqsolve-init` keeps four capabilities.** The same three as the permissions container of
+  TrueNAS apps (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`) plus `FSETID`: init sets the setgid bit of
+  `sqsolve/`, whose group is PostgreSQL's and not root's, so files created in it keep that
+  group. Without `FSETID` the kernel clears the bit without an error. Its health check is off:
+  the image's one asks the panel, which does not run in that container.
+- **The PostgreSQL health check calls the binary** `/usr/lib/postgresql/18/bin/pg_isready`. The
+  `pg_isready` on `PATH` is Debian's Perl wrapper, which would start every 10 seconds. The path
+  changes with the major version, together with the rest of the file (ADR 0017).
+- **Keys for TrueNAS.** `x-portals` gives the app a "Web UI" button to the panel on the NAS
+  address and `x-notes` the notes on its page; the TrueNAS middleware reads both from the file
+  (checked in the 25.10 source) and other platforms ignore `x-` keys.
 
 - **Logs rotate.** Every service uses the `json-file` driver with `max-size: 10m` and
   `max-file: 5` (the `x-logging` block), so a service never keeps more than about 50 MB of
@@ -140,7 +158,7 @@ and keeps the old files next to them as `.replaced-<time>` (`SQS-C083` in the lo
 | Platform | Notes |
 |---|---|
 | Generic Linux | `docker compose up -d` in the folder of `compose.yaml` |
-| TrueNAS | Install via YAML with the same file; change `/path/to/backups` to the path of a dataset (`/mnt/<pool>/...`) and, if desired, map the other volumes to datasets. TrueNAS uses ports 80 and 443 for its interface, not 9432 or 5432 |
+| TrueNAS | Install via YAML with the same file; point the three paths of `x-volumes` to datasets (`/mnt/<pool>/...`, Generic preset), backups on another pool. Once a day TrueNAS compares the digest of each image tag with the registry and shows "Update available" when it moved; Update runs `docker compose pull` and recreates the app, `sqsolve-init` included. It stores the YAML as data: a later edit shows it without comments, with the anchors expanded and the keys sorted, so the sqsolve image appears three times. TrueNAS uses ports 80 and 443 for its interface, not 9432 or 5432 |
 | Portainer | Stack with the YAML |
 | Unraid | Compose Manager plugin with the YAML |
 | Synology | Publish 5432 on the LAN IP because DSM occupies 5432 on localhost [01 §13] |
@@ -159,7 +177,8 @@ and keeps the old files next to them as `.replaced-<time>` (`SQS-C083` in the lo
 
 ### 8.1 sqsolve
 
-1. Change the image tag (or `docker compose pull` if a minor version tag such as `1.2` is used).
+1. `docker compose pull` with the reference tag `1`, which every 1.x release moves (TrueNAS:
+   the Update button). With an exact version (`1.2.1`), change the tag first.
 2. `docker compose up -d`.
 3. On startup: SQLite `VACUUM INTO` copy in `app/state-backups/`
    (`sqsolve-before-<migration>-<time>.db`; one per pending migration, so a migration that fails

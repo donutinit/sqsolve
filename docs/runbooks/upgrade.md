@@ -1,7 +1,9 @@
 # Runbook: upgrade sqsolve
 
-When: a new version is released. With the compose `1.2` tag, the fixes of the series arrive on
-their own; to change series (for example from `1.1` to `1.2`) edit the `x-sqsolve` line.
+When: a new version is released. With the compose `1` tag, every 1.x release arrives on its own
+(TrueNAS: "Update available"). An installation still on a series tag (`1.1`, `1.2`) moves to
+`1` once by editing the `x-sqsolve` line; on TrueNAS the image appears three times in the stored
+YAML and all three change (user guide, "Updating").
 
 1. Confirm in the panel that each library has a recent verified backup (protection line in green)
    or run "Back up now". Expected: no amber.

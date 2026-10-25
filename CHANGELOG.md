@@ -5,6 +5,18 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+- Reference compose, tuned for TrueNAS: the image tag is `1`, which every 1.x release moves, so
+  TrueNAS offers "Update available" for every release, minor versions included; the image
+  workflow publishes that tag (ADR 0027). `x-portals` and `x-notes` give the TrueNAS app a "Web
+  UI" button to the panel and a notes card. The three host paths are written once (`x-volumes`)
+  and `TZ` once. `sqsolve-init` runs with a read-only root file system and only the capabilities
+  `CHOWN`, `DAC_OVERRIDE`, `FOWNER` and `FSETID`, without the image's health check; `postgres`
+  runs without capabilities and its health check calls `pg_isready` itself instead of the Perl
+  wrapper.
+
+Upgrade: change the image tag to `1` once (user guide, "Updating"); on TrueNAS it appears three
+times in the stored YAML. Pasting the new file instead needs your paths, `TZ` and user again.
+
 ## [1.2.1] 2026-10-22
 
 Fixes from the repository audit of 2026-10-21 (recovery, durability, secrets, audit log,

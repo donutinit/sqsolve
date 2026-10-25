@@ -76,18 +76,19 @@ Implemented today (2026-10-22) in `.github/workflows`:
     without losing data, and repeated `sqsolve-init`).
 - `image.yml`: on every push to `main`, on `v*` tags and by hand. Its first job (`ci`) runs the
   whole `ci.yml`; `publish` needs it, so no image reaches the registry (`edge`, `X.Y.Z`, `X.Y`,
-  `latest`) unless the same checks that gate a pull request pass on that commit. `publish` builds
-  the amd64 and arm64 image at `ghcr.io/donutinit/sqsolve` with buildx provenance and SBOM, tags
-  `edge` (main), `X.Y.Z`, `X.Y` and `latest` (releases) and `sha-<commit>`, and signs the digest
-  with cosign on `v*` tags (the signing identity is the `publish` job of `image.yml`, so the
-  `cosign verify` identity regexp in section 6 stays valid). The reference compose uses `X.Y` so
-  that every fix arrives as "Update available" in TrueNAS. On a push to `main` CI therefore runs
+  `X`, `latest`) unless the same checks that gate a pull request pass on that commit. `publish`
+  builds the amd64 and arm64 image at `ghcr.io/donutinit/sqsolve` with buildx provenance and
+  SBOM, tags `edge` (main), `X.Y.Z`, `X.Y`, `X` and `latest` (releases; a prerelease moves
+  neither `X.Y` nor `X`) and `sha-<commit>`, and signs the digest with cosign on `v*` tags (the signing
+  identity is the `publish` job of `image.yml`, so the `cosign verify` identity regexp in
+  section 6 stays valid). The reference compose uses `X` so that every release of the major
+  version arrives as "Update available" in TrueNAS (ADR 0027). On a push to `main` CI therefore runs
   twice, once as `ci.yml` (it feeds the badge in the README) and once inside `image.yml` (it
   gates publication). Its last job, `release`, runs only for `v*` tags and only after `publish`
   succeeded (`needs: publish`); it is the only job with `contents: write`.
 - `release.yml` (reusable, `workflow_call` only; `image.yml` calls it): publishes the GitHub
   release with the notes from `CHANGELOG.md` and the compose file of that version, with the image
-  pinned to the exact `X.Y.Z` (the file in the repository uses the moving `X.Y`). Because it runs
+  pinned to the exact `X.Y.Z` (the file in the repository uses the moving `X`). Because it runs
   after the image is pushed and signed, a public release never pins an image that does not exist;
   if CI or the image job fails there is no release, and the tag can be deleted and made again.
 - `dependabot.yml`: weekly pull requests, each waiting 7 days after publication of the new

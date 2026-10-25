@@ -5,45 +5,92 @@
 # Compose (TrueNAS: Apps > Discover > Custom App > Install via YAML; Portainer; Unraid).
 #
 # Before installing, change only this:
-#   1. The three "Volumes" paths (below). Backups ideally on another disk.
+#   1. The three paths in "x-volumes" (below). On TrueNAS use one dataset per folder with the
+#      Generic preset, for example /mnt/tank/sqsolve/db, and backups on another pool.
 #   2. TZ, your time zone.
-#   3. If port 5432 is already in use on the host (Synology), publish it on the LAN IP:
-#      "192.168.1.10:5432:5432".
+#   3. If port 5432 is already in use on the host (Synology, or another PostgreSQL app on
+#      TrueNAS), publish it on the LAN IP: "192.168.1.10:5432:5432".
 #
-# The installation code appears in the sqsolve container log.
+# The installation code appears in the log of the sqsolve container (TrueNAS: the app's
+# Workloads card, sqsolve container, logs).
+#
+# TrueNAS stores this file as data: when the app is edited later the comments are gone, every
+# anchor (&name, *name) appears expanded and the keys are in alphabetical order.
 
 name: sqsolve
 
-# "1.2" receives every fix of the 1.2 series (TrueNAS shows "Update available"); a new minor
-# version (1.3) needs this line changed. To pin an exact version, use for example "1.2.0".
-x-sqsolve: &sqsolve-image "ghcr.io/donutinit/sqsolve:1.2"
+# "1" receives every 1.x release: TrueNAS shows "Update available" for each one (it checks the
+# registry once a day) and "docker compose pull" gets it elsewhere. sqsolve 2.0 (a new
+# PostgreSQL major version, ADR 0017) never arrives through this tag. To pin an exact version,
+# use for example "1.2.1".
+x-sqsolve: &sqsolve-image "ghcr.io/donutinit/sqsolve:1"
+
+# Volumes: the three folders on the host. Change only the part before the colon; each line is
+# used by several services below.
+x-volumes:
+  - &db-volume "/path/to/sqsolve/db:/var/lib/postgresql"     # database (SSD)
+  - &app-volume "/path/to/sqsolve/app:/var/lib/sqsolve"      # application (SSD)
+  - &backups-volume "/path/to/sqsolve-backups:/backups"      # backups (another disk)
 
 x-env: &env
-  TZ: "America/Mexico_City"
+  TZ: &tz "America/Mexico_City"
+  # Owner of the sqsolve volumes: must match the "user:" line of the sqsolve service.
   SQSOLVE_UID: "1000"
   SQSOLVE_GID: "1000"
 
 # Container logs rotate: at most 5 files of 10 MB per service. Without a limit Docker keeps
-# them forever and a busy server slowly fills the disk of the container runtime.
+# them forever (TrueNAS sets none) and a busy server slowly fills the disk of the runtime.
 x-logging: &logging
   driver: json-file
   options:
     max-size: "10m"
     max-file: "5"
 
+# Read by TrueNAS, ignored elsewhere: a "Web UI" button that opens the panel on the address
+# of the NAS, and the notes on the app's page.
+x-portals:
+  - name: Web UI
+    scheme: https
+    host: 0.0.0.0
+    port: 9432
+    path: /
+x-notes: |
+  # sqsolve
+
+  - Panel: the Web UI button (HTTPS, port 9432). Its certificate is self-signed, so the
+    browser warns once.
+  - Installation code: in the log of the sqsolve container (Workloads card).
+  - Resolve workstations connect to port 5432 of this NAS. Never publish 5432 or 9432 to the
+    Internet.
+  - Updates: with the tag "1" in the image, every 1.x release shows "Update available" within
+    a day. Read its release notes and check in the panel that every library has a recent
+    verified backup before pressing Update.
+  - User guide: https://github.com/donutinit/sqsolve/blob/main/docs/manual/user-guide.md
+
 services:
-  # Prepares volumes, secrets and the PostgreSQL configuration. Runs once per start.
+  # Prepares volumes, secrets and the PostgreSQL configuration, then exits. Runs on every
+  # "docker compose up" (on TrueNAS: install, Start, Update and every edit). Root without
+  # network and with only the capabilities that change owners and modes, like the permissions
+  # container of TrueNAS apps; FSETID keeps the setgid bit of the PostgreSQL configuration
+  # folder.
   sqsolve-init:
     image: *sqsolve-image
     command: ["init"]
     user: "0:0"
     network_mode: none
     environment: *env
-    logging: *logging
     volumes:
-      - /path/to/sqsolve/db:/var/lib/postgresql          # Volumes: database (SSD)
-      - /path/to/sqsolve/app:/var/lib/sqsolve            # Volumes: application (SSD)
-      - /path/to/sqsolve-backups:/backups              # Volumes: backups (other disk)
+      - *db-volume
+      - *app-volume
+      - *backups-volume
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, FSETID]
+    security_opt: ["no-new-privileges:true"]
+    # The image's health check asks the panel, which does not run here.
+    healthcheck:
+      disable: true
+    logging: *logging
     restart: "no"
 
   postgres:
@@ -56,25 +103,27 @@ services:
     user: "999:999"
     command: ["postgres", "-c", "config_file=/var/lib/postgresql/sqsolve/postgresql.conf"]
     environment:
-      TZ: "America/Mexico_City"
+      TZ: *tz
       POSTGRES_PASSWORD_FILE: /var/lib/postgresql/sqsolve/superuser_password
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8"
     volumes:
-      - /path/to/sqsolve/db:/var/lib/postgresql
+      - *db-volume
       - sqsolve-run:/var/run/postgresql
     ports:
       - "5432:5432"
     shm_size: 256mb
-    logging: *logging
     depends_on:
       sqsolve-init:
         condition: service_completed_successfully
+    # The binary itself: the pg_isready on PATH is a Perl wrapper, started every 10 seconds.
     healthcheck:
-      test: ["CMD", "pg_isready", "-h", "/var/run/postgresql"]
+      test: ["CMD", "/usr/lib/postgresql/18/bin/pg_isready", "-q", "-h", "/var/run/postgresql"]
       interval: 10s
       timeout: 5s
       retries: 6
+    cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    logging: *logging
     stop_grace_period: 60s
     restart: unless-stopped
 
@@ -86,12 +135,13 @@ services:
       <<: *env
       SQSOLVE_LISTEN: ":9432"
     volumes:
-      - /path/to/sqsolve/db:/var/lib/postgresql
-      - /path/to/sqsolve/app:/var/lib/sqsolve
-      - /path/to/sqsolve-backups:/backups
+      - *db-volume
+      - *app-volume
+      - *backups-volume
       - sqsolve-run:/var/run/postgresql
     ports:
       - "9432:9432"
+    # Starts even if PostgreSQL is not ready, so the panel can show why.
     depends_on:
       sqsolve-init:
         condition: service_completed_successfully
@@ -103,12 +153,12 @@ services:
     # A minimal init process as PID 1 reaps orphaned child processes (pg_dump, pg_restore)
     # and passes the stop signal on to sqsolve.
     init: true
-    logging: *logging
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    logging: *logging
     stop_grace_period: 120s
     restart: unless-stopped
 
 volumes:
-  # Only the PostgreSQL socket; it stores no data.
+  # Only the PostgreSQL socket; it stores no data (on TrueNAS it lives in the apps dataset).
   sqsolve-run:
