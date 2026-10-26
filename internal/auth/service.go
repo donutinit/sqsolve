@@ -260,17 +260,17 @@ func (s *Service) SetPassword(ctx context.Context, by audit.Actor, userID, passw
 	if err != nil {
 		return err
 	}
-	err = s.db.Tx(ctx, func(tx *sql.Tx) error {
+	// The other sessions end in the same transaction: a new password never
+	// lands while a session opened with the old one stays (PLAN 1.2.1).
+	return s.db.Tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE admin_users SET password_hash = ?, password_changed_at = ?, failed_logins = 0, locked_at = NULL WHERE id = ?`, hash, store.NowT(), userID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND id_hash <> ?`, userID, keepSession); err != nil {
 			return err
 		}
 		return s.audit.RecordTx(ctx, tx, by, "user.password", "user", userID, audit.OK, map[string]any{"username": u.Username})
 	})
-	if err != nil {
-		return err
-	}
-	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND id_hash <> ?`, userID, keepSession)
-	return nil
 }
 
 // hookAdminGuard, when set, runs between the last-administrator check and

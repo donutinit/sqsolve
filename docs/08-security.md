@@ -85,7 +85,8 @@ services (optional egress), containers and host (volumes).
 - API tokens: `sqs_` prefix, 32 random bytes, shown only once, stored as SHA-256. Scopes:
   `read`, `backup`, `restore`, `export`, `admin`. Maximum expiry 365 days.
 - Changing a password (one's own in Account, or another user's in Settings, Users) clears a
-  lock and closes that user's other sessions. API tokens are separate credentials, each revoked
+  lock and closes that user's other sessions, in one SQLite transaction with the new password and
+  its audit entry: if the sessions cannot be closed, the password does not change. API tokens are separate credentials, each revoked
   on its own in Account or by an administrator, and keep working: after a leak, revoke them
   too. Disabling a user closes every session and revokes every token. At least one active
   administrator always remains (`SQS-A014`): the check and the change are one immediate SQLite

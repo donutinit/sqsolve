@@ -45,6 +45,8 @@ from here (`.github/workflows/release.yml`).
   rebuild the access. When either fails after its irreversible step (`SQS-L047`, `SQS-R060`), the
   job fails and stays pending reconciliation, and the next start finishes the purge or adopts the
   restored database; backups are always kept.
+- Changing a password closes the user's other sessions in the same transaction as the new
+  password and its audit entry: if they cannot be closed, the password does not change.
 
 Upgrade: change the image tag to `1` once (user guide, "Updating"); on TrueNAS it appears three
 times in the stored YAML. Pasting the new file instead needs your paths, `TZ` and user again.

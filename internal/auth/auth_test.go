@@ -514,3 +514,44 @@ func TestSecondFactorLoginSurvivesAnAuditOutage(t *testing.T) {
 		t.Fatalf("a valid code failed because of the audit log: %v", err)
 	}
 }
+
+// PLAN 1.2.1: the other sessions end in the same transaction as the new
+// password: when they cannot be deleted, neither the password nor its audit
+// entry is written, and the sessions stay.
+func TestPasswordChangeEndsOtherSessionsInItsTransaction(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t)
+	u, err := s.CreateUser(ctx, audit.System, "ana", "", "reference monitor 709", RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, mine, _, _ := s.Login(ctx, "ana", "reference monitor 709", "1.1.1.1", "")
+	other, _, _, _ := s.Login(ctx, "ana", "reference monitor 709", "1.1.1.2", "")
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER fault BEFORE DELETE ON sessions BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPassword(ctx, audit.System, u.ID, "tungsten light 3200K", mine.SessionID); err == nil || !strings.Contains(err.Error(), "disk I/O error") {
+		t.Fatalf("want the session error, got %v", err)
+	}
+	if _, _, _, err := s.Login(ctx, "ana", "reference monitor 709", "1.1.1.3", ""); err != nil {
+		t.Fatalf("the new password was kept: %v", err)
+	}
+	entries, _ := s.audit.List(ctx, 0, 50, u.ID)
+	for _, e := range entries {
+		if e.Action == "user.password" {
+			t.Fatalf("the audit entry was kept: %+v", e)
+		}
+	}
+	if _, err := s.Session(ctx, other, "1.1.1.2", false); err != nil {
+		t.Fatalf("the other session ended: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DROP TRIGGER fault`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPassword(ctx, audit.System, u.ID, "tungsten light 3200K", mine.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Session(ctx, other, "1.1.1.2", false); err == nil {
+		t.Fatal("the other session survived the new password")
+	}
+}
