@@ -57,6 +57,12 @@ from here (`.github/workflows/release.yml`).
   of silently getting the job of the first request. Backups keep "the first request wins".
 - The identifier suggested for a name that does not start with a letter now starts with
   `library_` (it was the Spanish `biblioteca_`), as the panel already suggested while typing.
+- Panel: notices are one block of text next to their shape again, so a long list (for
+  example the open connections on the restore page) wraps inside the card instead of turning
+  each address into a column that overflows it. Every control takes taps on at least 44 x 44 px
+  at every width: buttons, small buttons, "Sign out", the account link and the badges of the
+  top bar keep their look with an invisible area around them; sidebar links, tabs and fields
+  are 44 px tall. On a phone the top bar no longer grows on short pages.
 - Documentation: the restore and delete screens and the mobile navigation in `docs/09` now say
   what the panel does (no reauthentication, ADR 0021; a top bar with a row of sections, no
   dropdown and no bottom actions).

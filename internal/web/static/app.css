@@ -93,8 +93,8 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 /* Shell: sidebar of sections plus content. */
 .shell { display: grid; grid-template-columns: 216px minmax(0, 1fr); min-height: 100vh; }
 .nav { background: var(--sunken); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 18px 12px; position: sticky; top: 0; height: 100vh; }
-.nav nav { display: flex; flex-direction: column; gap: 2px; margin-top: 22px; }
-.nav nav a { color: var(--muted); padding: 7px 10px; border-radius: var(--radius); display: flex; align-items: center; justify-content: space-between; text-decoration: none; min-height: 34px; }
+.nav nav { display: flex; flex-direction: column; gap: 0; margin-top: 22px; }
+.nav nav a { color: var(--muted); padding: 7px 10px; border-radius: var(--radius); display: flex; align-items: center; justify-content: space-between; text-decoration: none; min-height: 44px; }
 .nav nav a:hover { color: var(--text); }
 .nav nav a[aria-current="page"] { color: var(--text); font-weight: 600; }
 .nav .count { background: var(--run); color: var(--on-run); border-radius: 10px; font-size: 0.78rem; padding: 0 7px; font-weight: 600; }
@@ -176,6 +176,15 @@ button.warn, .button.warn { background: transparent; border-color: var(--warn); 
 button.small, .button.small { padding: 3px 10px; font-size: 0.86rem; min-height: 30px; }
 button.link { background: none; border: 0; color: var(--muted); padding: 0; min-height: 0; font-weight: 400; text-decoration: underline; text-underline-offset: 2px; }
 button[disabled] { opacity: 0.4; cursor: not-allowed; }
+/* Targets (WCAG 2.5.5, docs 09 §6): every control takes taps on at least 44 x 44 px at every
+   width. Controls drawn smaller (buttons, small buttons, Sign out, the account link, the badges
+   of the top bar, "more" toggles) keep their look and get an invisible area around them; links
+   of the sidebar, tabs and fields are 44 px tall themselves. Not used inside containers that
+   scroll sideways, where the area would add a scroll bar. */
+button, .button, .who a, a.badge, details.more summary { position: relative; }
+button::after, .button::after, .who a::after, a.badge::after, details.more summary::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 100%; height: 100%; min-width: 44px; min-height: 44px; transform: translate(-50%, -50%);
+}
 .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .actions form { margin: 0; }
 
@@ -188,7 +197,7 @@ button[disabled] { opacity: 0.4; cursor: not-allowed; }
 fieldset { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px 14px; margin: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 fieldset.inline { flex-direction: row; flex-wrap: wrap; border: 0; padding: 0; }
 legend { padding: 0 6px; color: var(--muted); font-size: 0.87rem; font-weight: 600; }
-input, select, textarea { font: inherit; color: var(--text); background: var(--sunken); border: 1px solid var(--control-line); border-radius: var(--radius); padding: 7px 10px; min-height: 36px; width: 100%; }
+input, select, textarea { font: inherit; color: var(--text); background: var(--sunken); border: 1px solid var(--control-line); border-radius: var(--radius); padding: 7px 10px; min-height: 44px; width: 100%; }
 input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; min-height: 0; margin: 2px 0 0; accent-color: var(--text); flex: none; }
 input[type="file"] { padding: 5px; }
 input.tiny { width: 76px; display: inline-block; margin-left: 6px; }
@@ -205,12 +214,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 
 /* Tabs inside a page. */
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 18px; overflow-x: auto; }
-.tabs a { padding: 9px 14px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; text-decoration: none; }
+.tabs a { display: inline-flex; align-items: center; min-height: 44px; padding: 9px 14px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; text-decoration: none; }
 .tabs a:hover { color: var(--text); }
 .tabs a[aria-current="page"] { color: var(--text); border-bottom-color: var(--text); font-weight: 600; }
 .tabs a.dangertab { color: var(--bad); }
 .tabs.small { margin: 0; border: 0; }
-.tabs.small a { padding: 4px 9px; font-size: 0.87rem; }
+.tabs.small a { min-height: 44px; padding: 4px 9px; font-size: 0.87rem; }
 
 /* Tables. */
 .table { width: 100%; border-collapse: collapse; font-size: 0.93rem; }
@@ -218,15 +227,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 .table td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .table tr:last-child td { border-bottom: 0; }
 .table.compact td { padding: 7px 10px; }
-.table td.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.table td.actions { display: flex; gap: 14px 6px; flex-wrap: wrap; }
 .card.flush .table th:first-child, .card.flush .table td:first-child { padding-left: 22px; }
 tr.revoked td { opacity: 0.55; }
 
 /* Messages and small parts. */
 /* Notices carry the same shape language as badges: text plus a figure, never color alone. */
-.flash { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; margin: 16px 32px 0; background: var(--raised); }
+/* One block of text next to its shape: inline parts (a list of connections, code, a link) wrap
+   inside it instead of becoming columns, and long values break. */
+.flash { display: block; position: relative; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px 10px 34px; margin: 16px 32px 0; background: var(--raised); }
 main .flash, .card .flash, .bare .flash { margin: 0 0 12px; }
-.flash::before { content: ""; flex: none; width: 10px; height: 10px; margin-top: 7px; border-radius: 50%; background: var(--faint); }
+.flash::before { content: ""; position: absolute; left: 14px; top: 17px; width: 10px; height: 10px; border-radius: 50%; background: var(--faint); }
 .flash.ok::before { background: var(--ok); }
 .flash.error::before { background: var(--bad); border-radius: 1px; }
 .flash.info::before { background: transparent; border: 1.5px solid var(--muted); }
@@ -314,10 +325,10 @@ progress::-moz-progress-bar { background: var(--run); }
 }
 
 @media (max-width: 768px) {
-  .shell { grid-template-columns: minmax(0, 1fr); }
+  .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
   .nav { min-width: 0; position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 16px; gap: 8px; border-right: 0; border-bottom: 1px solid var(--line); }
   .nav nav { flex-direction: row; margin: 0; overflow-x: auto; width: 100%; order: 3; }
-  .nav nav a { white-space: nowrap; min-height: 44px; }
+  .nav nav a { white-space: nowrap; }
   .who { margin: 0 0 0 auto; border: 0; padding: 0; flex-direction: row; gap: 12px; align-items: center; }
   .top { padding: 8px 16px; }
   main { padding: 18px 16px 40px; }
@@ -339,7 +350,6 @@ progress::-moz-progress-bar { background: var(--run); }
   .trackrow { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "head tail" "track track"; }
   .trackrow .ruler { grid-column: 1 / -1; grid-row: 1; }
   button, .button, button.small, .button.small { min-height: 44px; }
-  input, select { min-height: 44px; }
 }
 
 @media print {

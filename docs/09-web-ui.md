@@ -224,7 +224,8 @@ workstations); when the window closes, comparison of fingerprints before and aft
 
 ## 6. Accessibility and adaptability
 
-- WCAG 2.2 AA: 4.5:1 contrast on text, focus visible with the accent, 44 px touch targets,
+- WCAG 2.2 AA: 4.5:1 contrast on text, focus visible with the accent, 44 px touch targets at
+  every width (controls drawn smaller keep their look and take taps on an invisible 44 px area),
   full keyboard navigation, `aria-live="polite"` for progress and notices, labels on all fields,
   tables with real headers.
 - Breakpoints: 360, 768, 1200 px. Tables turn into cards under 768 px.

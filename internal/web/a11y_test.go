@@ -57,3 +57,49 @@ func TestCardTablesCSSKeepsHeadersForScreenReaders(t *testing.T) {
 		}
 	}
 }
+
+// PLAN 1.2.7: a notice is one block of text next to its shape. As a flex
+// container every text run and inline element of a notice became a column
+// of its own, and a long list of connections overflowed the card.
+func TestNoticesAreOneTextBlock(t *testing.T) {
+	b, _ := fs.ReadFile(staticFS, "static/app.css")
+	css := string(b)
+	rule := cssRule(t, css, ".flash")
+	if strings.Contains(rule, "display: flex") || !strings.Contains(rule, "overflow-wrap: anywhere") {
+		t.Fatalf(".flash is still a flex container or does not wrap long values: %s", rule)
+	}
+	if shape := cssRule(t, css, ".flash::before"); !strings.Contains(shape, "position: absolute") {
+		t.Fatalf("the shape of a notice is not placed outside the text: %s", shape)
+	}
+}
+
+// PLAN 1.2.5 and docs 09 §6: every control takes taps on at least 44 px at
+// every width. Controls drawn smaller keep their look and get an invisible
+// area around them; the rest are at least 44 px tall.
+func TestControlsHave44pxTargets(t *testing.T) {
+	b, _ := fs.ReadFile(staticFS, "static/app.css")
+	css := string(b)
+	area := cssRule(t, css, "button::after, .button::after, .who a::after, a.badge::after, details.more summary::after")
+	for _, want := range []string{`content: ""`, "position: absolute", "min-width: 44px", "min-height: 44px"} {
+		if !strings.Contains(area, want) {
+			t.Errorf("the target area lacks %s: %s", want, area)
+		}
+	}
+	for _, sel := range []string{".nav nav a", ".tabs a", ".tabs.small a", "input, select, textarea"} {
+		if r := cssRule(t, css, sel); !strings.Contains(r, "min-height: 44px") {
+			t.Errorf("%s is not 44 px tall: %s", sel, r)
+		}
+	}
+}
+
+// cssRule returns the declarations of the first top-level rule whose
+// selector is exactly sel.
+func cssRule(t *testing.T, css, sel string) string {
+	t.Helper()
+	i := strings.Index(css, "\n"+sel+" {")
+	if i < 0 {
+		t.Fatalf("app.css has no rule %q", sel)
+	}
+	rest := css[i+len(sel)+3:]
+	return rest[:strings.Index(rest, "}")]
+}

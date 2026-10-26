@@ -34,7 +34,16 @@ It is a snapshot: if this list and the code disagree, the code wins and the coun
       `status` for the rest, the same rule as the `flash` partial (level 4). 10 notices in 6
       files; the 2 that had no `role` were fixed. Since 2026-10-19 the notice carries the same
       shape as the badges (`::before` per tone: circle, diamond, square, outline) and a thin
-      border around it; the colored side stripe was removed.
+      border around it; the colored side stripe was removed. Since 2026-10-25 the notice is one
+      block of text with the shape placed in its left padding, not a flex container: inline
+      parts (a list of connections, `code`, a link) wrap inside it and long values break
+      (PLAN 1.2.7, `TestNoticesAreOneTextBlock`).
+- [ ] Targets: every control takes taps on at least 44 x 44 px at every width (WCAG 2.5.5).
+      Buttons, small buttons, "Sign out", the account link, the badges of the top bar and
+      "more" toggles keep their look and get an invisible `::after` area; sidebar links, tabs
+      and fields are 44 px tall themselves. The area is not used inside containers that scroll
+      sideways (it would add a scroll bar), and wrapped rows of table actions keep 14 px
+      between them so areas do not overlap (`TestControlsHave44pxTargets`).
 - [ ] Wide tables: inside a normal card they are wrapped in `<div class="scroll-x">` to scroll
       sideways on narrow screens (7 tables on 2026-10-19); `cards-on-mobile` tables that are the
       whole page go in `card flush`, which already scrolls.
