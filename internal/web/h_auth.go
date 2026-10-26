@@ -155,7 +155,8 @@ func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) setupRecover(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	back := func(msg string) {
-		http.Redirect(w, r, "/setup?recover=1&error="+url.QueryEscape(msg), http.StatusSeeOther)
+		s.flash(w, "error", msg)
+		http.Redirect(w, r, "/setup?recover=1", http.StatusSeeOther)
 	}
 	if has, _ := s.A.Auth.HasAdmin(ctx); has {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)

@@ -65,7 +65,13 @@ from here (`.github/workflows/release.yml`).
   audit log down left a `provisioning` row, so the same request then failed with `SQS-L004`;
   nothing is left now. A schedule whose date never comes (31 February) is refused with
   `SQS-J020` when the policy is saved, instead of failing without a code after storing it.
-  `GET /api/v1/libraries/{id}/backup-policy` answers 404 `SQS-L002` for an unknown library.
+  `GET /api/v1/libraries/{id}/backup-policy` answers 404 `SQS-L002` for an unknown library. The
+  recovery form of the setup wizard now shows why a recovery was refused (a wrong code or key
+  sent you back to the form without a word); a schedule expression typed for the default policy
+  is checked also in activity mode; an unknown maintenance action is `SQS-C041`.
+- Tests: statement coverage of `internal/` rises from 70.6 % to the figure recorded in
+  `docs/16-testing.md`, with handler tests for every API route and most panel forms, and fault
+  tests for recovery, system jobs, PostgreSQL failures and audit failures.
 - The identifier suggested for a name that does not start with a letter now starts with
   `library_` (it was the Spanish `biblioteca_`), as the panel already suggested while typing.
 - Panel: notices are one block of text next to their shape again, so a long list (for

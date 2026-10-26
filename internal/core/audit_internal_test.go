@@ -223,3 +223,19 @@ func TestRecreateWithAnotherBackupIsRefused(t *testing.T) {
 		t.Fatalf("%d jobs queued", len(list))
 	}
 }
+
+// An expression typed for the default policy is checked whatever the mode:
+// in activity mode "every night" was saved and silently had no effect.
+func TestDefaultPolicyCronIsCheckedInActivityMode(t *testing.T) {
+	ctx := context.Background()
+	s, _, _ := auditedCatalog(t)
+	st := s.Settings(ctx)
+	st.DefaultPolicy.Mode, st.DefaultPolicy.CheckMinutes, st.DefaultPolicy.Cron = ModeActivity, 15, "every night"
+	err := s.SaveSettings(ctx, audit.System, st)
+	if !errors.Is(err, scheduler.ErrInvalidCron) || !strings.HasPrefix(err.Error(), `SQS-J020 invalid schedule expression: "every night"`) {
+		t.Fatalf("got %v", err)
+	}
+	if got := s.Settings(ctx).DefaultPolicy.Cron; got == "every night" {
+		t.Fatal("the expression was saved")
+	}
+}

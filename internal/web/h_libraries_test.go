@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/donutinit/sqsolve/internal/audit"
 	"github.com/donutinit/sqsolve/internal/core"
 	"github.com/donutinit/sqsolve/internal/store"
 	"github.com/donutinit/sqsolve/internal/ulid"
@@ -40,7 +41,8 @@ func TestLibrarySettingsForm(t *testing.T) {
 	if got.DisplayName != "Apolo II" || got.Notes != "Media on /mnt/raid/apolo" || got.ResolveVersion != "21.1.1" || got.ConnLimit != -1 {
 		t.Fatalf("saved library %+v", got)
 	}
-	if es := auditEntries(t, a, "library.update"); len(es) != 1 || es[0].Actor.Name != "boss" || es[0].Details["resolve_version"] != "21.1.1" {
+	// accepted before the change and ok after it (ADR 0026, Audit.Do).
+	if es := auditEntries(t, a, "library.update"); len(es) != 2 || es[0].Outcome != audit.OK || es[1].Outcome != audit.Accepted || es[0].Actor.Name != "boss" || es[0].Details["resolve_version"] != "21.1.1" {
 		t.Fatalf("library.update audit %+v", es)
 	}
 	page := boss.page(back)
@@ -151,7 +153,8 @@ func TestLibraryScheduleForm(t *testing.T) {
 			t.Fatalf("schedule after %v: %+v %v", c.set, sc, err)
 		}
 	}
-	if es := auditEntries(t, a, "library.policy"); len(es) != 7 || es[0].Actor.Name != "boss" {
+	// accepted and ok for each of the 7 saves (ADR 0026, Audit.Do).
+	if es := auditEntries(t, a, "library.policy"); len(es) != 14 || es[0].Outcome != audit.OK || es[0].Actor.Name != "boss" {
 		t.Fatalf("library.policy audit: %d entries", len(es))
 	}
 	// Disabled, with its own time zone: the schedule stops.

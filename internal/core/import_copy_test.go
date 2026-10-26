@@ -26,7 +26,7 @@ func TestImportKeepingTheSourceCopiesIt(t *testing.T) {
 	if c, err := e.svc.ImportCandidates(); err != nil || c != nil {
 		t.Fatalf("candidates without an import folder: %v %v", c, err)
 	}
-	data, err := os.ReadFile(e.svc.AbsPath(b))
+	data, err := os.ReadFile(mustAbs(e.svc, b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,11 +67,11 @@ func TestImportKeepingTheSourceCopiesIt(t *testing.T) {
 	if err != nil || !os.SameFile(before, after) || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
 		t.Fatalf("the source in the import folder changed: %v", err)
 	}
-	copied, err := os.Stat(e.svc.AbsPath(imported))
+	copied, err := os.Stat(mustAbs(e.svc, imported))
 	if err != nil || os.SameFile(copied, after) {
 		t.Fatalf("the catalogued file is not a copy of its own: %v", err)
 	}
-	if got, _ := os.ReadFile(e.svc.AbsPath(imported)); !bytes.Equal(got, data) {
+	if got, _ := os.ReadFile(mustAbs(e.svc, imported)); !bytes.Equal(got, data) {
 		t.Fatal("the copy differs from the source")
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".hidden.backup")); err != nil {

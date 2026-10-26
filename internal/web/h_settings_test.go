@@ -344,6 +344,9 @@ func TestMaintenanceActionsQueueAuditedJobs(t *testing.T) {
 	if _, loc, msg := fxPost(boss, "/settings/maintenance/upgrade", url.Values{"csrf": {tok}, "target": {"  "}}); loc != "/settings?tab=maintenance" || msg != "SQS-C040 type the target Resolve version" {
 		t.Fatalf("upgrade without a target: %s %q", loc, msg)
 	}
+	if _, loc, msg := fxPost(boss, "/settings/maintenance/reboot", url.Values{"csrf": {tok}}); loc != "/settings?tab=maintenance" || msg != "SQS-C041 unknown maintenance action" {
+		t.Fatalf("unknown action: %s %q", loc, msg)
+	}
 	_, loc, _ := boss.do("POST", "/settings/maintenance/upgrade", url.Values{"csrf": {tok}, "target": {"21.2"}})
 	j := fxQueuedJob(t, a, loc, core.JobUpgradeWindow, "", "system.upgrade_window", "boss")
 	if !strings.Contains(string(j.Params), `"target":"21.2"`) {

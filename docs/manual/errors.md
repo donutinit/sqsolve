@@ -43,6 +43,9 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-B034` | it is the most recent verified backup of the library; it cannot be deleted manually |
 | `SQS-B040` | unreadable manifest |
 | `SQS-B041` | pg_restore cannot read the file: ... |
+| `SQS-B042` | the manifest is not a valid version 1 manifest |
+| `SQS-B043` | the catalog path of this backup is not valid; it is blocked until an administrator reviews it |
+| `SQS-B044` | only a backup whose catalog path is not valid can be removed from the catalog this way |
 | `SQS-B050` | choose a file from the import folder or upload one |
 | `SQS-B051` | the file is outside the import folder |
 | `SQS-B052` | could not save the upload: ... |
@@ -67,6 +70,7 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-C031` | the initialization window must be between 5 and 1440 minutes |
 | `SQS-C032` | retention periods must be between 1 and ... days |
 | `SQS-C040` | type the target Resolve version |
+| `SQS-C041` | unknown maintenance action |
 | `SQS-C050` | could not create ...: ... |
 | `SQS-C051` | backups volume: ... |
 | `SQS-C052` | ... is missing: run sqsolve init (the sqsolve-init service of the compose file): ... |
@@ -102,11 +106,14 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-J002` | job not found |
 | `SQS-J003` | this job cannot be cancelled right now |
 | `SQS-J004` | only failed, cancelled or interrupted jobs can be retried |
+| `SQS-J005` | another job of this type is already queued or running for this library with different parameters; wait for it or cancel it |
 | `SQS-J010` | the process stopped while the job was running |
 | `SQS-J020` | invalid schedule expression |
 | `SQS-J021` | unknown schedule kind: ... |
 | `SQS-J030` | this type of job cannot be retried; start the operation again from its page, which asks for confirmation |
 | `SQS-J031` | the stored parameters of job ... are not valid: ... |
+| `SQS-J040` | the job step could not be recorded, so it was not run: ... |
+| `SQS-J041` | the job journal was not written |
 | `SQS-L001` | invalid identifier |
 | `SQS-L002` | library not found |
 | `SQS-L003` | the display name cannot contain control characters |
@@ -134,6 +141,7 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-L044` | only libraries in the trash can be purged |
 | `SQS-L045` | there is no verified final backup; not purging |
 | `SQS-L046` | role ... still owns: ...; review them before purging |
+| `SQS-L047` | the purge stopped before it finished: ... |
 | `SQS-L050` | the database ... exists again on the server; restart sqsolve so the library becomes active, then delete it |
 | `SQS-L051` | the database in the trash (...) no longer exists on the server |
 | `SQS-L052` | the database ... still has sessions sqsolve cannot close (for example a superuser session); close them and try again: ... |
@@ -192,6 +200,9 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-R056` | ... is not a previous state of ...; it was not dropped |
 | `SQS-R057` | the job journal could not be written, so nothing was locked: ... |
 | `SQS-R058` | the job journal could not be written, so the database was not created: ... |
+| `SQS-R059` | the job journal could not be written, so the backup was not restored: ... |
+| `SQS-R060` | the database was restored, but the library could not be activated: .... ... |
+| `SQS-R061` | could not recreate the access of the library: ... |
 | `SQS-R090` | ... is named by an interrupted job that reconciliation at startup has not settled yet; it was kept |
 | `SQS-R091` | could not tell whether an interrupted job pending reconciliation names ..., so it was kept: ... |
 | `SQS-S001` | the volume has no sqsolve marker |

@@ -5,6 +5,7 @@ package web_test
 import (
 	"context"
 	"encoding/base64"
+	"html"
 	"net/http"
 	"net/url"
 	"os"
@@ -41,15 +42,25 @@ func TestSetupRecoveryRefusals(t *testing.T) {
 		t.Fatal("the recovery form is missing")
 	}
 	key32 := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	for _, form := range []url.Values{
-		{"csrf": {"forged-token-forged-token"}, "code": {code}, "key": {key32}},
-		{"csrf": {pre}, "code": {"WRONG-CODE"}, "key": {key32}},
-		{"csrf": {pre}, "code": {code}, "key": {"not the key"}},
-		{"csrf": {pre}, "code": {code}, "key": {key32}},
+	// Each refusal is shown on the form it sends back to, with its reason.
+	for _, c := range []struct {
+		form url.Values
+		why  string
+	}{
+		{url.Values{"csrf": {"forged-token-forged-token"}, "code": {code}, "key": {key32}}, "The form expired; try again."},
+		{url.Values{"csrf": {pre}, "code": {"WRONG-CODE"}, "key": {key32}}, "The installation code is not correct."},
+		{url.Values{"csrf": {pre}, "code": {code}, "key": {"not the key"}}, "SQS-C070"},
+		{url.Values{"csrf": {pre}, "code": {code}, "key": {key32}}, "SQS-C07"},
 	} {
-		st, loc, _ := b.do("POST", "/setup/recover", form)
-		if st != http.StatusSeeOther || !strings.HasPrefix(loc, "/setup?recover=1&") {
-			t.Errorf("recover %v: %d %s", form, st, loc)
+		st, loc, _ := b.do("POST", "/setup/recover", c.form)
+		if st != http.StatusSeeOther || loc != "/setup?recover=1" {
+			t.Errorf("recover %v: %d %s", c.form, st, loc)
+		}
+		if f := flashOf(b); !strings.Contains(f, c.why) {
+			t.Errorf("recover %v: notice %q, want %q", c.form, f, c.why)
+		}
+		if page := b.page(loc); !strings.Contains(page, `role="alert">`+html.EscapeString(c.why)) {
+			t.Errorf("recover %v: the form does not show %q", c.form, c.why)
 		}
 	}
 	if a.InstallCode() != code {

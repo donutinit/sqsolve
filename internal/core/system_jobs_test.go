@@ -190,7 +190,7 @@ func TestCatalogCheckFlagsMissingFiles(t *testing.T) {
 	stray := filepath.Join(e.svc.Cfg.BackupDir, "libraries", "cat_lib", "stray.backup")
 	os.WriteFile(stray, []byte("PGDMP"), 0o600)
 
-	os.Rename(e.svc.AbsPath(gone), e.svc.AbsPath(gone)+".away")
+	os.Rename(mustAbs(e.svc, gone), mustAbs(e.svc, gone)+".away")
 	restore := e.unmark()
 	j := e.run(JobCatalogCheck, "", nil, jobs.Failed)
 	restore()
@@ -244,12 +244,16 @@ func TestCatalogRebuildKeepsWhatItCannotUse(t *testing.T) {
 	dir := filepath.Join(e.svc.Cfg.BackupDir, "libraries", "lost_lib", "2026", "10")
 	os.MkdirAll(dir, 0o700)
 	os.WriteFile(filepath.Join(dir, "garbage.manifest.json"), []byte("{not json"), 0o600)
+	// Complete version 1 manifests (PLAN P0.1): one without its file, one
+	// whose file does not match it.
+	lostID := ulid.New()
 	var orphan Manifest
-	orphan.BackupID, orphan.Kind, orphan.File = ulid.New(), KindScheduled, "orphan.backup"
+	orphan.ManifestVersion, orphan.BackupID, orphan.Kind, orphan.File, orphan.SHA256 = 1, ulid.New(), KindScheduled, "orphan.backup", strings.Repeat("0", 64)
+	orphan.Library.ID, orphan.Library.Slug = lostID, "lost_lib"
 	writeManifest(t, filepath.Join(dir, "orphan.manifest.json"), orphan)
 	var damaged Manifest
-	damaged.BackupID, damaged.Kind, damaged.File, damaged.Size, damaged.SHA256 = ulid.New(), KindScheduled, "damaged.backup", 5, "sha256-of-something-else"
-	damaged.Library.ID, damaged.Library.Slug, damaged.Library.DisplayName = "LOSTLIB", "lost_lib", "Lost library"
+	damaged.ManifestVersion, damaged.BackupID, damaged.Kind, damaged.File, damaged.Size, damaged.SHA256 = 1, ulid.New(), KindScheduled, "damaged.backup", 5, strings.Repeat("ab", 32)
+	damaged.Library.ID, damaged.Library.Slug, damaged.Library.DisplayName = lostID, "lost_lib", "Lost library"
 	damaged.StartedAt, damaged.FinishedAt = time.Now().Add(-time.Hour), time.Now().Add(-time.Hour)
 	writeManifest(t, filepath.Join(dir, "damaged.manifest.json"), damaged)
 	os.WriteFile(filepath.Join(dir, "damaged.backup"), []byte("PGDMP"), 0o600)
@@ -278,7 +282,7 @@ func TestCatalogRebuildKeepsWhatItCannotUse(t *testing.T) {
 	if err != nil || b.VerifyStatus != VerifyFailed || b.Verified() {
 		t.Fatalf("damaged backup rebuilt as %+v %v", b, err)
 	}
-	lib, err := e.svc.Library(ctx, "LOSTLIB")
+	lib, err := e.svc.Library(ctx, lostID)
 	if err != nil || lib.State != StatePurged || lib.Slug != "lost_lib" || !strings.Contains(lib.Notes, "Rebuilt from the manifests on the backups volume") {
 		t.Fatalf("rebuilt library %+v %v", lib, err)
 	}

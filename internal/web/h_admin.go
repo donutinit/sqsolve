@@ -329,7 +329,7 @@ func (s *Server) maintenanceAction(w http.ResponseWriter, r *http.Request) {
 	case "upgrade":
 		j, err = s.A.Svc.UpgradeWindow(ctx, p.Actor(), r.FormValue("target"))
 	default:
-		err = errors.New("unknown action")
+		err = errors.New("SQS-C041 unknown maintenance action")
 	}
 	if err != nil {
 		s.fail(w, r, back, err)

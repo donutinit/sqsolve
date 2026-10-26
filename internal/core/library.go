@@ -893,6 +893,13 @@ func (p Policy) Validate() error {
 	if _, err := validateCron(p.EffectiveCron(), p.Timezone); err != nil {
 		return err
 	}
+	// An expression that was typed is checked even when the mode does not
+	// run it (activity), so it never sits in the policy without effect.
+	if p.Cron != "" && p.Cron != p.EffectiveCron() {
+		if _, err := validateCron(p.Cron, p.Timezone); err != nil {
+			return err
+		}
+	}
 	for _, v := range []int{p.KeepLast, p.KeepDaily, p.KeepWeekly, p.KeepMonthly} {
 		if v < 0 || v > 1000 {
 			return errors.New("SQS-B030 retention values must be between 0 and 1000")
