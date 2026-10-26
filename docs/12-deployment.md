@@ -162,7 +162,7 @@ and keeps the old files next to them as `.replaced-<time>` (`SQS-C083` in the lo
 | Portainer | Stack with the YAML |
 | Unraid | Compose Manager plugin with the YAML |
 | Synology | Publish 5432 on the LAN IP because DSM occupies 5432 on localhost [01 §13] |
-| Podman | Compatible with `podman compose` in principle; documented as "community" until tested |
+| Podman | Not tested; whether `podman compose` runs the file is To be confirmed |
 | ARM64 | Same multi-architecture images |
 
 ### Permissions and ACLs
@@ -172,10 +172,14 @@ mode: 0400 or 0600, and 0440 for the PostgreSQL superuser password shared with t
 container. A volume with an ACL can grant other users access that the mode does not show: on
 TrueNAS, a dataset created with the SMB preset, or one whose permissions were edited as an ACL,
 carries inherited NFSv4 entries (for example `group:builtin_users` with full access) on every
-new file, and `chmod` leaves them in place. `sqsolve-init` checks the mode each secret has after
-setting it and stops with `SQS-C085 ... it stays 0700; an ACL on the volume probably grants
-more`. An installation whose secrets were written by an older `sqsolve-init` shows instead, at
-the start of `sqsolve`, `SQS-C010 permissions too open on a secrets file: ... has mode 700`.
+new file, and `chmod` leaves them in place. On every run `sqsolve-init` checks the mode that the
+secret folders, every secret file that already exists and the PostgreSQL TLS key have after
+setting it, and stops with `SQS-C085 ... it stays 0700; an ACL on the volume probably grants
+more`. A secret file written in that same run (the master key, the `sqsolve_admin` password or
+the PostgreSQL superuser password) is not checked until the next run (known issue K-05,
+`19-risks.md` §5). A secret file left with a wider mode, whether written in that run or by an
+older `sqsolve-init`, shows at the start of `sqsolve` as `SQS-C010 permissions too open on a
+secrets file: ... has mode 700`.
 
 To fix it on TrueNAS, for each of the three datasets: Datasets, the dataset, Permissions, Edit,
 "Strip ACL", with "Apply permissions recursively", then start or update the app again:
@@ -186,10 +190,12 @@ preset, which uses POSIX permissions. Elsewhere, remove the ACL of the three fol
 ## 7. Network and names
 
 - The server needs a fixed IP (DHCP reservation or static). The advertised address can be a
-  local DNS name; PoC-08 confirms whether Resolve accepts names in the location.
+  local DNS name; whether Resolve accepts a name in the location is To be confirmed (PoC-08
+  tested IP addresses only).
 - Host firewall: allow 5432 and 9432 from the LAN or VPN; nothing from the Internet.
-- Workstations: allow TCP 50059 to 50314 inbound and outbound between them to collaborate
-  (PoC-07).
+- Workstations: allow TCP 50059 to 50314 inbound and outbound between them to collaborate. That
+  range is the one Blackmagic reports (`01-research.md`); it is not validated, because PoC-07 has
+  not been run.
 
 ## 8. Upgrades
 
@@ -218,32 +224,40 @@ announce a new minor version, the administrator replaces the `image:` line of th
 service (user guide, "Updating"). PostgreSQL restarts, so run "Back up now" on each library
 first.
 
-### 8.3 PostgreSQL major version (2.0)
+### 8.3 PostgreSQL major version
 
-By logical migration to a new cluster (ADR 0017): new `pgdata` volume, temporary container with
-the new version, backup and restore of each library with L2 verification, switching the services
-in the YAML, and the old volume intact until the administrator deletes it. Never `pg_upgrade`
-over the data directory in use. The new cluster has another system identifier: sqsolve holds
-until `SQSOLVE_PG_ACCEPT_SYSTEM_ID` accepts it (ADR 0023).
+Not in place in 1.x: sqsolve has no tool for it, and the major-version wizard (RF-ACT-05) is a
+direction in `20-roadmap.md`. ADR 0017 sets the method, a logical migration to a new cluster:
+new `pgdata` volume, temporary container with the new version, backup and restore of each
+library with L2 verification, switching the services in the YAML, and the old volume intact
+until the administrator deletes it. Never `pg_upgrade` over the data directory in use. A new
+cluster has another system identifier: sqsolve holds until `SQSOLVE_PG_ACCEPT_SYSTEM_ID` accepts
+it (ADR 0023).
 
 ## 9. Installation backup and disaster recovery
 
-What to keep outside the server: the `backups` volume (or its restic copy) and the recovery kit.
+What to keep outside the server: the `backups` volume (or a copy of it made outside sqsolve; an
+off-site copy with restic is a direction in `20-roadmap.md`, not in place) and the recovery kit.
 
 Recovering on a new server:
 
 1. Install with the reference YAML pointing `backups` at the copy of the backups.
-2. In the wizard choose "Recover existing installation" and paste the kit's master key.
-3. sqsolve restores the control plane from `_system/` (users, policies, encrypted credentials)
-   or, if there is none, rebuilds the catalog from the manifests. The restored database and key
+2. In the wizard choose "Recover an existing installation", type the installation code from the
+   log and paste the kit's master key.
+3. sqsolve restores the control plane from `_system/` (users, policies, encrypted credentials).
+   The restored database and key
    are staged and applied at the next start through a journal, so a power cut in the middle is
    finished by the following start, and the replaced database and key are kept aside as a pair
    (`docs/runbooks/recover-installation.md`).
-4. "Restore all" creates each library from its most recent verified backup with the same slug
-   and the original passwords (if the master key is available; otherwise it generates new ones).
+4. Each library shows "No database on the server"; on each one, "Recreate from the last backup"
+   (after typing its identifier) creates it from its most recent verified backup with the same
+   slug and the original passwords. Without the kit or without a copy in `_system/`, install
+   from scratch and use "Rebuild the catalog" (Settings, Maintenance): the libraries come back
+   from the manifests, with new passwords.
 5. Workstations reconnect with the new IP if it changed.
 
 ## 10. Uninstalling
 
-`docker compose down` keeps all volumes. Deleting data is an explicit, separate step
-(`docker volume rm ...` or deleting folders), documented with warnings.
+`docker compose down` keeps all volumes: the three host folders are bind mounts, and the socket
+volume holds no data. Deleting data is an explicit, separate step (deleting the folders, and
+`docker volume rm` for the socket volume); the user guide has no section on it.

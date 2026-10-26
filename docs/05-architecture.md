@@ -12,8 +12,9 @@
 3. **Never destroy without a copy.** Deleting, restoring or rotating leaves a way back.
 4. **Every long operation is a persistent job** with recorded steps, resumable or cleanable
    after a power cut.
-5. **Least privilege at every boundary:** containers without root, control role without
-   superuser, roles per library, hooks without secrets.
+5. **Least privilege at every boundary:** containers without root (except the one-shot init
+   container, without network and with four capabilities), control role without superuser, roles
+   per library.
 6. **No runtime dependencies outside the host.** No mandatory Internet.
 7. **Few moving parts.** Two permanent containers and one init container. No orchestrator, no
    external queues, no additional server-based databases.
@@ -33,7 +34,7 @@ flowchart LR
     VOL[("Volumes<br/>data, state, backups")]
   end
   MED[("Media storage<br/>SMB or NFS, outside sqsolve")]
-  EXT["Optional: SMTP, ntfy, webhooks,<br/>restic repository"]
+  EXT["Optional: SMTP, ntfy, webhooks"]
 
   WS1 -- "TCP 5432 PostgreSQL" --> PG
   WS2 -- "TCP 5432 PostgreSQL" --> PG
@@ -47,8 +48,9 @@ flowchart LR
   SQ -. "only if configured" .-> EXT
 ```
 
-Ports published by the host: **5432** (PostgreSQL, mandatory, PoC-08 confirms whether it can
-change) and **9432** (HTTPS panel, configurable). Port 50059 is not published (ADR 0012).
+Ports published by the host: **5432** (PostgreSQL; `SQSOLVE_PG_PORT` changes it, but whether
+Resolve accepts another port is not validated: PoC-08 tested only 5432) and **9432** (HTTPS
+panel, `SQSOLVE_LISTEN`). Port 50059 is not published (ADR 0012).
 
 ## 3. Containers
 
@@ -58,7 +60,6 @@ flowchart TB
     INIT["sqsolve-init<br/>one-shot run:<br/>secrets, permissions, PostgreSQL configuration"]
     PG["postgres<br/>official image postgres:18.x-trixie"]
     SQ["sqsolve<br/>image based on postgres:18.x-trixie<br/>sqsolve binary, pg_dump, pg_restore"]
-    HK["sqsolve-hooks (1.1, optional)<br/>runs hooks without secrets"]
   end
   DB[("db<br/>cluster and generated configuration")]
   APP[("app<br/>SQLite and secrets")]
@@ -68,15 +69,16 @@ flowchart TB
   PG --- DB
   PG --- RUN
   SQ --- DB & APP & BK & RUN
-  HK -- "read only" --- BK
 ```
 
 | Container | Responsibility | User | Network |
 |---|---|---|---|
 | `sqsolve-init` | Create missing secrets, generate `postgresql.conf`, `pg_hba.conf` and certificates, fix permissions on the three volumes. Exits and does not run again until the next `up` | root (this task only, no network) | none |
-| `postgres` | Serve the libraries | `postgres` (UID 999 of the image) | `lan` (5432 published) |
-| `sqsolve` | Panel, API, scheduler, jobs, backups, audit log | Configurable UID and GID, 1000 by default | `lan` (9432 published); reaches PostgreSQL over the socket |
-| `sqsolve-hooks` | Run the administrator's hooks | Own UID without access to secrets | `hooks` (configurable) |
+| `postgres` | Serve the libraries | `postgres` (UID 999 of the image) | Default Compose network (5432 published) |
+| `sqsolve` | Panel, API, scheduler, jobs, backups, audit log | Configurable UID and GID, 1000 by default | Default Compose network (9432 published); reaches PostgreSQL over the socket |
+
+There is no hooks container: sqsolve runs no administrator code. ADR 0011 describes an isolated
+`sqsolve-hooks` container; it is not implemented (`20-roadmap.md`).
 
 Volume details and the reference Compose file are in `12-deployment.md`.
 
@@ -91,19 +93,19 @@ flowchart TB
   end
   subgraph core["Domain services"]
     AUTH["auth<br/>users, sessions, TOTP, tokens, policies"]
-    LIB["library<br/>lifecycle, credentials, fingerprint, sessions"]
-    BKP["backup<br/>backup, verification, retention, restore"]
+    LIB["core: libraries<br/>lifecycle, credentials, fingerprint, sessions"]
+    BKP["core: backups<br/>backup, verification, retention, restore"]
     JOB["jobs<br/>persistent queue, workers, locks"]
     SCH["scheduler<br/>cron, misfires"]
     NOT["notify<br/>webhook, SMTP, ntfy"]
     AUD["audit<br/>chained log"]
-    HLT["health<br/>status, metrics, diagnostics"]
+    HLT["health<br/>status, thresholds, versions"]
   end
   subgraph infra["Infrastructure"]
     STORE["store<br/>SQLite, migrations"]
     PGC["pg<br/>control client, safe DDL"]
     PGCONF["pgconf<br/>postgresql.conf and pg_hba.conf"]
-    EXEC["execx<br/>pg_dump, pg_restore, restic"]
+    EXEC["execx<br/>pg_dump, pg_restore, vacuumdb"]
     FSX["fsx<br/>atomic writes, space, markers"]
     SEC["secrets<br/>files and encryption"]
   end
@@ -119,9 +121,50 @@ flowchart TB
 ```
 
 Dependency rules: adapters only talk to services; services know nothing about HTTP; the
-infrastructure knows nothing about the domain. Authorization is evaluated in a single layer
-(`auth` exposes `Authorize(actor, action, resource)`), used alike by the web, the API and the
-CLI.
+infrastructure knows nothing about the domain. Authorization is evaluated in a single place:
+`auth.Principal.Can(action)` combines the role policy (`RoleAllows`) and, for API tokens, the
+scopes (`ScopeAllows`); the web panel and the API use it alike, and every job type names the
+action needed to start, cancel or retry it. The CLI runs inside the container and acts as the
+"console" actor of the audit log without a permission check: whoever reaches the console already
+controls the server.
+
+Code layout in 1.2.2 (`cmd/` and `internal/`, one Go module):
+
+```
+cmd/sqsolve/main.go   subcommands: serve, init, doctor, healthcheck, admin, library, backup, restore, catalog, audit, version; slog with redaction
+internal/config       SQSOLVE_* and TZ variables, validation
+internal/secrets      secrets.String type, secret files and their modes, AEAD encryption (master key), random passwords
+internal/fsx          atomic writes, key and certificate pairs, volume markers, statfs
+internal/execx        execution of allowed binaries, temporary PGPASSFILE, cancellation of its own children only
+internal/store        SQLite, migrations, settings, copies before migrating
+internal/pg           socket connection, identifier validation, SCRAM verifiers, safe DDL, catalog queries
+internal/pgconf       postgresql.conf, pg_hba.conf, certificates
+internal/jobs         queue, workers, locks, steps, logs, audited jobs, interrupted jobs
+internal/scheduler    cron, per-target offset, missed runs, gate for activity-based backups
+internal/events       in-memory bus, event persistence
+internal/audit        chained log, verification, export, entries written with or before the action
+internal/auth         users, sessions, CSRF, TOTP, tokens, policy, login lock, client IP
+internal/core         libraries (lifecycle, credentials, sessions, fingerprint), backups (manifest, verification, catalog, retention, restore, import, export from backups), system jobs, startup reconciliation
+internal/notify       webhook, SMTP, ntfy, rules, grouping
+internal/health       status snapshot, PostgreSQL, volume and certificate checks and their events, version comparison
+internal/compat       known fingerprints with what is verified per version
+internal/drp          experimental export of .drp and .drx from the library (ADR 0019)
+internal/app          wiring of the server, init, doctor, volume identity, PostgreSQL cluster identity, panel certificate, control plane recovery
+internal/api          JSON v1 handlers
+internal/web          HTML handlers, templates, embedded assets, diagnostic bundle, recovery kit
+internal/ulid         identifiers
+internal/testpg       throwaway PostgreSQL clusters for the tests
+```
+
+Error codes have no package of their own: they are written where they happen, `make errors`
+lists them in `docs/manual/errors.md` and `make errors-check` refuses a code with two messages.
+Logging and redaction live in `cmd/sqsolve`. The clock is injected where it matters (the `Now`
+field of the services in `core`, `auth`, `health` and `scheduler`, and the reference time passed
+to the retention function `core.Retain`).
+
+Outside Go: `test/` holds the Python failure scenarios (`make scenarios`), the image walkthrough
+of the CI smoke job and the error code check; `api/schemas/manifest.v1.json` is the schema of the
+backup manifest; `deploy/compose.yaml` is the reference Compose file.
 
 ## 5. Concurrency model
 
@@ -135,7 +178,8 @@ CLI.
   the process group of the child it launched and SIGKILL to that whole group once the child
   exits or after 10 s, always before reaping the child, so the group id cannot name anyone
   else's processes.
-- SQLite in WAL mode with a single serialized write connection and a read pool.
+- SQLite in WAL mode with a pool of up to 8 connections; every transaction starts with
+  `BEGIN IMMEDIATE`, so writes are serialized, with `synchronous=FULL` and a 10 s busy timeout.
 - Progress events are published on an in-memory bus and reach the browser over SSE.
 
 ## 6. Main flows
@@ -164,8 +208,9 @@ sequenceDiagram
 ```
 
 If the window expires without initialization, sqsolve removes `CREATEDB`, leaves the library in
-"initialization expired" and allows reopening the window. Strategies E0 (pre-created database)
-and E2 (from a local template) are in `07-libraries-and-postgresql.md` §5.
+"initialization expired" and allows reopening the window. Strategy E0 (pre-created database,
+offered for testing only because Resolve 21.1 marks the empty database "incompatible", PoC-01) is
+in `07-libraries-and-postgresql.md` §5. Strategy E2 (from a local template) is not implemented.
 
 ### 6.2 Scheduled backup
 
@@ -202,7 +247,7 @@ step is recorded before it runs so that it can be completed or reverted after a 
 3. Connect to PostgreSQL over the socket (with retries; the panel starts even if it fails and
    says so).
 4. Reconcile: running jobs become "interrupted"; delete orphaned `.partial` files; drop
-   `sqsolve_verify_*` and `__restore_*` databases without a live job; complete or revert
+   `sqsolve_verify_*`, `sqsolve_export_*` and `__restore_*` databases without a live job; complete or revert
    half-done swaps according to their journal; remove `CREATEDB` from expired windows;
    regenerate `pg_hba.conf` from the catalog and reload. A journal that cannot be settled
    stays pending and is tried again at every start; until then its library is left as it is and
@@ -223,12 +268,14 @@ thing. The full list of variables is in `12-deployment.md` §4.
 
 ## 8. Errors
 
-- Each domain error has a stable code `SQS-<area><number>` (for example `SQS-B012`,
-  "insufficient space on the backups volume"), a message for the person, a technical cause and
-  a link to the documentation.
-- Catalog in `internal/errs/catalog.go` and in `docs/manual/errors.md`, generated from the same
-  table so they never drift apart.
-- The API returns RFC 9457 (`application/problem+json`) with the code in `type`.
+- Each expected error starts its message with a stable code `SQS-<area><number>` (for example
+  `SQS-B012`, "not enough space on the backups volume"). There is no error type or catalog
+  package: the code is written where the error happens.
+- `make errors` regenerates `docs/manual/errors.md` with every code in the source and its
+  message; `make errors-check` (part of `make check` and CI) fails when one code carries two
+  different messages.
+- The API returns RFC 9457 (`application/problem+json`) with the code in `code` and in `type`
+  (`/docs/errors/<code>`).
 - Areas: `A` authentication, `L` libraries, `B` backups, `R` restore, `J` jobs, `P` PostgreSQL,
   `S` storage, `N` notifications, `C` configuration, `E` experimental export, `X` internal.
 

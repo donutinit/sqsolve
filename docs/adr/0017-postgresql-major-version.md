@@ -1,6 +1,6 @@
 # ADR 0017. PostgreSQL major versions
 
-**Status:** Accepted (2026-10-18). Implementation in 2.0.
+**Status:** Accepted (2026-10-18). Not implemented as of 1.2.2 (`docs/20-roadmap.md`).
 
 **Context.** PostgreSQL 18 is supported until 2030; at some point a move to another major
 version will be needed. `pg_upgrade` needs binaries of both versions and, if it fails halfway,

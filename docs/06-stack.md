@@ -12,14 +12,15 @@ Criteria, in this order: risk of data loss, operational simplicity, supply chain
 | TypeScript (Node) | Same language in UI and server | Wide and risky npm supply chain; the project wants to avoid Node in the build |
 | Rust | Memory safety, single binary | Slower development; fewer people able to maintain it; the problem does not demand that performance |
 
-Version: `go.mod` declares `go 1.26` as the minimum (the system version on lizeth). CI builds
-with the latest patch version of the current stable branch (1.27 as of 2026-10-18).
+Version: `go.mod` declares `go 1.26.0` as the minimum (the system version on lizeth). CI runs
+the checks with the latest patch of Go 1.26 and of Go 1.27, and the image is built with
+`golang:1.27-trixie` pinned by digest.
 
 ## 2. UI: **server-side templates** (no htmx, see ADR 0004)
 
 | Option | Pros | Cons |
 |---|---|---|
-| **`html/template` + vendored htmx + own CSS** | No Node toolchain; a single binary with embedded assets; automatic escaping against XSS; live progress with SSE; little JavaScript to audit | Very rich interactions cost more; untyped templates |
+| **`html/template` + own `app.js` + own CSS** | No Node toolchain; a single binary with embedded assets; automatic escaping against XSS; live progress with SSE; little JavaScript to audit | Very rich interactions cost more; untyped templates |
 | SPA (Svelte, React, Vue) | Rich interaction; clean API separation | npm toolchain, hundreds of packages, two applications to maintain |
 | `templ` (typed templates for Go) | Typing | Extra generation tool; not needed for the size of this UI |
 
@@ -57,9 +58,13 @@ Details and per-version alternatives in ADR 0006.
 | Need | Chosen | Alternatives evaluated |
 |---|---|---|
 | Per-library backup, restorable in Resolve | `pg_dump` custom format orchestrated by sqsolve | `prodrigestivill/postgres-backup-local` (no verification, catalog or safe restore); cron scripts (no state or UI) |
-| Encrypted offsite copy (1.1) | **restic** (BSD-2, single binary, encryption and deduplication by default, `restic check`) | rclone (no encryption by default or repository verification); Borg (requires a Borg server over SSH); Kopia (valid, less widespread on NAS) |
-| Point-in-time recovery (2.0) | **pgBackRest** (MIT) | WAL-G (valid; pgBackRest has better verification and documentation); Barman (Python, meant for dedicated servers) |
-| Encryption of individual files (1.1) | **age** (`filippo.io/age`, BSD-3) | GPG (complex to operate) |
+| Encrypted offsite copy (not implemented) | **restic** (BSD-2, single binary, encryption and deduplication by default, `restic check`); not in the image | rclone (no encryption by default or repository verification); Borg (requires a Borg server over SSH); Kopia (valid, less widespread on NAS) |
+| Point-in-time recovery (not implemented) | **pgBackRest** (MIT) | WAL-G (valid; pgBackRest has better verification and documentation); Barman (Python, meant for dedicated servers) |
+| Encryption of individual files (not implemented) | **age** (`filippo.io/age`, BSD-3); not a dependency | GPG (complex to operate) |
+
+Only the first row exists in 1.2.2. The other three are not implemented; restic and pgBackRest
+are the tools chosen for directions in `20-roadmap.md`. None of the three is in the image or in
+`go.mod`.
 
 ## 6. Job scheduling
 
@@ -81,11 +86,13 @@ three simple protocols.
 ## 8. Authentication
 
 - Passwords: Argon2id from `golang.org/x/crypto/argon2`.
-- TOTP: own implementation of RFC 6238 (about 60 lines, tested with the RFC vectors).
-- OIDC (2.0): `github.com/coreos/go-oidc/v3` (Apache-2.0) with `golang.org/x/oauth2`.
-- WebAuthn (2.0): `github.com/go-webauthn/webauthn` (BSD-3), to be evaluated in its ADR.
+- TOTP: own implementation of RFC 6238 (`internal/auth/totp.go`, 75 lines, tested with the RFC
+  vectors).
+- OIDC and WebAuthn are not implemented (`20-roadmap.md`). The candidates, if they are, are
+  `github.com/coreos/go-oidc/v3` (Apache-2.0) with `golang.org/x/oauth2` and
+  `github.com/go-webauthn/webauthn` (BSD-3); each one would need its ADR.
 
-## 9. Closed list of Go dependencies for 1.0
+## 9. Closed list of Go dependencies
 
 | Module | License | Use |
 |---|---|---|
@@ -96,14 +103,16 @@ three simple protocols.
 | `github.com/adhocore/gronx` | MIT | Cron expressions |
 | `github.com/klauspost/compress` | BSD-3 | Only its `zstd` package, for the experimental project and grade export (ADR 0019) |
 
-The closed list for 1.0 has six modules since 2026-10-20. This is a correction of the list, not a
-new dependency: `golang.org/x/sys` and `github.com/klauspost/compress` were already imported by
+The closed list has six modules since 2026-10-20, the same six in 1.2.2. This was a correction
+of the list, not a new dependency: `golang.org/x/sys` and `github.com/klauspost/compress` were already imported by
 the code (the first was missing from this table, the second was marked `// indirect` in `go.mod`
 although `internal/drp/blobs.go` imports it directly). `go.mod` now lists both as direct
 requirements, and CI fails if it differs from what `go mod tidy` writes (`make tidy-check`).
 
-Tests only: `github.com/testcontainers/testcontainers-go` (MIT), `github.com/chromedp/chromedp`
-(MIT), `github.com/getkin/kin-openapi` (MIT).
+Tests add no module: they use the standard library, throwaway PostgreSQL clusters started by
+`internal/testpg` from local binaries, and Python scripts in `test/`. `testcontainers-go`,
+`chromedp` and `kin-openapi` were considered for container, browser and OpenAPI tests and are not
+dependencies: there is no browser test and no `api/openapi.yaml`.
 
 No vendored third-party assets: styles, scripts and the SVG brand are our own
 (`internal/web/static`).
@@ -113,17 +122,18 @@ review of the transitive dependency tree (`go mod graph`).
 
 ## 10. Image and packaging
 
-- The sqsolve image is `FROM postgres:18.x-trixie@sha256:...` (ADR 0016) to guarantee that
-  `pg_dump` and `pg_restore` have the same major version as the server and to share layers with
-  the PostgreSQL container.
+- The sqsolve image is `FROM postgres:18.x-trixie@sha256:...` (`postgres:18.6-trixie` in 1.2.2,
+  ADR 0016) to guarantee that `pg_dump` and `pg_restore` have the same major version as the
+  server and to share layers with the PostgreSQL container.
 - The binary is built in a `golang:<version>-trixie` stage pinned by digest, with
   `CGO_ENABLED=0 -trimpath -buildvcs=false` and the version and commit injected through
   `-ldflags`: the build context has no `.git`, so there is nothing to stamp. `-w` drops the DWARF
   data but the symbol table stays, because `govulncheck -mode=binary` needs it to scan the binary
   that ships (it reports false positives on one stripped with `-s`). Two builds of the same
-  commit with the same toolchain give the same binary (checked on 2026-10-20 with Go 1.27.2 for
-  linux/amd64: identical SHA-256 with and without `go build -a`). The layers of the image are not
-  reproducible: their timestamps are those of the build.
+  commit with the same toolchain gave the same binary in one check by hand on one machine
+  (2026-10-20, Go 1.27.2, linux/amd64: identical SHA-256 with and without `go build -a`). Two
+  builds in clean environments have not been compared, so RNF-MAN-03 has no evidence. The
+  layers of the image are not reproducible: their timestamps are those of the build.
 - The two base images are written literally in their `FROM` lines so that Dependabot can update
   them. The PostgreSQL reference (tag and digest) must be the same in the `Dockerfile` and in
   `deploy/compose.yaml`; `make pg-image-check` verifies it in CI.
@@ -136,14 +146,19 @@ review of the transitive dependency tree (`go mod graph`).
 | `make` | Single entry point: `make check`, `make test-integration`, `make image` |
 | `gofmt`, `go vet`, `staticcheck` | Quality |
 | `govulncheck` | Known vulnerabilities in dependencies and the standard library |
-| `gosec` | Static security analysis (planned; not run in CI yet) |
 | Docker Buildx | Multi-architecture images and their SBOM and provenance attestations (`sbom: true`, `provenance: true`) |
-| `syft` | SBOM in SPDX and CycloneDX (planned; today the SBOM is the one Buildx attaches to the image) |
 | `cosign` | Keyless signing of the images published for `v*` tags |
 | Dependabot | Weekly pull requests for the base images and the GitHub Actions, with a 7-day cooldown |
-| OWASP ZAP (Docker image) | UI scan in CI (planned) |
+| `python3` | Scripts in `test/`: failure scenarios (`make scenarios`), the error code check (`make errors-check`) and the image walkthrough of the CI smoke job |
+| `make fuzz` | Every Go fuzz target: 10 s each in CI, 5 minutes each nightly (`fuzz.yml`) |
 
-CI is written for GitHub Actions with syntax compatible with Forgejo Actions, so the integration
-can be moved or duplicated to a free forge without rewriting it. The reusable workflow
-(`workflow_call`, which `image.yml` uses to run `ci.yml`) and Dependabot were added on 2026-10-20
-and have not been checked on Forgejo: To be confirmed.
+`gosec`, `syft` and OWASP ZAP are not part of the build or CI: the SBOM is the one Buildx
+attaches to the image, and an OWASP ZAP baseline was run by hand once for 1.0 (`08-security.md`, "Security review of
+1.0").
+
+The forge is GitHub (`github.com/donutinit/sqsolve`) and CI is GitHub Actions: `ci.yml` (checks,
+integration tests against PostgreSQL 18, failure scenarios and the image smoke test, on every
+push to `main` and every pull request), `image.yml` (runs `ci.yml` and then publishes the
+multi-architecture image to `ghcr.io/donutinit/sqsolve`, signed for `v*` tags), `release.yml`
+(the GitHub release with the compose file pinned to the version) and `fuzz.yml` (nightly
+fuzzing). The workflows have not been run on any other forge.

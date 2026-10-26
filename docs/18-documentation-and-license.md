@@ -1,34 +1,35 @@
 # 18. Documentation, license and trademarks
 
-## 1. Documentation plan
+## 1. Documents
 
-| Document | Audience | Content | Version |
-|---|---|---|---|
-| `README.md` | Everyone | What it is, quick installation, links | 0.1 |
-| `docs/manual/installation.md` | Administrator | Requirements, YAML, volumes, first start, per platform | 0.9 |
-| `docs/manual/administration.md` | Administrator | Every screen and job in the panel | 0.9 |
-| `docs/manual/editors.md` | Editors | Connect Resolve step by step per operating system, collaborate, workstation ports and firewall, what to do if something fails | 0.9 |
-| `docs/manual/backups.md` | Administrator | 3-2-1 strategy, verification, restore, drills | 0.9 |
-| `docs/manual/remote-access.md` | Administrator | WireGuard and Headscale, what works over VPN (per PoC-08) | 1.0 |
-| `docs/manual/media.md` | Administrator | Content of `15-media-storage.md` as a guide | 1.0 |
-| `docs/manual/errors.md` | Everyone | Every `SQS-` code with its message, generated with `make errors` (done on 2026-10-19) | 0.9 |
-| `docs/runbooks/*.md` | Administrator | In 1.0: restore and revert, recover installation, upgrade sqsolve (done on 2026-10-19). In 1.1: upgrade Resolve, rotate credentials, leaked credential, loss of the master key, full disk, PostgreSQL does not start | 1.0 |
-| `docs/` technical (this plan) | Developers, agents | Architecture, ADRs, contracts | 0.1 and living |
-| `api/openapi.yaml` | Integrators | API reference | 0.5 |
-| `CONTRIBUTING.md` | Contributors | Environment, style, tests, how to propose changes (done on 2026-10-19) | 0.1 |
-| `SECURITY.md` | Researchers | How to report vulnerabilities (done on 2026-10-19, GitHub private reporting) | 0.1 |
-| `CHANGELOG.md` | Everyone | Changes per version; source of the notes of each release on GitHub (done on 2026-10-19) | 0.1 |
+| Document | Audience | Content |
+|---|---|---|
+| `README.md` | Everyone | What it is, quick installation, links |
+| `docs/manual/user-guide.md` | Administrators and editors | Requirements, installation with the compose file, first start, libraries and Resolve workstations, backups, restore, access per library, panel users, notifications and API, export, console, updating, moving to another server, troubleshooting |
+| `docs/manual/errors.md` | Everyone | Every `SQS-` code with its message, generated with `make errors` (230 codes in 1.2.2) |
+| `docs/runbooks/*.md` | Administrators | Restore a backup and revert, recover an installation on another server, upgrade sqsolve, a backup with an invalid path |
+| `docs/` technical | Developers, agents | Architecture, requirements, contracts, ADRs (`docs/adr`), PoC records (`docs/poc`), acceptance records (`docs/acceptance`), interface checklist (`docs/ui`), visual identity (`docs/brand`); index in `docs/README.md` |
+| `api/schemas/manifest.v1.json` | Integrators | JSON schema of the backup manifest. The API is described in `10-api.md`; there is no `api/openapi.yaml` |
+| `CONTRIBUTING.md` | Contributors | Environment, style, tests, publishing a version, how to propose changes |
+| `SECURITY.md` | Researchers | How to report vulnerabilities (GitHub private reporting) |
+| `CHANGELOG.md` | Everyone | Changes per version; source of the notes of each release on GitHub |
+
+The user guide is the only manual: there are no separate manuals for installation,
+administration, editors or backups, and none for remote access or media storage
+(`15-media-storage.md` is the technical document). There are no runbooks for upgrading Resolve,
+rotating credentials, a leaked credential, the loss of the master key, a full disk or a
+PostgreSQL that does not start.
 
 Rules:
 
 - English is the only language: code, interface and documentation. No second language is
   maintained.
 - User documentation does not mention features that do not exist yet.
-- Every panel screen links to its section of the manual.
+- Panel screens do not link to the manual; the notes of the compose file (`x-notes`, shown by
+  TrueNAS) link to the user guide.
 - Runbooks are numbered steps, with the expected output of each command and how to know it
   finished well.
-- They are published as Markdown in the repository; a generated static site is optional and
-  comes later.
+- They are published as Markdown in the repository; there is no generated static site.
 - Screenshots of sqsolve itself. Of Resolve, only the essential ones, made by the project and
   used to illustrate interoperability.
 
@@ -46,11 +47,15 @@ Decision in ADR 0001. Consequences:
 
 - `LICENSE` contains the official text of the GNU AGPL version 3 (gnu.org, SHA-256
   `0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0`).
-- Every source file carries `SPDX-License-Identifier: AGPL-3.0-only`.
-- The panel shows in "About" a link to the source code of the exact running version
-  (requirement of section 13 of the AGPL).
+- `SPDX-License-Identifier: AGPL-3.0-only` heads every Go file, the Python scripts in `test/`,
+  the workflows, the compose file, the `Makefile`, the `Dockerfile`, `app.js` and the
+  stylesheet. The HTML templates, three of the seven SQL migrations and the two Python tools in
+  `docs/brand/tools` do not carry it.
+- The panel shows in "About" the running version and its commit, with a link to the source
+  repository (section 13 of the AGPL); the source of the running version is that commit.
 - Allowed dependencies: licenses compatible with AGPLv3 (MIT, BSD, ISC, Apache-2.0, MPL-2.0,
-  LGPL, GPLv3). Tested in CI with a license listing from the SBOM.
+  LGPL, GPLv3). CI does not check them: there is no license listing from the SBOM, and every new
+  dependency needs an ADR (`06-stack.md`).
 - Contributions: no CLA. Contributions come in under the same license as the project
   ("inbound = outbound"), explained in `CONTRIBUTING.md`.
 
@@ -66,8 +71,8 @@ code license so they can be copied into installations).
 - The name "sqsolve", the logo (`docs/brand`, ADR 0020) and the interface do not imitate
   Blackmagic or WireBear. The symbol evokes a node of the color page as a generic shape, without
   reproducing any element of the Resolve interface.
-- Notice in the README and in "About": independent project, with no relationship with or
-  endorsement by Blackmagic Design or WireBear.
+- Notice in the README (independent project, not affiliated with or endorsed by Blackmagic
+  Design) and in "About" (independent project, unrelated to Blackmagic Design or WireBear).
 - No Blackmagic binaries, schemas, templates, manuals or screenshots are distributed.
 - Interoperability: the project only observes the external behaviour of software the user holds
   legally (connections to their own server, files generated by their own software). Before

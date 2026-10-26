@@ -32,8 +32,8 @@ Project library labvacia192.168.50.172 is incompatible with the running applicat
 
 Resolve does not initialize an empty database on connect: it marks it incompatible and does not
 use it. E0 does not work with 21.1.1; a precreated database would need sqsolve to load Resolve's
-structure (E2, templates, 1.1). The "Empty database" option in the panel is marked as not
-compatible.
+structure (E2, templates, `docs/20-roadmap.md`). The "Empty database" option in the panel is
+marked as not compatible.
 
 **Step 3, database owned by `sqsolve_admin`.** Not done: it requires "Create" in the Project
 Manager.
@@ -63,7 +63,7 @@ reflect newly created projects.
 - Minimum privileges in daily use: `LOGIN` without `CREATEDB`, confirmed.
 - `max_connections`: an idle workstation uses 1 connection and up to 6 in bursts; sqsolve's
   default value is more than enough for a small studio.
-- Per-person credentials (SQS-700): pending a test with Resolve.
+- Per-person credentials: not tested with Resolve (step 5).
 
 ## Status
 

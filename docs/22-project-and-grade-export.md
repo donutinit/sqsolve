@@ -148,13 +148,15 @@ Kit for a new Resolve version:
    `app_version` and `project_version` come from the comment Resolve writes (§2); `verified`
    lists what passed the kit.
 
-Fingerprint verified today: `sha256:2bf9e02acd6f8389b240fddf0cb312b8a7b6a72dff48d8101609e6a80f150fee`,
-Resolve 21.1.1 (`21.1.1.0010`), `DbPrjVer` 17.
+The only verified fingerprint (2026-10-19):
+`sha256:2bf9e02acd6f8389b240fddf0cb312b8a7b6a72dff48d8101609e6a80f150fee`, Resolve 21.1.1
+(`21.1.1.0010`), `DbPrjVer` 17.
 
 ## 7. UI, API and permissions
 
-**Export** tab in the library detail, with the notice "Experimental: no guarantee" and the
-fingerprint status: "verified with Resolve 21.1.1" or "not verified". A library can hold
+**Export** tab in the library detail, with an "Experimental" badge, a "no guarantee" notice and
+the status of the library schema: "Verified with Resolve 21.1.1" or "Not verified with Resolve".
+A library can hold
 hundreds of projects, so the catalog shows one view at a time, each with a search box:
 
 - **Projects**: table with thumbnail, name, folder, modification date, how many stills the
@@ -201,7 +203,8 @@ and the backup date. Each download is recorded in the audit log as `backup.expor
 | `GET /backups/{id}/export/projects/{pid}`, `.../grades/{sid}`, `.../grades/albums/{vid}` | `export` |
 
 `library.export` action for operator and administrator; `export` token scope. Each download is
-recorded in the audit log with type, id, name, files, bytes, fingerprint and the export notes.
+recorded in the audit log with type, id, name, files, bytes, fingerprint and the export notes; a
+download whose entry cannot be written is not served (ADR 0026).
 
 ## 8. Codes
 

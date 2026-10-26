@@ -4,23 +4,24 @@
 
 | Objective | Default value | Configurable |
 |---|---|---|
-| RPO (maximum loss) | 24 h with the daily schedule; 4 h with the "working hours" preset | Yes, per library |
-| RTO (restoring a library) | Duration of `pg_restore` plus under 1 min of swap | Measured in PoC-10 and published by size |
-| Verification | Level 1 on every backup; level 2 weekly on the latest of each library | Yes |
+| RPO (maximum loss) | Activity-based mode (the default): the check interval, 15 min by default, plus the duration of the backup; 24 h with the daily preset; 4 h with the "every 4 hours" presets (§10) | Yes, per library |
+| RTO (restoring a library) | Duration of `pg_restore` plus under 1 min of swap | No. Durations by size: to be confirmed (PoC-10 has not been run); in the 1.2.2 acceptance a replacement of a test library took 10 to 11 s (`docs/acceptance/1.2.2.md`) |
+| Verification | Level 1 on every backup; level 2 weekly on the newest verified backup of each library | No: the weekly schedule is fixed (§12); level 2 can also be run by hand on any backup |
 | Most recent verified backup | Never older than 48 h on active libraries (otherwise the `backup.stale` alert) | Yes |
 
 ## 2. Protection layers
 
-| Layer | What it protects | Version |
+| Layer | What it protects | In sqsolve |
 |---|---|---|
-| L1. Logical backups per library on the `backups` volume | Human error, logical corruption, granular restore | 1.0 |
-| L2. Encrypted offsite copy with restic | Loss of the server or of the backups disk | 1.1 |
-| L3. PITR with pgBackRest (continuous WAL) | Loss of minutes, not hours | 2.0 |
-| L4. Host file system snapshots (ZFS, Btrfs) | The whole host, at block level | Operational recommendation; outside sqsolve |
-| L5. Recovery kit and control plane backup | Rebuild sqsolve on another server | 1.0 |
+| L1. Logical backups per library on the `backups` volume | Human error, logical corruption, granular restore | Yes |
+| L2. Encrypted offsite copy with restic | Loss of the server or of the backups disk | No (§9); on the roadmap (`docs/20-roadmap.md`) |
+| L3. PITR with pgBackRest (continuous WAL) | Loss of minutes, not hours | No; a long-term roadmap item (`docs/20-roadmap.md`) |
+| L4. Host file system snapshots (ZFS, Btrfs) | The whole host, at block level | No: operational recommendation, outside sqsolve |
+| L5. Recovery kit and control plane backup | Rebuild sqsolve on another server | Yes |
 
 Documented recommendation: the `backups` volume on a different disk or pool than `pgdata`, and
-at least one copy outside the building (L2 or NAS replication).
+at least one copy outside the building, which sqsolve does not make (NAS replication or another
+tool of the host, §9).
 
 ## 3. Backups volume layout
 
@@ -33,8 +34,8 @@ at least one copy outside the building (L2 or NAS replication).
         client_x_20261018T070000Z_01JB....backup
         client_x_20261018T070000Z_01JB....manifest.json
   _system/
-    sqsolve-state-20261018T040000Z.db    daily SQLite copy (VACUUM INTO)
-    audit-202610.jsonl                    monthly audit log export
+    sqsolve-state-20261018T040000Z.db    daily SQLite copy (VACUUM INTO); the newest 30 are kept
+    audit-202610.jsonl                    audit log of the month (control plane backup)
   _import/                                folder for importing external files
 ```
 
@@ -56,55 +57,61 @@ Rebuilding the catalog adds a manifest only when it is valid, stays on the volum
 own backup file (`x.manifest.json` next to `x.backup`); the rest are skipped with a warning in
 the job log.
 
-Permissions: directories 0700 and files 0600 for the sqsolve UID. The marker is created in the
-wizard and checked before every write (RNF-FIA-04): if the volume is not mounted, the path
-exists empty inside the container and writing there would fill the container layer or the wrong
-disk.
+Permissions: directories 0700 and files 0600 for the sqsolve UID. The marker is written by
+`sqsolve-init` (ADR 0023) and checked before every write (RNF-FIA-04): if the volume is not
+mounted, the path exists empty inside the container and writing there would fill the container
+layer or the wrong disk.
 
 ## 4. Backup procedure
 
-Job `backup.create`. Steps (each is recorded in `job_steps`):
+Job `backup.create`. Before its first step it checks that the library is `active` or
+`maintenance` (`SQS-B003`) and that the backups volume carries its marker (otherwise a critical
+`storage.volume_missing` event and `SQS-S001`), and emits `backup.started`. A restore of the
+same library never runs at the same time: the per-library lock keeps them apart (§11). Steps
+(each is recorded in `job_steps`):
 
-1. **preflight**: library in `active` or `maintenance`; valid marker; free space greater than or
-   equal to `max(1.5 × size of the last backup, 0.5 × pg_database_size)` (if there is no
-   history, `pg_database_size`); no restore of that library in progress.
-2. **snapshot**: on the control connection the database's activity mark is read first (`07`
-   §7), outside any transaction; then `BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY` and
+1. **prepare**: the database exists (`SQS-B002`); free space on the backups volume greater than
+   or equal to `max(1.5 × size of the newest verified backup, 0.5 × pg_database_size)` (with no
+   verified backup, `0.5 × pg_database_size`), otherwise `SQS-B012`.
+2. **dump**: on the control connection the database's activity mark is read first (`07` §7),
+   outside any transaction; then `BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY` and
    `SELECT pg_export_snapshot()`. The mark is stored with the backup (`activity_mark`) and in the
    manifest. Reading it before the snapshot means a write that lands in between is in the dump
    and not in the mark, so the activity gate (§10) backs up once more; in the other order the
-   write would be counted in the mark, missing from the dump, and never backed up.
-3. **dump**: `pg_dump --dbname=<slug> --format=custom --quote-all-identifiers --snapshot=<id>
-   --lock-wait-timeout=60s --file=<path>.partial` (default `pg_dump` compression; `zstd`
-   optional if PoC-04 confirms it does not affect restoring from Resolve). Credentials through a
-   temporary 0600 `PGPASSFILE` in the container's `/tmp` (tmpfs), deleted when finished.
-4. **counts**: in the same transaction as step 2, `SELECT count(*)` for each `public` table
-   listed in the catalog (sanitized identifiers). For libraries with more than 10 million
-   estimated rows, estimates from `pg_class.reltuples` are used and the manifest says so.
-   `COMMIT`.
-5. **fingerprint**: schema fingerprint (`07` §9).
-6. **seal**: `fsync` the file, `rename` to `.backup`, `fsync` the directory; SHA-256 of the
-   file; write the manifest with the same atomic pattern; record in the catalog with state
-   `ok`.
-7. **verify_l1**: recompute SHA-256 reading from disk and `pg_restore --list` without errors;
-   `verify_status = l1_ok`. If it fails: state `failed`, delete file and manifest, event
-   `backup.verify_failed`. A new backup whose check cannot finish (the job was cancelled) is
-   discarded with its job.
-8. **post**: event `backup.succeeded`, notifications, enqueue retention and offsite copy if
-   applicable.
+   write would be counted in the mark, missing from the dump, and never backed up. Then
+   `pg_dump --dbname=<slug> --format=custom --quote-all-identifiers --snapshot=<id>
+   --lock-wait-timeout=60000 --file=<path>.partial` (60 s; default `pg_dump` compression, the
+   only one sqsolve uses: PoC-04 did not test compression). Credentials through a temporary 0600
+   `PGPASSFILE` in the container's `/tmp` (tmpfs), deleted when finished. While `pg_dump` runs,
+   in the snapshot's transaction: `SELECT count(*)` for each `public` table listed in the
+   catalog (sanitized identifiers; for libraries with more than 10 million estimated rows,
+   estimates from `pg_class.reltuples` are used and the manifest says so) and the schema
+   fingerprint (`07` §9); then `COMMIT`.
+3. **seal**: `fsync` the file, `rename` to `.backup`, `fsync` the directory; SHA-256 of the
+   file; `pg_restore --list` reads its header (versions, compression); write the manifest with
+   the same atomic pattern; record in the catalog with state `ok`.
+4. **verify_l1**: recompute SHA-256 reading from disk and `pg_restore --list` without errors;
+   `verify_status = l1_ok`. If it fails: state `failed`, file and manifest deleted, event
+   `backup.failed`. A new backup whose check cannot finish (the job was cancelled) is discarded
+   with its job. On success the library's schema fingerprint is recorded and the
+   `backup.succeeded` event goes out (to the channels whose rules match it, §13).
+5. **retention**: the retention of the library (§6) runs at once.
+
+sqsolve makes no offsite copy (§9).
 
 Impact on Resolve: `pg_dump` takes `ACCESS SHARE` locks, which only conflict with DDL (`ALTER`,
 `DROP`, `TRUNCATE`). If Resolve requests an exclusive lock during the backup, it waits, and so
-do the queries that arrive behind it. PoC-10 measures whether this happens in practice; the
-guide recommends scheduling backups outside Resolve version upgrade hours.
+do the queries that arrive behind it. Whether this happens in practice is not validated: PoC-10,
+which measures it, has not been run. The guide recommends scheduling backups outside Resolve
+version upgrade hours.
 
 ## 5. Verification
 
 | Level | What it does | When |
 |---|---|---|
 | L1 | SHA-256 matches the manifest; `pg_restore --list` reads the index | After every backup and before every restore |
-| L2 | Restores into `sqsolve_verify_<id8>` with `--no-owner --no-privileges --exit-on-error`; compares per-table counts and fingerprint with the manifest; drops the database | Weekly (Sunday 05:00) for the latest backup of each active library; manual on any backup |
-| L3 | Drill with Resolve: a human opens a restored copy in Resolve and checks a project | Quarterly, guided by the documentation checklist; recorded by hand in the interface |
+| L2 | Restores into `sqsolve_verify_<id8>` with `--no-owner --no-privileges --single-transaction --exit-on-error`; compares per-table counts and fingerprint with the manifest; drops the database | Weekly (Sunday 05:00, `system.verify_all`) for the newest verified backup of each library in `active` or `maintenance`; by hand on any backup |
+| L3 | Drill with Resolve: a human restores a backup as a new library, opens it in Resolve and checks a project | By hand; quarterly is recommended. sqsolve does not schedule, remind or record it |
 
 The verification database has `CONNECTION LIMIT 2` (the restore and the comparison) and no
 library role can enter (it is not in `pg_hba.conf`).
@@ -165,13 +172,17 @@ Algorithm (`Retain` in `internal/core/retention.go`, a pure function with proper
    old; those that satisfy some `keep_*` rule. `keep_last` counts the most recent **by
    insertion order** in the catalog (the SQLite row order), which a clock that jumps cannot
    change: after the clock goes back, the backup just taken is still among the newest. Days,
-   weeks and months use `started_at` in the policy's time zone.
+   weeks and months use `started_at` in the policy's time zone. Protected backups are not set
+   apart from the `keep_*` rules: a `pre_restore` backup also takes one of the `keep_last`
+   places, and every replace or revert leaves two (§7.2, §7.4), so a few restores can push
+   regular backups out, including the one just restored (`docs/19-risks.md` §5 K-09).
 3. If after that fewer than `min_verified` verified ones remain, keep the most recent verified
    ones (by insertion order) until it is met. Backups of the live database count first: a
    backup of a previous state (`source_db` `<slug>__prev_*`, taken before it is dropped) holds
    an older state and only counts when the live database has too few.
-4. The rest become `expired`. Deletion in two phases: first the file and the manifest are
-   removed and their folder is synced (`fsx.RemoveFiles`), then the row becomes `deleted`. A
+4. The rest expire and are deleted in two phases: first the file and the manifest are removed
+   and their folder is synced (`fsx.RemoveFiles`), then the row becomes `deleted` (reason
+   `retention`), and one `backup.expired` event says how many went. A
    folder that cannot be synced leaves the row as it was and the deletion fails, so a power cut
    never brings back files the catalog calls deleted; the next attempt syncs the folder again
    even if the files are already gone. Housekeeping removes `deleted` rows after 365 days (the
@@ -183,7 +194,9 @@ Retention takes no library lock. Instead, an expired backup that a queued or run
 (new, replace, recreate), verification or export from a backup is going to read is kept until
 the next run, so a job never finds its backup deleted under it.
 
-The preview (`GET .../backup-policy/preview`) uses the same function with the proposed policy.
+The Schedule tab of a library shows the effect of its saved policy today (how many backups are
+kept and how many the next pass deletes), computed with the same function. There is no preview
+of a policy before it is saved, and no API endpoint for it.
 
 The **newest verified backup** of a library (the one Recreate uses by default, the weekly
 verification checks, the panel shows and the manual-delete guard protects) is the newest usable
@@ -202,7 +215,7 @@ except `purged` (a `missing` library needs it to be recreated).
 |---|---|---|
 | As a new library | None to the active one | Recover a project: open the copy in Resolve, export `.drp` and import it into the original |
 | Replace | Changes after the backup are lost (reversible for 7 days) | The active library is damaged or everything must go back |
-| Download | None | Restore from Resolve somewhere else |
+| Download | None | Restore the `pg_dump` archive with `pg_restore` somewhere else; whether Resolve's own Restore accepts it is not validated (PoC-04) |
 
 ### 7.2 Replacement by swap
 
@@ -230,15 +243,17 @@ stateDiagram-v2
   failed --> [*]
 ```
 
-Safety rules of the swap (audit findings C1, M, M2 and M3, ADR 0024):
+Safety rules of the swap (ADR 0024):
 
 - The job re-validates at run time what the request checked (state `active` or `maintenance`);
   a stale job fails with `SQS-R003` and touches nothing. Every failure path drops only the
-  `__restore` database this job created.
+  `__restore` database this job created. A replacement is queued without the unique job
+  identity of ADR 0028 (`docs/19-risks.md` §5 K-03): a second request for the same library
+  queues a second job, which runs after the first and replaces the result of the first.
 - The lock is never taken without its journal: if the journal cannot be written, the job fails
   with `SQS-R057` before locking anything (the same applies to revert).
-- Every step of a job is stored before it runs, and a journal must land on the row of its step
-  (PLAN P0.2): a step row that cannot be stored stops the job with `SQS-J040` before the step
+- Every step of a job is stored before it runs, and a journal must land on the row of its step:
+  a step row that cannot be stored stops the job with `SQS-J040` before the step
   does anything, and a journal that changes no row or fails is `SQS-J041`. The journal of the
   copy being restored is required before the copy is created (`SQS-R059`), and so is the one
   written between the two renames: without it the original goes back under its name and the
@@ -266,8 +281,8 @@ Safety rules of the swap (audit findings C1, M, M2 and M3, ADR 0024):
   longer job. If this backup fails the job still succeeds with a warning, and the previous state
   is kept until a backup of it succeeds.
 
-SQL steps of the swap (as `sqsolve_admin`, owner of the databases according to PoC-01; if not,
-with the superuser):
+SQL steps of the swap (as `sqsolve_admin`, which acts as owner of the library's databases
+through its membership in the library role, `07` §3 and PoC-01):
 
 ```sql
 ALTER DATABASE client_x ALLOW_CONNECTIONS false;
@@ -285,12 +300,13 @@ which is why the journal exists.
 Verified on 2026-10-19 (PoC-09, `docs/poc/poc-09-forced-disconnect.md`): with "terminate
 sessions", Resolve 21.1.1 reconnects on its own to the restored database and keeps saving the
 project it had in memory. That is why the guide asks to close the project before replacing and
-reopen it afterwards; a technical safeguard is left for 1.1.
+reopen it afterwards. sqsolve has no technical safeguard against it; a lock after a replacement
+is on the roadmap (`docs/20-roadmap.md`, `docs/19-risks.md` T-05).
 
 Seen on screen on 2026-10-26 (acceptance 1.2.2, Resolve 21.1.1 on Linux): Resolve shows no
 dialog, its next save writes its pending changes into the restored database (or fails on a
 foreign key and reloads the project), and without that reload the old contents stay on screen
-until the project is reopened. A revert behaves the same. The replace and revert pages now always
+until the project is reopened. A revert behaves the same. The replace and revert pages always
 ask to close the project in Resolve on every workstation first.
 
 ### 7.3 Recovery after a cut during the swap
@@ -391,8 +407,8 @@ Before restoring, the manifest is compared with the server:
 |---|---|
 | Backup's `pg_dump` of a higher major version than `pg_restore` | Rejected by the L1 check that runs before every restore: `pg_restore` cannot read the archive (`SQS-B020` with `SQS-B041` in the detail) |
 | Backup's PostgreSQL older than the current one | Allowed |
-| Backup fingerprint differs from the active library's | Notice: "This backup is from another Resolve version (declared: 20.3.2). Workstations on 21.x will upgrade it when opening it and 20.3.2 will no longer open projects that are opened in 21" |
-| Backup imported without a manifest | A manifest is generated with `pg_restore --list` and SHA-256; without counts, so L2 only compares the fingerprint and it is marked "partial verification" |
+| Backup fingerprint differs from the active library's | Notice on the restore page: "This backup has a different structure than the current library: it probably comes from another Resolve version (declared: ...). Workstations with a newer version will upgrade it when opening it, and the older version will stop opening those projects." A replacement also logs a warning in its job |
+| Imported backup | sqsolve writes its manifest from `pg_restore --list` and the SHA-256, without fingerprint or counts, so L2 only checks that it restores and marks it "partial verification" (§7.6) |
 
 ### 7.6 Import
 
@@ -413,7 +429,8 @@ A file in `_import/` (copied there or uploaded) goes through these steps:
    source during the import refuses it (`SQS-B074`), removes the link and leaves the file in
    `_import/`.
 5. The manifest is written and the backup catalogued as `ok` with `verify_status = l1_ok`
-   (checksum and a full read; L2 is still needed for `l2_ok`). Only then, with "delete the
+   (checksum and a full read). The manifest has no counts or fingerprint, so an L2 verification
+   of an imported backup ends `partial`, never `l2_ok` (§7.5). Only then, with "delete the
    original", the name in `_import/` is removed, and only if it is still the file that was
    imported (`os.SameFile`, same size and modification time). A file the user replaced or wrote
    to during the import is kept, with a warning in the job log and a
@@ -477,7 +494,7 @@ with a note and a `library.reconcile_pending` warning, and the job stays pending
 every start runs the same check again until it finishes (§8). If the journal itself cannot be
 written, the job stops with `SQS-R058` before creating anything.
 
-Every lookup and write of a recreate is checked (PLAN P0.4): a role lookup, the storage of a
+Every lookup and write of a recreate is checked: a role lookup, the storage of a
 new password or a member's grant that fails stops the job with `SQS-R061` before the database is
 created. Once the database is restored, a failure while activating the library (its access, its
 state, its policy, `pg_hba.conf`) never ends as success: the job fails with `SQS-R060`, stays
@@ -486,9 +503,10 @@ pending reconciliation, and the next start adopts the restored database as descr
 ### 7.8 Delete, recover and purge
 
 Delete (`library.delete`) re-validates the state at run time (`SQS-L041`); for a `missing`
-library whose own database came back it stops with `SQS-L050`. It writes its journal before the
-lock and stops with `SQS-L053` without locking anything if it cannot (and with `SQS-L055`, lock
-undone, if the journal of the move cannot be written); until the rename to
+library whose own database came back it stops with `SQS-L050`. A library with a database gets a
+final backup first (kind `pre_delete`; a purge needs it verified, `SQS-L045`). It writes its
+journal before the lock and stops with `SQS-L053` without locking anything if it cannot (and
+with `SQS-L055`, lock undone, if the journal of the move cannot be written); until the rename to
 `slug__trash_<mark>` (the point of no return), any failure gives the library back the access of
 its state (`LOGIN` for active credentials, database open; `NOLOGIN` in maintenance). Sessions of
 a superuser cannot be closed by `sqsolve_admin`: that is logged, and if one is still connected
@@ -500,7 +518,11 @@ the library keeps its state and its lock (it is not reported `missing` while its
 the trash name), a `library.reconcile_pending` warning says so, and every start tries again until
 the library ends `trashed` with its trash database or gets its access back (§8). Recover from the
 trash re-validates the state (`SQS-L042`), the identifier (`SQS-L043`) and that the trash
-database still exists (`SQS-L051`).
+database still exists (`SQS-L051`). Delete, recover and a purge started by hand are queued
+without the unique job identity of ADR 0028 (`docs/19-risks.md` §5 K-03): a second request
+queues a second job, which re-validates the state when it runs and fails (`SQS-L041`,
+`SQS-L042`, `SQS-L044`) without touching anything. The purge of expired trash (§12) uses that
+identity.
 
 Purge (`library.purge`) journals what it is about to drop before dropping anything (`SQS-L047`
 without the journal), then drops the previous state, the trash database and the roles, and
@@ -510,7 +532,11 @@ Every lookup and write is checked; a role that still owns another database stops
 pending reconciliation, and the next start finishes it from its journal (the roles are dropped and
 the library is recorded `purged`; a purge cut before it dropped the trash database leaves the
 library in the trash, where it can be purged again). The backups are always kept. Running the
-purge again also finishes it.
+purge again also finishes it. The journal records the trash database but not the previous
+state: a purge of a library without a trash database, interrupted while its previous-state
+database is still on the server, finds that database owned by the library's role at every start
+and reports `SQS-L046` each time, with a `library.reconcile_pending` warning
+(`docs/19-risks.md` §5 K-04).
 
 ## 8. Failures and interruptions
 
@@ -530,23 +556,21 @@ purge again also finishes it.
 | The jobs pending reconciliation cannot be read | Reading them at a start fails | Every `__restore_*` database is kept, libraries left `restoring` stay so, no previous state is forgotten; warning `library.reconcile_pending` without a library; tried again at every start (§7.3) |
 | A database with the name of a `missing` library is on the server | Reconciliation at every start connects and reads its structure (a database closed to connections is opened for the check) | Adopted (`active`, `library.found`) only when it has tables or the library never had any; otherwise kept, neither adopted nor dropped, closed to connections (also when found open), warning `library.missing` (§7.7) |
 | The previous state of a library is no longer on the server | Reconciliation at every start | `prev_db_name` cleared with a note, unless an invalid database holds the name, the check fails or the library has a pending journal (§7.4) |
-| Disk full | Preflight or `pg_dump` write error | Delete `.partial`, `SQS-B012`, alert; backups outside retention are never deleted to make room |
+| Disk full | The `prepare` step, or a `pg_dump` write error | Delete `.partial`; `SQS-B012` from `prepare` (`SQS-B010` when `pg_dump` runs out of space); `backup.failed` event; backups outside retention are never deleted to make room |
 | Backups volume missing | Marker | Do not write; critical `storage.volume_missing`; backup jobs fail with `SQS-S001` |
-| PostgreSQL down | Connection fails | Retries waiting 30 s, 2 min, 5 min; then `failed` with `SQS-P001` |
+| PostgreSQL down | The health monitor's check (every 5 s) or the job's connection | Critical `postgres.down` (and `postgres.up` when it answers again); the job fails with `SQS-P001`; there is no automatic retry: the next scheduled run or Retry |
 | `pg_dump` waits for a lock for more than 60 s | Exit code and message | `failed` with `SQS-B010`; there is no automatic retry: the next scheduled run or Retry backs it up |
 | Incompatible restore | §7.5 | Rejected before touching anything |
-| Tampered backup file | SHA-256 | `verify_failed`; never used to restore without an explicit, audited force |
+| Tampered backup file | SHA-256 | `verify_status = failed`; the backup can no longer be restored (`SQS-R001`) and there is no override |
 
-## 9. Offsite copies with restic (1.1)
+## 9. Offsite copies
 
-- Destinations: local path (another disk), SFTP, restic REST server, S3-compatible (including
-  self-hosted services such as Garage).
-- After every successful backup (or on its own schedule): `restic backup` of the file and its
-  manifest with tags `library:<slug>`, `kind:<kind>`.
-- Remote retention with `restic forget --prune` and its own policy (by default the same as the
-  local one).
-- Weekly `restic check --read-data-subset=5%`; a failure generates `offsite.check_failed`.
-- Restore from remote: `restic restore` into `_import/` and the normal import flow.
+sqsolve does not make offsite copies: there is no restic integration, no remote destination
+and no remote retention or check. An encrypted off-site copy with restic is on the roadmap
+(`docs/20-roadmap.md`). Until then the `backups` volume is copied with the tools of the host
+(NAS replication, snapshots sent elsewhere, another backup tool); each backup is a file with its
+manifest next to it (§3). A backup file brought back from such a copy goes into the catalog
+through `_import/` and the normal import (§7.6).
 
 ## 10. Scheduler
 
@@ -556,18 +580,22 @@ purge again also finishes it.
   backup that failed its verification, or was never verified, does not close the gate, so an
   unchanged library still gets a good backup. The check is stored in the policy
   (`last_check_at`, `last_check_same`) and produces no job or event. **Cron**: 5-field
-  expressions in the policy's time zone, plus presets: "daily at HH:MM", "every N hours between
-  HH and HH, workdays", "every 4 hours", "every hour".
+  expressions in the policy's time zone, plus presets on the library page: "daily at HH:00"
+  (`0 HH * * *`, 02:00 by default), "every 4 hours from 09:00 to 21:00, Monday to Saturday"
+  (`0 9-21/4 * * 1-6`), "every 4 hours" (`0 */4 * * *`) and "every hour" (`0 * * * *`). The setup
+  wizard offers the activity-based mode (selected), daily at 02:00, the Monday to Saturday preset
+  and every 4 hours.
 - A verified backup whose mark matches the current one remains valid even if old: it does not
   trigger `backup.stale` or paint an amber band on the protection timeline.
 - `backup.stale` only counts as recent a verified backup dated up to now (5 minutes of
   tolerance): one dated in the future, left by a clock that went back, says nothing about its
   real age, and the warning then says to check the server clock.
-- Fixed random offset per library of 0 to 5 min (derived from the ID) so everything does not
-  launch at once.
-- Missed runs: if at startup the last scheduled run was left unrun and was less than
-  `misfire_window_minutes` ago (default 12 h for backups), it is enqueued once. If it was
-  earlier, `backup.missed` is recorded.
+- Fixed offset per library of 0 to 5 min (a hash of the ID) so everything does not launch at
+  once. The system jobs of §12 have no offset.
+- Missed runs: a run that comes due late (the server was down) is enqueued once when it is less
+  than `misfire_window_minutes` late: 12 h for cron backups, 24 h for activity checks and for the
+  system jobs. Later than that, that run is skipped and a `backup.missed` error event is
+  recorded (also for a system job); the schedule moves on to its next run.
 - Daylight saving changes: Go's `time.Location` is used; a time that does not exist is skipped
   and one that repeats runs once.
 
@@ -589,19 +617,24 @@ stateDiagram-v2
   cancelled --> [*]
 ```
 
-- Priority: `restore.*` 100, manual `backup.create` 80, scheduled 50, `backup.verify` 30,
-  maintenance 10.
-- Per-library locks: write mode (restore, delete, maintenance) excludes everything; read mode
-  (backup, verification) admits other reads.
+- Priority: `restore.*` 100, the Resolve upgrade window 95, creating, deleting and recovering a
+  library 90, manual `backup.create` 80, import, catalog rebuild and a verification started from
+  the panel 60, scheduled and automatic backups and an export from a backup 50, purge 40, other
+  `backup.verify` jobs (weekly, API) 30, retention and control plane backup 20, optimization,
+  catalog check and purge of expired items 10, housekeeping 5.
+- Per-library locks: write mode (restores, and creating, deleting, recovering and purging a
+  library) excludes everything; read mode (backup, verification, import, export from a backup)
+  admits other reads. System jobs take no library lock. Heavy jobs (backups, verifications,
+  restores, imports, exports, delete, optimization) also need a free heavy slot.
 - Cancellable: `backup.create`, `backup.verify`, `backup.export`, `backup.import`, `restore.new`
   and `system.vacuum`. Not cancellable: `restore.replace`, `restore.revert`, `restore.recreate`,
   the library jobs (create, delete, recover, purge) and the other system jobs. A backup cut by a
   cancel or a graceful stop ends `interrupted`, without a `backup.failed` event.
 - Who may cancel or retry: whoever may start the operation of the job's type (its `Action`):
-  `backup.create` for a backup, `restore.replace` for a restore by replacing, `library.delete`
-  for trash and purge, administrators for system jobs. The panel and the API refuse the rest
-  with `SQS-A030` and record a `denied` entry; `job.cancel` and `job.retry` (old and new job)
-  are audited.
+  `backup.create` for a backup, `restore.replace` for a restore by replacing and a recreate,
+  `library.delete` for trash, recover and purge, administrators for system jobs. The panel and
+  the API refuse the rest with `SQS-A030` and record a `denied` entry; `job.cancel` and
+  `job.retry` (old and new job) are audited.
 - Retry policy: only idempotent, non-destructive types are queued again with their original
   parameters: `backup.create`, `backup.verify`, `backup.export`, `backup.import`, and the system
   jobs retention, verification of the latest backups, optimization, control plane backup,
@@ -624,41 +657,56 @@ stateDiagram-v2
   panic in the dispatcher or the scheduler is logged, recorded as a critical
   `system.internal_error` event and the loop goes on; a schedule that panics moves on to its
   next run.
-- Job and log history: 90 days by default. An interrupted restore, revert, delete or recreate
-  that reconciliation has not settled yet is kept past that until it is settled (§8).
+- Job and log history: 90 days (events: 180 days), removed by housekeeping (§12). An
+  interrupted restore, revert, delete, recreate or purge that reconciliation has not settled yet
+  is kept past that until it is settled (§8).
 
 ## 12. Default maintenance jobs
 
-| Job | Default schedule |
+The schedules are fixed (they cannot be edited in the panel) and run in the time zone of `TZ`
+(UTC by default). Administrators can run retention, the weekly verification, optimization, the
+control plane backup and the catalog check by hand from Settings, Maintenance.
+
+| Job | Schedule |
 |---|---|
 | Retention for all libraries | Daily 04:00 and after every backup |
-| L2 verification of the latest backup of each library | Sunday 05:00 |
-| `VACUUM (ANALYZE)` per library | Sunday 03:00 |
+| L2 verification of the newest verified backup of each library | Sunday 05:00 |
+| `VACUUM (ANALYZE)` per library (`vacuumdb --analyze --skip-locked`) | Sunday 03:00 |
 | Schema fingerprint | Every 5 min |
 | Volume space | Every 5 min |
 | Catalog and file consistency | Daily 04:30 |
-| Control plane backup | Daily 04:15 |
-| Monthly audit log export | Day 1, 04:45 |
+| Control plane backup (SQLite copy, the newest 30 kept, and the audit log of the month, also of the previous one on the first three days) | Daily 04:15 |
+| Housekeeping: jobs older than 90 days, events older than 180 days, expired export workspaces, rows of backups deleted more than a year ago, audit chain and SQLite integrity checks, `backup.stale` warnings | Daily 04:45 |
 | Purge of expired trash and `__prev` | Daily 04:20 |
 | Certificates about to expire (the self-generated panel certificate is renewed first) | At start and every 24 hours |
-| Rotation of the `sqsolve_admin` password | Not implemented (docs 08 §6) |
+| Rotation of the `sqsolve_admin` password | No scheduled job; by hand only (docs 08 §6) |
 
 ## 13. Notifications
 
-- Channels: webhook (1.0), SMTP and ntfy (1.1).
-- Rules: event type pattern (`backup.*`, `storage.low`) and minimum severity.
-- By default, when the first channel is created: `error` and `critical` of everything, plus
-  `backup.stale`.
+- Channels: webhook, ntfy and email (SMTP). SMTP and ntfy have not been tested against real
+  servers, only against local test servers in the unit tests.
+- Rules, per channel: event type patterns separated by commas (`*`, `backup.*`,
+  `backup.failed, storage.low`) and a minimum severity.
+- A new channel starts with the pattern `*` and the minimum severity `error`: `error` and
+  `critical` events of every type. Warnings such as `backup.stale` only go out if the severity
+  is lowered.
 - Grouping, per channel: events with the same type, library and discriminator (the job type of
   `job.*` events, the volume of space events, the account and address of `auth.*` events, the
-  certificate of `tls.expiring`, when the event carries them) are delivered once per 30 min
+  certificate of `tls.expiring`, the kind of `backup.missed`, the loop of
+  `system.internal_error`, when the event carries them) are delivered once per 30 min
   window. Within the window an event more severe than any delivered in it (a space warning that
   becomes an error) is always delivered. `postgres.up` ends the window of `postgres.down` (even
   on a channel that does not send info events), so a new outage is delivered at once; the
   summary of `postgres.down` events held in that window goes out before `postgres.up`. When a
   window ends with held events, a summary goes out: the latest one with "N more like this". A
   graceful stop sends the summaries of open windows.
+- A failed delivery is tried again after 10 s, 1 min, 10 min and 1 h; the channel shows its
+  last error. Test sends a `system.test` event at once.
 - Webhook and ntfy URLs that point to loopback, private or link-local addresses are saved with a
   warning (`SQS-N042`, docs 08 T-16).
-- Email: subject `[sqsolve] <severity>: <message>`, plain text body with a link.
-- ntfy: priority according to severity, tag with the library.
+- Webhook: the JSON payload of docs 10 §5, signed with HMAC-SHA256 (`X-Sqsolve-Signature`) when
+  the channel has a secret; redirects are not followed.
+- Email: subject `[<instance name>] <severity>: <message>` (the message cut at 120 characters),
+  plain text body with the message and the time. STARTTLS by default, direct TLS or none.
+- ntfy: title `[<instance name>] <severity>`, priority by severity (info 3, warning 4, error and
+  critical 5), the event type as tag, and a link to the job when the panel address is known.

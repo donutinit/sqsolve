@@ -97,8 +97,8 @@ projects on it.
 - [User guide](docs/manual/user-guide.md): install, first start, libraries, backups, restore,
   access, API, console, updating, disaster recovery, troubleshooting.
 - [Error codes](docs/manual/errors.md) and [runbooks](docs/runbooks) with expected output.
-- [Master plan](docs/README.md): architecture, requirements, decisions (ADR), tests, roadmap.
-- [What the plan asked for and what exists](PLAN.md).
+- [Design documents](docs/README.md): architecture, requirements, decisions (ADR), tests, risks
+  and known issues, roadmap.
 - [Brand](docs/brand/README.md): logo, colors, typography and icons.
 - [CHANGELOG](CHANGELOG.md), [CONTRIBUTING](CONTRIBUTING.md), [SECURITY](SECURITY.md).
 

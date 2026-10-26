@@ -1,6 +1,7 @@
 # ADR 0011. Hooks and external automation
 
-**Status:** Accepted (2026-10-18).
+**Status:** Accepted (2026-10-18). As of 1.2.2 webhooks and notifications exist; executable hooks
+and restic do not (`docs/20-roadmap.md`).
 
 **Context.** Actions before and after operations are requested. Studio Server runs BASH scripts
 inside the same container as the database, with access to everything.

@@ -15,7 +15,7 @@ Format: context, decision, alternatives, consequences. Statuses: **Proposed**, *
 | [0007](0007-black-box.md) | Resolve libraries are a black box | Accepted; narrowed by 0019 |
 | [0008](0008-roles.md) | Control role without superuser and one owner role per library | Accepted, pending PoC-01 |
 | [0009](0009-logical-backups.md) | Logical backups per library with custom-format `pg_dump` and manifest | Accepted, pending PoC-04 |
-| [0010](0010-restore-by-swap.md) | Always restore into a new database and swap by rename | Accepted, pending PoC-09 |
+| [0010](0010-restore-by-swap.md) | Always restore into a new database and swap by rename | Accepted |
 | [0011](0011-hooks.md) | No executable hooks in 1.0; webhooks; hooks in an isolated container in 1.1 | Accepted |
 | [0012](0012-port-50059.md) | The server does not publish port 50059 | Accepted, pending PoC-07 |
 | [0013](0013-resolvedbkey.md) | `.resolvedbkey` as an experimental module | Accepted, pending PoC-05 |

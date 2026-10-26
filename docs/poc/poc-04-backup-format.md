@@ -36,10 +36,10 @@ backup (temporary database `sqsolve_export_*`) read those same files.
 - An sqsolve backup restored by sqsolve is a library that Resolve 21.1.1 opens and uses: the
   chain backup, restore as new, open in Resolve is demonstrated.
 - Whether Resolve directly accepts the sqsolve file in its own "Restore", and which format its
-  "Backup" produces, remains REPORTED: it will be tested when Diego has an hour with the Project
-  Manager. Until then, the README does not claim compatibility with Resolve's own backups.
+  "Backup" produces, remains REPORTED and untested as of 1.2.2 (it needs the Project Manager).
+  The README does not claim compatibility with Resolve's own backups.
 
 ## Status
 
-VERIFIED: sqsolve's restore produces libraries that Resolve opens. REPORTED: file exchange with
-Resolve's "Backup" and "Restore".
+VERIFIED: sqsolve's restore produces libraries that Resolve opens. REPORTED, not tested as of
+1.2.2: file exchange with Resolve's "Backup" and "Restore" (steps 1, 2 and 4).

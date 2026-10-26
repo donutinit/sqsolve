@@ -1,6 +1,7 @@
 # ADR 0009. Logical backups per library
 
-**Status:** Accepted, pending PoC-04 (compatibility with Resolve's restore).
+**Status:** Accepted, pending PoC-04 (compatibility with Resolve's restore). PITR is not
+implemented as of 1.2.2 (`docs/20-roadmap.md`).
 
 **Context.** The restore that is useful to a studio is per library, sometimes just to pull out a
 project. Resolve's backups appear to be `pg_dump` files in custom format [01 §7].

@@ -35,9 +35,12 @@ and configurations that expose the ports to the Internet against the documentati
 - Optional TOTP; API tokens with scopes; CSRF; strict headers (CSP without external resources).
 - Panel always over HTTPS. PostgreSQL offers TLS to Resolve; "TLS only" mode requires it.
 - Library passwords encrypted with the master key; secrets never in logs; secret files refused at
-  start when their mode lets others read them.
+  start when their mode lets others read them (`SQS-C010`, and `SQS-C085` in `sqsolve-init`).
 - Hash-chained audit log of every action, exportable. A sensitive action, or a password, backup
   or kit download, is not done when its entry cannot be written (ADR 0026).
-- Unprivileged container, read-only file system, no Linux capabilities.
+- The `sqsolve` container runs unprivileged, with a read-only file system and no Linux
+  capabilities; `sqsolve-init` runs as root without network, with a read-only file system and
+  only the capabilities that change owners and modes (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
+  `FSETID`), then exits.
 
 The full threat model is in [`docs/08-security.md`](docs/08-security.md).

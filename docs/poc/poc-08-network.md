@@ -38,4 +38,6 @@ FROM pg_stat_activity a LEFT JOIN pg_stat_ssl s USING (pid) WHERE a.pid = pg_bac
 ## Status
 
 VERIFIED for LAN and for TrueNAS's Tailscale app. Other VPNs (WireGuard on the host, Headscale)
-untested: the IP seen depends on whether they do NAT.
+untested: the IP seen depends on whether they do NAT. NOT DONE: the `network_mode: host`
+comparison, another port or a host name in Resolve's location field, and Resolve over the VPN;
+collaboration is left for PoC-07, which has not run.

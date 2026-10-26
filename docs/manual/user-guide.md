@@ -74,7 +74,9 @@ Three empty folders: two on SSD and the backups one preferably on another disk. 
 
 On TrueNAS use one dataset per folder. The tested preset is **Generic** (POSIX permissions).
 With other presets the dataset uses NFSv4 ACLs: `sqsolve-init` checks that the PostgreSQL folder
-ends up with the permissions PostgreSQL demands and, if not, stops with error `SQS-C054`.
+ends up with the permissions PostgreSQL demands and, if not, stops with error `SQS-C054`; it also
+checks that the secret files keep their restrictive modes and, if an ACL widens them, stops with
+`SQS-C085`.
 
 ### 2. Adjust the compose file
 
@@ -134,8 +136,8 @@ administrator; if you restart the container before that, a new one is printed.
    server you recover the projects but the workstations need new passwords. You can download it
    again in Settings.
 
-Optional: second factor (TOTP) in "Account"; Settings can make it mandatory for
-administrators. The panel is always HTTPS.
+Optional: second factor (TOTP) in "My account" (your name in the menu); Settings can make it
+mandatory for administrators. The panel is always HTTPS.
 
 ## Libraries and Resolve workstations
 
@@ -158,16 +160,19 @@ administrators. The panel is always HTTPS.
 If a different name was typed in Resolve, the panel tells you which database was created and
 which one it expected. If the window expires, "Open another window".
 
-The exact names of buttons and fields change between Resolve versions. The flow "Create the
-first time, Connect on the others" was verified with Resolve Studio 21.1.1 on Linux.
+The exact names of buttons and fields change between Resolve versions. "Create" from the
+Project Manager was verified with Resolve Studio 21.1.1 on Linux; connecting a second
+workstation with "Connect" is not validated with real Resolve (the acceptance tests had no
+second workstation).
 
 ### Connect the other workstations
 
 On each workstation: add the network library with **Connect** and the same data. The
-"Instructions" page of each library has everything ready to print or send. Resolve does not ask
-for the port: it uses 5432. For live collaboration every workstation needs Resolve Studio on the
-same version and TCP ports 50059 to 50314 open **between workstations** (that traffic does not
-go through sqsolve).
+"Instructions to share" link on the Connection tab of each library opens a page ready to print
+or send, without the password. Resolve does not ask for the port: it uses 5432. For live
+collaboration every workstation needs Resolve Studio on the same version and TCP ports 50059 to
+50314 open **between workstations** (that traffic does not go through sqsolve). Collaboration
+between workstations is not validated with real Resolve (PoC-07 has not run).
 
 ### Maintenance, trash and purge
 
@@ -201,14 +206,19 @@ go through sqsolve).
   `backup.verify_skipped` warning is recorded.
 - **Activity-based backups** compare with the newest **verified** backup: if the last one failed
   its verification, the next check backs up again even when nothing changed.
-- **Retention** per library: by default the last 10, one per day for 14 days, one per week for 8
-  weeks and one per month for 12 months, and the last verified one is never deleted. "The last
+- **Retention** per library: by default the last 10, the newest of each of the last 14 days, 8
+  weeks and 12 months that have a backup, and the last verified one is never deleted. "The last
   10" are counted in the order the backups were taken, so a clock change cannot delete the
-  backup just taken. Pinned backups and those taken before a restore or delete are protected,
-  and so is a backup a restore, verification or export is about to use (it is deleted on a later
-  run). The Schedule tab shows how many would be kept before saving. By hand you can delete any
-  backup except the newest verified one of a library that still exists (even if its database is
-  missing: it is the one used to recreate it).
+  backup just taken. Pinned backups are never deleted, those taken before a restore, a delete
+  or a Resolve upgrade are kept for 30 days, and a backup a restore, verification or export is
+  about to use is kept until a later run. Known issue (K-09 in
+  [19-risks.md](../19-risks.md) §5): the backups taken before a restore also take places among
+  the last 10, and every replacement or revert adds two (one before the swap and one of the
+  previous version right after it), so a few restores in a row can push regular backups out,
+  including the one just restored. Pin a backup you want to keep. The Schedule tab shows how many
+  backups the saved policy keeps and how many the next pass would delete. By hand you can delete
+  any backup except a pinned one (unpin it first) and the newest verified one of a library that
+  still exists (even if its database is missing: it is the one used to recreate it).
 - **Protection timeline**: every library is a track and every backup a marker (tall if the test
   restore passed, medium if checksum and index passed, dotted if unverified, a red cross if it
   failed). The amber band marks time without a verified backup (48 hours by default), unless the
@@ -221,14 +231,16 @@ go through sqsolve).
   without touching the library (experimental; enable it in Settings).
 - **Download** a backup from its page. **Import** one from elsewhere (another server, the
   official Project Server, a download): upload it from "Import", or copy it to `backups/_import/`
-  and pick it from the list (better for multi-GB files). Wait until the copy has finished: a
-  file that is still growing is refused (`SQS-B071`), and every import reads the whole archive
-  before cataloguing it, so a file cut short or damaged is refused too (`SQS-B072`). The file in
-  `_import/` is never moved during the import; if you tick "delete the original" it is removed
-  only once the backup is in the catalog (without writing the data twice), so a power cut in the
-  middle never costs you your only copy. If you replace or change that file while it is being
-  imported, it is not deleted (you get a warning), and a change that would alter what is being
-  catalogued stops the import (`SQS-B074`).
+  and pick it from the list (better for multi-GB files). Importing a backup made by Resolve
+  itself or by the official Project Server is not validated with real Resolve (PoC-04). Wait
+  until the copy has finished: a file that is still growing is refused (`SQS-B071`), and every
+  import reads the whole archive before cataloguing it, so a file cut short or damaged is refused
+  too (`SQS-B072`). The file in `_import/` is never moved during the import; if you tick "Delete
+  the original from the import folder when done" it is removed only once the backup is in the
+  catalog (without writing the data twice), so a power cut in the middle never costs you your
+  only copy. If you replace or change that file while it is being imported, it is not deleted
+  (you get a warning), and a change that would alter what is being catalogued stops the import
+  (`SQS-B074`).
 
 If the backups disk gets unmounted, sqsolve notices (every volume carries a marker) and does not
 write backups into the wrong empty folder.
@@ -239,14 +251,17 @@ From a backup's page, "Restore":
 
 - **As a new library** (recommended): creates another library with its own user and password.
   The original is untouched. Use it to recover a deleted project without affecting anyone.
-- **Replace the current library**: first backs up the library as it is now, restores into a
-  separate database, compares it with the manifest, waits for Resolve to close (or terminates the
-  sessions if you tick it) and swaps the databases. The previous version is kept for 7 days to
-  **revert** from the Danger zone tab. Asks you to type the identifier. Important: ask anyone
-  with a project open to close it first and reopen it afterwards. Resolve shows nothing when its
-  sessions are closed: it reconnects on its own after the swap, its next save writes the changes
-  it has pending into the restored library, and the open project can keep showing the previous
-  state until it is reopened (PoC-09, `docs/acceptance/1.2.2.md`). The same applies to a revert,
+- **Replace** and the library's name (button "Replace library"): first backs up the library as
+  it is now, restores into a separate database, compares it with the manifest, waits up to 10
+  minutes for the open sessions to close (or closes them if you tick "Close open sessions") and
+  swaps the databases. The previous version is kept for 7 days to **revert** from the Danger zone
+  tab.
+  Asks you to type the identifier. Important: ask anyone with a project open to close it first
+  and reopen it afterwards. Resolve shows nothing when its sessions are closed: it reconnects on
+  its own after the swap, its next save writes the changes it has pending into the restored
+  library, and the open project can keep showing the previous state until it is reopened
+  (PoC-09, [acceptance 1.2.2](../acceptance/1.2.2.md)). sqsolve does not block that save (see
+  "Lock after a replacement" in the [roadmap](../20-roadmap.md)). The same applies to a revert,
   which always closes the open sessions.
 
 Right after the swap sqsolve also backs up the previous version itself, so whatever was saved
@@ -268,24 +283,25 @@ its Revert puts the original back.
 
 ## Access and security per library
 
-- **One password per person** (Access tab): creates users like `client_x_season_2__maria`. What
-  that person creates belongs to the library, and you can revoke them without changing
-  everybody's password.
-- **Rotate password**: the workstations using it will have to type the new one.
-- **Network rules**: limit the networks that can reach that library (for example
+- **One password per person** (Access tab, "Credential for a person"): creates users like
+  `client_x_season_2__maria`. What that person creates belongs to the library, and you can revoke
+  them without changing everybody's password. Per-person users are not validated with real
+  Resolve (PoC-01 did not get to that step).
+- **Change password** (Access tab): the workstations using it will have to type the new one.
+- **Allowed networks** (Access tab): limit the networks that can reach that library (for example
   `192.168.10.0/24`). Without rules, any address that reaches the port can connect. On the LAN
   PostgreSQL sees each workstation's real IP; with the TrueNAS Tailscale app everything that
   comes through the VPN arrives with the Tailscale container's IP (`172.16.10.1` in the test
   installation), so that is the address to allow.
-- **Sessions**: who is connected now, from where and whether the connection is encrypted; you
-  can terminate a session.
+- **Sessions** (Activity tab, "Active sessions"): who is connected now, from where and whether
+  the connection is encrypted; "Close" terminates a session.
 - **Connection limit** (library settings): the most sessions each user of the library (the
   owner and every person) can open; -1 is unlimited. sqsolve's own connections for backups and
   checks do not count, so a busy library can always be backed up.
-- **TLS only** (Settings, Security): rejects unencrypted Resolve connections. Resolve uses TLS on
-  its own when the server offers it, and sqsolve always does; verified with Resolve 21.1.1 on
-  Linux, also with the mode on. It is the recommended option, but it is not known how every
-  Resolve version on macOS and Windows implements it: before enabling it, check that your
+- **TLS only** (Settings, General, Security): rejects unencrypted Resolve connections. Resolve
+  uses TLS on its own when the server offers it, and sqsolve always does; verified with Resolve
+  21.1.1 on Linux, also with the mode on. It is the recommended option, but it is not known how
+  every Resolve version on macOS and Windows implements it: before enabling it, check that your
   workstations show as encrypted in Sessions and test a new connection afterwards. If a
   workstation can no longer connect, turn it off.
 - The administrative PostgreSQL users (`postgres` and `sqsolve_admin`) do not accept network
@@ -295,12 +311,13 @@ its Revert puts the original back.
 
 ## Panel users, notifications and API
 
-- **Roles**: administrator (everything), operator (backups, restore as new, maintenance) and
-  viewer (read only). Settings, Users.
+- **Roles**: administrator (everything), operator (create, verify and download backups, restore
+  as a new library, export, cancel jobs and read the audit log) and viewer (read only). Settings,
+  Users.
 - **Sign in**: username and password (at least 8 characters, not a common password such as
   `password` or `12345678`). After signing in, the panel only takes you back to pages of this
   same server.
-- **Second factor** TOTP with 10 recovery codes, in Account. With "Second factor required for
+- **Second factor** TOTP with 10 recovery codes, in My account. With "Second factor required for
   administrators" (Settings, General, Security) on, an administrator without it is taken
   straight to the page that enables it after the password, and cannot use the panel until it
   is done. Nobody can remove an administrator's second factor from the panel while the option
@@ -312,12 +329,12 @@ its Revert puts the original back.
   the container console. Trying again during the lock adds no wait after the unlock. The Users
   table shows "Locked" while it lasts.
 - **Password changes** close your other sessions. API tokens keep working; revoke them in
-  Account if the password leaked.
+  My account if the password leaked.
 - **Notifications**: Settings, Notifications: webhook, ntfy or email (SMTP). sqsolve sends nothing
   off the server until you add a channel.
 - **Activity**: events and a hash-chained audit log, exportable as JSONL.
 - **Health**: PostgreSQL, space of every volume, certificates and the server's databases.
-- **REST API** at `/api/v1`, with tokens you create in Account (scopes: read, backup, restore,
+- **REST API** at `/api/v1`, with tokens you create in My account (scopes: read, backup, restore,
   export, admin). Errors in RFC 9457 format. Examples:
 
 ```
@@ -328,19 +345,19 @@ curl -k -H "Authorization: Bearer $TOKEN" https://server:9432/api/v1/jobs/<id>
 ```
 
 `GET /api/v1/system/health` needs no token and answers 503 when something is critical: PostgreSQL
-not answering, the backups volume not mounted or not this installation's, a volume at 90 % or
-more, or a library whose last verified backup is older than the stale threshold of Settings (an
-untouched library is not stale). Point an external uptime monitor at it. It shows states and
-counts only, never names or paths; the fields are in
-[13-observability.md](../13-observability.md) §3.
+not answering or a different cluster from the one sqsolve knows, the backups volume not mounted
+or not this installation's, a volume at 90 % or more, or a library whose last verified backup is
+older than the stale threshold of Settings (an untouched library is not stale). Point an
+external uptime monitor at it. It shows states and counts only, never names or paths; the fields
+are in [13-observability.md](../13-observability.md) §3.
 
 ## Export projects and grades
 
-Experimental and off by default (Settings, Experimental). The Export tab of a library and the
-"Export .drp and .drx" page of a backup produce `.drp` files (a complete project, without stills)
-and `.drx` files (a grade: node tree and thumbnail of a still) by reading the library, without
-opening Resolve. It reads tables Blackmagic does not document: **no guarantee**. Import every
-file into Resolve before trusting it. Details in
+Experimental and off by default (Settings, General, Experimental). The Export tab of a library
+and the "Export .drp and .drx" page of a backup produce `.drp` files (a complete project, without
+stills) and `.drx` files (a grade: node tree and thumbnail of a still) by reading the library,
+without opening Resolve. It reads tables Blackmagic does not document: **no guarantee**. Import
+every file into Resolve before trusting it. Details in
 [22-project-and-grade-export.md](../22-project-and-grade-export.md).
 
 The catalog has two views, Projects and Stills, each with a search box. In Projects, the still
@@ -385,8 +402,8 @@ button does the same as those two commands. TrueNAS compares images with the reg
 day, so the notice can take up to 24 hours; to skip the wait, from the NAS console:
 `sudo midclt call app.image.op.check_update` forces the check, or directly
 `sudo midclt call -j app.pull_images sqsolve '{"redeploy": true}'`, which is the Update button.
-Version 2.0 changes the PostgreSQL major version and never arrives as an update: its notes will
-explain the migration (ADR 0017).
+A change of PostgreSQL major version never arrives through the `1` tag, and sqsolve does not
+automate that migration (ADR 0017; see the [roadmap](../20-roadmap.md)).
 
 An installation with a series tag (`1.1`, `1.2`) only receives the fixes of that series. Move
 it to `1` once: with Docker Compose, edit the `x-sqsolve` line; on TrueNAS, edit the app and
@@ -428,8 +445,8 @@ pins a new PostgreSQL minor version, update it too:
 3. `docker compose pull`, then `docker compose up -d`. On TrueNAS edit the app's YAML and press
    Update.
 
-A minor update needs no migration of your libraries. Changing the PostgreSQL major version is not
-automated yet (ADR 0017).
+A minor update needs no migration of your libraries. sqsolve does not automate a change of
+PostgreSQL major version (ADR 0017).
 
 ## Moving to another server or recovering from a disaster
 
@@ -468,13 +485,14 @@ First: `docker compose exec sqsolve sqsolve doctor` and the Health page. Errors 
 | `SQS-S019` in `sqsolve-init` | The host paths of the volumes are swapped (for example `db` and `backups` exchanged): a folder holds another volume of this installation | Fix the three paths in the compose file and bring it up again |
 | `SQS-S013` in `sqsolve-init` | The `app` folder is empty while `db` and `backups` belong to an installation | Mount the right disk; see the recovery runbook before using `SQSOLVE_APP_ADOPT` |
 | `SQS-S020`, event `postgres.cluster_changed` | PostgreSQL is a different cluster from the one sqsolve knows (the `db` volume changed); sqsolve holds the libraries and runs no jobs | Mount the right `db` folder. If the change is intended, set `SQSOLVE_PG_ACCEPT_SYSTEM_ID` on the `sqsolve` service to the identifier in the message and restart |
+| `SQS-C085` in `sqsolve-init`, or `SQS-C010` at the start of `sqsolve` | An ACL on the volume gives the secret files a wider access than their modes | Remove the ACL of the three folders (on TrueNAS, "Strip ACL" on each dataset) and start again; see [12-deployment.md](../12-deployment.md), "Permissions and ACLs" |
 | Permission errors after changing user or copying folders | Owners do not match | Add `SQSOLVE_FIX_PERMS: "true"` to the `sqsolve-init` service, bring it up once and remove it |
 | `SQS-C054` in `sqsolve-init`, or PostgreSQL restarts with `mkdir: cannot create directory '/var/lib/postgresql/18': Permission denied` or `data directory ... has invalid permissions` | The `db` folder uses NFSv4 ACLs and does not keep the permissions PostgreSQL demands | Create the `db` folder on a dataset with POSIX permissions (on TrueNAS, the Generic preset) |
 | `port is already allocated` on 5432 | Another PostgreSQL on the host (Synology) | Publish `"LAN-IP:5432:5432"` |
 | Resolve does not connect | Network, firewall, address or network rule | From the workstation, reach `IP:5432`; check the advertised address in Settings and the library's network rules; the `postgres` log says why it refused (`pg_hba.conf rejects connection for host ...`) |
 | Refusals with a `172.x` IP in the `postgres` log | Your Docker rewrites the source IP | Network rules do not see the workstation's real IP: remove them or allow that network |
 | The library does not activate | The name in Resolve was not the identifier, or the window expired | The panel shows the database that was created; reopen the window and create with the exact name |
-| `SQS-R020` when replacing | Resolve is still open on that library | Ask them to close it or tick "terminate sessions" |
+| `SQS-R020` when replacing | Sessions on that library were still open after 10 minutes | Ask everyone to close the project in Resolve and replace again. "Close open sessions" does not wait, but read [Restore](#restore) first |
 | `SQS-B012` | No space on the backups disk | Free space or adjust retention |
 | `SQS-B022` | No room on the database disk for a restored copy | Free space on the `db` volume (for example, purge the trash or an old previous version); a verification that hit it was only skipped |
 | `SQS-B070` | A verification could not run (the detail says why) | Nothing is wrong with the backup; fix the cause and verify again |

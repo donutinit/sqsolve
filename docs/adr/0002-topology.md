@@ -1,6 +1,7 @@
 # ADR 0002. Deployment topology
 
-**Status:** Accepted (2026-10-18).
+**Status:** Accepted (2026-10-18). As of 1.2.2 there is no `sqsolve-hooks` container (ADR 0011,
+`docs/20-roadmap.md`).
 
 **Context.** It must install by pasting a YAML into any system with Docker Compose, run without
 intervention and separate responsibilities without unnecessary complexity. Diego explicitly

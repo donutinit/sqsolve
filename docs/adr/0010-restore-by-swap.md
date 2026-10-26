@@ -1,6 +1,9 @@
 # ADR 0010. Restore by swap
 
-**Status:** Accepted, pending PoC-09 (Resolve's behaviour when reconnecting).
+**Status:** Accepted. PoC-09 (2026-10-19, `docs/poc/poc-09-forced-disconnect.md`) and the 1.2.2
+acceptance (2026-10-26, `docs/acceptance/1.2.2.md`) showed that Resolve reconnects on its own
+after the swap and that a project left open saves its pending changes into the restored library,
+so the replace and revert pages ask to close the project in Resolve on every workstation first.
 
 **Context.** Restoring over the active database (as Studio Server does, with a warning that
 everyone must leave Resolve) destroys the current state before knowing whether the restore

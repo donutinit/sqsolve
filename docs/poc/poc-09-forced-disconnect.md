@@ -27,7 +27,7 @@ No dialog was seen because the workstation was not in view.
   save over what was just restored without noticing. The guide must ask them to close the
   project before replacing and reopen it afterwards; sqsolve already asks for this in the form
   and now also in the README and `docs/11` §7.2. A technical safeguard (for example, a new
-  password on replace) is left for 1.1.
+  password on replace) is a roadmap item ("Lock after a replacement", `docs/20-roadmap.md`).
 
 ## On screen (acceptance 1.2.2, 2026-10-26)
 
@@ -49,4 +49,6 @@ project it has in memory into the database now under the name:
 
 VERIFIED through the scripting API and on screen. The risk above is real, so the replace and
 revert pages ask to close the project in Resolve on every workstation first; the technical
-safeguard is item 2 of `PLAN.md` §3.
+safeguard is the "Lock after a replacement" item of `docs/20-roadmap.md`. NOT DONE: steps 3
+(read-only database) and 4 (`NOLOGIN` with open sessions) of the procedure in
+`docs/02-proofs-of-concept.md`.

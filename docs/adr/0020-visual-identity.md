@@ -36,5 +36,5 @@ Resolve user recognizes without explanation and that does not clash with the UI 
   the stack of `docs/06`.
 - The font is used under the SIL Open Font License 1.1; only outlines inside the SVGs are
   distributed, not the font.
-- Pending, by hand on GitHub: upload `docs/brand/social-preview.png` as the repository's social
-  image.
+- `docs/brand/social-preview.png` is the repository's social image. GitHub only takes it by hand
+  in the repository settings; as of 2026-10-26 it has not been uploaded.

@@ -6,7 +6,8 @@ When: a new version is released. With the compose `1` tag, every 1.x release arr
 YAML and all three change (user guide, "Updating").
 
 1. Confirm in the panel that each library has a recent verified backup (protection line in green)
-   or run "Back up now". Expected: no amber.
+   or run "Back up now", and take a control-plane backup (Settings, Maintenance, "Back up the
+   control plane", "Run"). Expected: no amber, and the job succeeded.
 2. Read the version's section in `CHANGELOG.md`: it says whether there is a catalog migration and
    how to go back.
 3. Docker Compose:
@@ -35,9 +36,9 @@ ADR 0024 to 1.1.2 or older: while the new version still runs, reopen every libra
 (Danger zone, Reopen). Older versions do not give the library roles `LOGIN` back when
 maintenance ends.
 
-Then put the exact previous version in `x-sqsolve` (for example `1.1.0`) and run
-`docker compose up -d`. If the new version migrated the catalog and the previous one does not
-start, restore the copy with the service stopped:
+Then put the exact previous version in `x-sqsolve` (for example `1.1.0`; on TrueNAS, in the
+three places of the stored YAML) and run `docker compose up -d`. If the new version migrated the
+catalog and the previous one does not start, restore the copy with the service stopped:
 
 ```
 docker compose stop sqsolve

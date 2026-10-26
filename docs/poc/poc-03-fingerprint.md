@@ -21,11 +21,11 @@ The part about "upgrading the library with a new version of Resolve" could not b
 ## Decisions it enables
 
 - The fingerprint is stable under normal use (creating, editing, saving and deleting projects and
-  timelines): a fingerprint change means a structure change, not a data change. SQS-240 is
-  validated in its "no false positives" half.
-- What is missing (a version upgrade that does change the schema) will be recorded when Diego
-  upgrades Resolve: the upgrade window in `docs/14` §5 remains mandatory in the guide until then.
+  timelines): a fingerprint change means a structure change, not a data change. Upgrade
+  detection by fingerprint (`docs/07` §9) is validated in its "no false positives" half.
+- What is missing (a version upgrade that does change the schema) is not recorded as of 1.2.2:
+  until it is, the upgrade window in `docs/14` §5 remains mandatory in the guide.
 
 ## Status
 
-VERIFIED: stable under use. REPORTED: changes when Resolve is upgraded.
+VERIFIED: stable under use. REPORTED, not tested as of 1.2.2: changes when Resolve is upgraded.

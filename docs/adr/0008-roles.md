@@ -1,6 +1,7 @@
 # ADR 0008. PostgreSQL role model
 
-**Status:** Accepted, pending PoC-01.
+**Status:** Accepted, pending PoC-01 (steps 3 and 5). The per-person roles exist as of 1.2.2;
+they have not been tested with Resolve.
 
 **Context.** Blackmagic's convention uses the `postgres` superuser with password `DaVinci` for
 everything [01 §5]. A superuser exposed on the network gives control of the server and, through

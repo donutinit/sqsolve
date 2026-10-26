@@ -5,6 +5,12 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+- Documentation: every document describes 1.2.2 as it is, checked against the code, with what
+  is not implemented or not validated with Resolve said plainly. The task breakdown
+  (`docs/21-tasks.md`), `PLAN.md` and the audit report `REPORT.md` are removed: the known issues
+  of 1.2.2 are in `docs/19-risks.md` §5, what comes next in `docs/20-roadmap.md` and the code
+  layout in `docs/05-architecture.md` §4.
+
 ## [1.2.2] 2026-10-26
 
 Stabilization after the repository audit of 2026-10-25 (backup paths, job journal, audit log,

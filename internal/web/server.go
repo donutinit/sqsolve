@@ -85,7 +85,7 @@ func (s *Server) parseTemplates() error {
 	return nil
 }
 
-// setSecurityHeaders sets the headers every response carries (docs 08 §10).
+// setSecurityHeaders sets the headers every response carries (docs 08 §3 T-05, §11).
 // HSTS only makes sense when the panel itself serves HTTPS.
 func setSecurityHeaders(h http.Header, secure bool) {
 	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'")

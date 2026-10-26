@@ -1,14 +1,15 @@
-# sqsolve master plan
+# sqsolve documentation
 
-Research cutoff date: **2026-10-18**. Everything that depends on DaVinci Resolve, PostgreSQL or
-Docker versions is reviewed on every major Resolve release (see `14-compatibility.md`).
+The documents describe sqsolve 1.2.2. The research in `01-research.md` has a cutoff date of
+**2026-10-18**; everything that depends on DaVinci Resolve, PostgreSQL or Docker versions is
+reviewed on every major Resolve release (see `14-compatibility.md`).
 
 ## How to read these documents
 
 | # | Document | What it is for |
 |---|---|---|
 | 01 | [Research](01-research.md) | How Resolve works with PostgreSQL, what Studio Server does, what is verified and what is not |
-| 02 | [Proofs of concept](02-proofs-of-concept.md) | Experiments that must pass before committing parts of the architecture |
+| 02 | [Proofs of concept](02-proofs-of-concept.md) | The proofs of concept: which ran, what they found and what they decided |
 | 03 | [Product](03-product.md) | Vision, scope, personas, use cases and acceptance criteria |
 | 04 | [Requirements](04-requirements.md) | Functional and non-functional requirements with IDs |
 | 05 | [Architecture](05-architecture.md) | Overview, components, flows and principles |
@@ -24,13 +25,12 @@ Docker versions is reviewed on every major Resolve release (see `14-compatibilit
 | 15 | [Media storage](15-media-storage.md) | Relationship with shared storage, paths and proxies |
 | 16 | [Testing](16-testing.md) | Test strategy by level |
 | 17 | [CI/CD and releases](17-ci-cd-and-releases.md) | Version control, build, signing and publishing |
-| 18 | [Documentation and license](18-documentation-and-license.md) | Manuals plan, license and trademarks |
-| 19 | [Risks](19-risks.md) | Risk register with mitigations |
-| 20 | [Roadmap](20-roadmap.md) | MVP, versions, phases, milestones and dependencies |
-| 21 | [Tasks](21-tasks.md) | Breakdown executable by agents with done criteria |
+| 18 | [Documentation and license](18-documentation-and-license.md) | Manuals, license and trademarks |
+| 19 | [Risks](19-risks.md) | Risk register with mitigations, and the known issues of the current release |
+| 20 | [Roadmap](20-roadmap.md) | Released versions and what comes next |
 | 22 | [Project and grade export](22-project-and-grade-export.md) | `.drp` and `.drx` format, rules, verification kit (experimental, ADR 0019) |
 | POC | PoC reports: [PoC-01 lifecycle](poc/poc-01-lifecycle.md), [PoC-03 fingerprint](poc/poc-03-fingerprint.md), [PoC-04 backup format](poc/poc-04-backup-format.md), [PoC-06 TLS](poc/poc-06-tls.md), [PoC-08 network](poc/poc-08-network.md), [PoC-09 forced disconnect](poc/poc-09-forced-disconnect.md) | Recorded results of the proofs of concept |
-| ACC | [1.0 acceptance](acceptance/1.0.md) | Acceptance run for release 1.0 |
+| ACC | [1.0 acceptance](acceptance/1.0.md), [1.2.2 acceptance](acceptance/1.2.2.md) | Acceptance runs of releases 1.0 and 1.2.2 |
 | GUIDE | [User guide](manual/user-guide.md) | Install, first start, libraries, backups, restore, access, API, console, updating, disaster recovery, troubleshooting |
 | MAN | [Manual: error codes](manual/errors.md) | Every `SQS-` code with its message, generated with `make errors` |
 | RB | Runbooks: [restore and revert](runbooks/restore-and-revert.md), [recover an installation](runbooks/recover-installation.md), [upgrade](runbooks/upgrade.md), [invalid backup path](runbooks/invalid-backup-path.md) | Numbered steps with the expected output |

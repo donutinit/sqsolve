@@ -7,7 +7,7 @@ check into the transaction that queues the job).
 whatever its parameters. For a recreate that meant a second request with another backup got,
 without a word, the job already queued with the first backup: the person believed the library
 was coming back from the backup they chose. The 2026-10-25 audit asked for the identity of a
-unique job to be decided before more code relies on it (PLAN 1.2.3). Three options were weighed:
+unique job to be decided before more code relies on it. Three options were weighed:
 the first request wins (documented and tested), the canonical parameters are part of the
 identity (both requests queue and run one after the other), or a request whose parameters
 differ is refused.

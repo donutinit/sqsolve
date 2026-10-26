@@ -44,7 +44,7 @@ data: if a datum is missing, "To be confirmed". One-line commits, no trailers.
 
 1. In `CHANGELOG.md`, move what is under "Unreleased" to a section `## [X.Y.Z] YYYY-MM-DD` with
    the upgrade and rollback steps. The GitHub release takes its notes from there; without that
-   section it comes out empty.
+   section its notes only say that `CHANGELOG.md` has none for that version.
    If the PostgreSQL pin changed since the previous release, say so and give the new `image:` line:
    installed copies of the compose file keep the old digest.
 2. Tag `vX.Y.Z` and push: CI runs first and, only if it passes, publishes the signed image; then,
@@ -54,7 +54,7 @@ data: if a datum is missing, "To be confirmed". One-line commits, no trailers.
 
 ## How to propose a change
 
-1. One branch per task (`sqs-NNN-short-name` if it comes from `docs/21-tasks.md`).
+1. One branch per change, with a short name.
 2. `make check` and `make test-integration` green.
 3. Pull request with what changes, why and how it was tested.
 

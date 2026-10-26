@@ -127,11 +127,16 @@ Google Fonts repository (link in the header of `marks.py`):
 python3 tools/marks.py Bricolage.ttf
 python3 tools/icons.py Bricolage.ttf
 magick -background none app-icon.svg -resize 512x512 app-icon-512.png
+magick -background none app-icon.svg -resize 192x192 app-icon-192.png
+magick -background none app-icon.svg -resize 180x180 apple-touch-icon.png
 magick social-preview.svg social-preview.png
 ```
 
-`marks.py` also writes `tools/lockup-panel.svg.txt` and `tools/nav-icons.txt`, the logo and the
-seven navigation icons exactly as they are pasted into `internal/web/templates/layout.html`.
+`marks.py` also writes `tools/lockup-panel.svg.txt` (and `tools/marks.json`), and `icons.py`
+writes `tools/nav-icons.txt`: the logo and the seven navigation icons exactly as they are pasted
+into `internal/web/templates/layout.html`. `icons.py` reads the lockup to draw
+`social-preview.svg`, so `marks.py` runs first. After regenerating, copy `favicon.svg` and
+`apple-touch-icon.png` to `internal/web/static`.
 
 ## 10. Licenses
 

@@ -6,31 +6,37 @@ When: a project, or the whole library, was deleted or broken, and there is a ver
 
 1. Backups, open the backup from the date you want. Verification must say "Checksum and index OK"
    or "Test restore OK".
-2. "Export .drp and .drx", "Prepare the export". Wait for the job to finish (the job page shows
-   it; a backup of several GB takes minutes).
+2. "Export .drp and .drx", "Prepare the export". The export is experimental and off by default:
+   if the page says so, enable it in Settings, General, Experimental. Wait for the job to finish
+   (the job page shows it; a backup of several GB takes minutes).
 3. Go back to the export page: download the project's `.drp` or the grades' `.drx`. Import them
    in Resolve. Expected: Resolve opens the project or applies the grade.
 4. "Close and delete the temporary database".
 
 If you would rather have that day's whole library next to the current one: "Restore", "As a new
-library", with another identifier. Expected: it appears as Active with its own password; connect
-it from Resolve with Connect.
+library", another identifier, "Restore as new". Expected: it appears as Active with its own
+password; connect it from Resolve with Connect.
 
 ## B. Replace the library with a backup
 
-1. Ask everyone to close Resolve on all of that library's workstations, or check "close sessions"
-   in step 3.
-2. Backups, open the backup, "Restore", "Replace the current library".
-3. Type the identifier to confirm. Expected: one job with the steps pre-restore backup, restore
-   into a separate database, compare with the manifest, swap, reopen. Its log ends with "Backed
-   up the previous state ..." and it ends as "Succeeded". A library in maintenance stays in
-   maintenance.
-4. In Resolve, open the library again (Connect with the same details). Expected: the backup's
-   projects.
+1. Ask everyone to close the project in Resolve (or quit Resolve) on every workstation of that
+   library, and not to open it again until the job ends. "Close open sessions" in step 3 does
+   not replace this: Resolve shows nothing when its sessions are closed, reconnects on its own,
+   and its next save writes its pending changes into the restored library (PoC-09,
+   `docs/acceptance/1.2.2.md`); sqsolve does not block that save.
+2. Backups, open the backup, "Restore", the card "Replace" followed by the library's name.
+3. Type the identifier to confirm and "Replace library". Without "Close open sessions" the job
+   waits up to 10 minutes for the sessions to close and then fails with `SQS-R020`. Expected:
+   one job with the steps "Check space", "Check", "Pre-restore backup", "Restore" (into a
+   separate database), "Compare with the manifest", "Wait for sessions to close", "Lock
+   connections", "Swap databases" and "Reopen". Its log ends with "Backed up the previous
+   state ..." and it ends as "Succeeded". A library in maintenance stays in maintenance.
+4. Ask everyone to open the project again in Resolve; the library entry and its password do not
+   change. Expected: the projects as they were in the backup.
 
-If the job fails before or at "swap": the original library is still in place and usable; check
-the job log and `sqsolve doctor`. `SQS-L052` means a session sqsolve cannot close (a superuser's)
-is connected: close it and run the restore again.
+If the job fails before or at "Swap databases": the original library is still in place and
+usable; check the job log and `sqsolve doctor`. `SQS-L052` means a session sqsolve cannot close
+(a superuser's) is connected: close it and run the restore again.
 
 If the job fails with `SQS-R054` (swapped, but reopening failed): the restored data is in place.
 Put the library in maintenance and reopen it (Danger zone tab), which applies its access again,
@@ -55,18 +61,22 @@ and the next nightly purge job takes that backup before deleting it.
 
 ## C. Revert a replacement
 
-Up to 7 days afterwards (setting "Previous state after restore"):
+Up to 7 days afterwards (Settings, General, "Previous state after restore (days)"):
 
-1. Library, Danger zone tab, "Revert". Type the identifier.
-2. Expected: a job that swaps back; the library is left as it was before the replacement (in
+1. Ask everyone to close the project in Resolve, as in section B step 1: a revert always closes
+   the open sessions, and a project left open can save its pending changes into the reverted
+   library.
+2. Library, Danger zone tab, "Revert the last restore", "Revert". Type the identifier and
+   "Revert".
+3. Expected: a job that swaps back; the library is left as it was before the replacement (in
    maintenance if it was in maintenance). The version you leave is backed up and kept, so the
    revert can be reverted too.
-3. Reconnect Resolve.
+4. Ask everyone to open the project again in Resolve.
 
 For a library in "No database on the server" that still has a previous version (after an
 `SQS-R053`, or if its database was lost), the same Revert renames the previous version back to
 the library's name and the library becomes Active. The library page offers it next to
-"Recreate from the last backup"; Recreate restores the latest backup instead.
+"Recreate from the last backup"; Recreate restores the last verified backup instead.
 
 The previous version is deleted when its period expires only if there is a verified backup of
 it; otherwise it is kept and a "previous state kept" warning (`SQS-R055`) appears in Activity.

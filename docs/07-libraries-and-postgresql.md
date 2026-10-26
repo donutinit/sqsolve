@@ -6,7 +6,7 @@ A **sqsolve library** is the sum of:
 
 - a PostgreSQL database (the content belongs to Resolve and is opaque to sqsolve);
 - a PostgreSQL owner role that Resolve connects with;
-- in 1.1, per-person member roles;
+- optional per-person member roles (not validated with Resolve: PoC-01 step 5 was not run);
 - network rules, backup policies and retention;
 - metadata in SQLite: display name, state, fingerprint, declared version, notes.
 
@@ -20,14 +20,16 @@ export `.drp` and `.drx` (`22-project-and-grade-export.md`).
 | Library slug | `^[a-z][a-z0-9_]{2,39}$`; does not start with `pg_`, `sqsolve`, `template`, `postgres`; does not contain `__` | `client_x` |
 | Active database | Same as the slug | `client_x` |
 | Owner role | Same as the slug (it is the "user" typed in Resolve) | `client_x` |
-| Member role (1.1) | `<slug>__<person>`, person `^[a-z][a-z0-9]{1,19}$` | `client_x__ana` |
+| Member role | `<slug>__<person>`, person `^[a-z][a-z0-9]{1,19}$` | `client_x__ana` |
 | Database being restored | `<slug>__restore_<id8>` | `client_x__restore_7f3a91c2` |
-| Previous state after swap | `<slug>__prev_<YYYYMMDDhhmm>` | `client_x__prev_202610181930` |
-| Trash | `<slug>__trash_<YYYYMMDD>` | `client_x__trash_20261018` |
+| Previous state after swap | `<slug>__prev_<YYYYMMDDhhmm>` (UTC) | `client_x__prev_202610181930` |
+| Trash | `<slug>__trash_<YYYYMMDDhhmmss>` (UTC) | `client_x__trash_20261018193000` |
 | Verification | `sqsolve_verify_<id8>` | `sqsolve_verify_0c11ad3e` |
+| Export from a backup | `sqsolve_export_<id8>` | `sqsolve_export_5b2e90d4` |
 | Display name | UTF-8, 1 to 80 characters, no control characters | `Client X, season 2` |
 
-All names fit in 63 bytes (the PostgreSQL identifier limit). The validators live in
+`<id8>` is the last 8 characters of the job or workspace ULID, in lowercase. All names fit in
+63 bytes (the PostgreSQL identifier limit). The validators live in
 `internal/pg/ident.go`, have fuzz tests and are applied before `pgx.Identifier{...}.Sanitize()`;
 neither of the two is used alone.
 
@@ -38,10 +40,10 @@ slug.
 
 | Role | Attributes | Memberships and permissions | Access |
 |---|---|---|---|
-| `postgres` | Superuser (created by the image) | All | Local socket only, SCRAM. Use: startup, privilege migrations and audited emergency procedures |
-| `sqsolve_admin` | `LOGIN NOSUPERUSER CREATEDB CREATEROLE NOREPLICATION NOBYPASSRLS` | `pg_monitor`, `pg_signal_backend`, `pg_read_all_data`, `pg_use_reserved_connections` (§10); `EXECUTE` on `pg_reload_conf()` (FEASIBLE-PENDING: if it cannot be granted, the reload uses the superuser) | Local socket only, SCRAM |
-| `<slug>` | `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`, configurable `CONNECTION LIMIT`; `CREATEDB` only during the initialization window | `CONNECT, TEMP` on its database; owner of the `public` schema and of the Resolve objects | Network, SCRAM, only to its database (and the maintenance one if PoC-01 requires it) |
-| `<slug>__<person>` (1.1) | `LOGIN`, the rest same as `<slug>` | Member of `<slug>`; `ALTER ROLE ... IN DATABASE <slug> SET role = '<slug>'` so every new object ends up owned by the owner (FEASIBLE-PENDING, PoC-01 step 5) | Network, SCRAM, only to its library's database |
+| `postgres` | Superuser (created by the image) | All | Local socket only, SCRAM. Use: at every start `pg.Bootstrap` creates or repairs `sqsolve_admin` with it, and the doctor checks (`sqsolve doctor` and the Health page) test that it can connect; sqsolve uses it for nothing else |
+| `sqsolve_admin` | `LOGIN NOSUPERUSER CREATEDB CREATEROLE NOREPLICATION NOBYPASSRLS` | `pg_monitor`, `pg_signal_backend`, `pg_read_all_data`, `pg_use_reserved_connections` (§10); `EXECUTE` on `pg_reload_conf()` and `pg_hba_file_rules()` and `SELECT` on the `pg_hba_file_rules` view, granted by `pg.Bootstrap` at every start; member of every library role | Local socket only, SCRAM |
+| `<slug>` | `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT`, configurable `CONNECTION LIMIT`; `CREATEDB` only during the initialization window | `CONNECT, TEMP` on its database; owner of the `public` schema and of the Resolve objects | Network, SCRAM, only to its database (and the `postgres` maintenance database while the setting that allows it is on, the default) |
+| `<slug>__<person>` | `LOGIN`, the rest same as `<slug>` | Member of `<slug>`; `ALTER ROLE ... IN DATABASE <slug> SET role = '<slug>'` so every new object ends up owned by the owner (implemented; not validated with Resolve, PoC-01 step 5 was not run) | Network, SCRAM, only to its library's database |
 
 Why not a superuser for daily work: a superuser can run `COPY ... TO PROGRAM`, that is, commands
 in the PostgreSQL container. If a sqsolve flaw allowed SQL injection, with `sqsolve_admin` the
@@ -56,7 +58,8 @@ attempt with `SQS-L006` or `SQS-L033`.
 Implemented and tested against PostgreSQL 18: the database remains owned by the library's role
 (as Resolve leaves it when creating it) and `sqsolve_admin`, by inheritance, acts as owner to
 rename, lock, drop or back it up; it also has its own `CREATEDB`, which the rename requires. This
-way there is no need to change the database owner and PoC-01's plan B becomes the normal path.
+way there is no need to change the database owner (PoC-01 step 1 confirmed that Resolve 21.1.1
+leaves the library role as owner).
 `pg_hba.conf` rejects `sqsolve_admin` over the network even if it is a member of the library
 roles, because roles are listed by name.
 
@@ -69,7 +72,7 @@ the names of all databases. This is documented; no "secret library" is offered.
 stateDiagram-v2
   [*] --> provisioning: create
   provisioning --> awaiting_init: role and rules ready (E1)
-  provisioning --> active: database created from template (E2) or pre-created (E0)
+  provisioning --> active: pre-created (E0, experimental) or restored from a backup
   awaiting_init --> active: Resolve initialized the database
   awaiting_init --> init_expired: window expires
   init_expired --> awaiting_init: reopen window
@@ -121,8 +124,11 @@ with its name is neither adopted nor dropped, and an invalid one counts as missi
 
 ## 5. Creation strategies
 
-The final choice depends on PoC-01. sqsolve always implements E1, E0 if PoC-01 shows that Resolve
-initializes an empty database with "Connect", and E2 as an optimization.
+sqsolve creates a library with E1 (the default and the only strategy validated with Resolve,
+PoC-01 step 1) or with E0, which the panel offers for testing only because Resolve 21.1.1 does
+not initialize an empty database (PoC-01 step 2). A library can also be created by restoring a
+backup as a new library (docs 11 §7). E2 and the adoption of existing databases are not
+implemented; both are roadmap directions (`20-roadmap.md`).
 
 ### E1. Initialization window (base)
 
@@ -136,7 +142,8 @@ initializes an empty database with "Connect", and E2 as an optimization.
    <slug> NOCREATEDB`; `REVOKE ALL ON DATABASE <slug> FROM PUBLIC`; `GRANT CONNECT, TEMP ... TO
    <slug>`. The database keeps its owner.
 6. Schema fingerprint, default backup policy and first backup (chained job).
-7. Maximum window configurable, 60 min by default; when it expires `CREATEDB` is removed.
+7. Maximum window configurable from 5 min to 24 h, 60 min by default; when it expires `CREATEDB`
+   is removed and the library goes to `init_expired`, from where the window can be reopened.
 
 Bounded risk: during the window, the role could create other databases. It is mitigated by the
 short duration, by the `pg_hba.conf` that only lets it connect to its database and the
@@ -145,67 +152,67 @@ and reports them.
 
 ### E0. Pre-created database
 
-`CREATE DATABASE <slug> OWNER ... TEMPLATE template0 ENCODING 'UTF8'` and "Connect" from
-Resolve. Only if PoC-01 shows that Resolve initializes the schema in that case.
+`CREATE DATABASE <slug> OWNER <slug> TEMPLATE template0 ENCODING 'UTF8'`, `REVOKE ALL ... FROM
+PUBLIC`, `GRANT CONNECT, TEMP ... TO <slug>`, and "Connect" from Resolve. The library becomes
+`active` at once. Resolve 21.1.1 marks such a database as incompatible and does not use it
+(PoC-01 step 2), so the panel says the option does not work with Resolve 21.1 and is for
+testing only.
 
-### E2. From a local template
+### E2 and adoption
 
-After the first library initialized with a Resolve version, the administrator can "save as
-template" a freshly created library with no projects. sqsolve stores a backup of it at
-`state/templates/<resolve-version>-<fingerprint8>.backup`. Creating from a template is a restore
-(`pg_restore --no-owner --no-privileges --role=<slug>`) into a new database.
-
-- Templates are never distributed with sqsolve: they are generated on each installation with the
-  user's Resolve. The schema is Blackmagic's work.
-- PoC-04 step 3 confirms that two libraries with the same origin can coexist. If they cannot, E2
-  is DISCARDED.
-
-### Adopting existing databases (S)
-
-For databases created outside sqsolve on the same server (for example, migrated by hand): the
-administrator picks the database; sqsolve creates the role `<slug>`, runs `REASSIGN OWNED` to
-that role inside the database (with the superuser over the socket, audited), applies permissions
-and registers it.
+sqsolve does not create libraries from a local template (E2) and does not adopt databases
+created outside it on the same server: such databases appear in Health as "Databases outside
+the catalog" and are not backed up. Both are roadmap directions (`20-roadmap.md`).
 
 ## 6. Credentials
 
 - Passwords generated with `crypto/rand`: 24 characters from the alphabet
   `ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789` (about 140 bits). No symbols, to
-  avoid escaping problems in Resolve and in XML until PoC-05 says otherwise.
+  avoid escaping problems in Resolve and in XML.
 - They are stored encrypted (ADR 0014) so they can be shown again; in PostgreSQL only their SCRAM
   verifier exists.
 - Rotate: new password with `ALTER ROLE ... PASSWORD`; open sessions continue; workstations must
-  update it when they reconnect. The UI shows which workstations were connected so they can be
-  notified. If the new password cannot be saved in SQLite after the `ALTER ROLE`, sqsolve puts the
-  previous one back in PostgreSQL (`SQS-L070`), so the panel never shows a password that does not
-  work; if that also fails (for example, the stored password cannot be decrypted), `SQS-L071`
-  asks to rotate again. Both are recorded in the audit log as failed rotations.
-- Add a per-person credential (1.1): the role is created together with its membership of
-  `sqsolve_admin` in one transaction (§3); a later failure (owner membership, default role, the
-  SQLite row or `CONNECT`) drops the role and the row (`SQS-L072`), so the same person can be
-  added again.
-- Revoke a per-person credential (1.1): `ALTER ROLE ... NOLOGIN`, close its sessions, remove its
-  `pg_hba.conf` line, set `revoked_at`. The role is dropped after 30 days.
-- A revoked role name is never reused during that period.
+  update it when they reconnect. The library page lists the active sessions (role, address,
+  application), so the workstations to notify can be identified. If the new password cannot be
+  saved in SQLite after the `ALTER ROLE`, sqsolve puts the previous one back in PostgreSQL
+  (`SQS-L070`), so the panel never shows a password that does not work; if that also fails (for
+  example, the stored password cannot be decrypted), `SQS-L071` asks to rotate again. Both are
+  recorded in the audit log as failed rotations. When the `ALTER ROLE ... PASSWORD` itself fails,
+  its PostgreSQL error is returned with the verifier redacted, which drops the wrapped error chain
+  (`19-risks.md` §5 K-08).
+- Add a per-person credential (not validated with Resolve, PoC-01 step 5): the role is created
+  together with its membership of `sqsolve_admin` in one transaction (§3); a later failure (owner
+  membership, default role, the SQLite row or `CONNECT`) drops the role and the row (`SQS-L072`),
+  so the same person can be added again. A library in maintenance gets the new role as
+  `NOLOGIN`. Afterwards `pg_hba.conf` is rewritten to include the role; that rewrite has no audit
+  entry of its own (`19-risks.md` §5 K-07).
+- Revoke a per-person credential: `ALTER ROLE ... NOLOGIN`, close its sessions, set `revoked_at`
+  and rewrite `pg_hba.conf` without its role. If `revoked_at` cannot be recorded, `SQS-L080` asks
+  to revoke again, because the next start would give the role its login back. The role is not
+  dropped: it stays `NOLOGIN` until the library is purged.
+- A revoked role name is not reused: while the role exists, adding the same person again fails
+  with `SQS-L033`.
 
 ## 7. Active sessions
 
 Query (with `pg_monitor`):
 
 ```sql
-SELECT pid, usename, client_addr, application_name, backend_start, state, state_change
-FROM pg_stat_activity
-WHERE datname = $1 AND backend_type = 'client backend';
+SELECT a.pid, COALESCE(a.usename, ''), COALESCE(host(a.client_addr), 'local'),
+       COALESCE(a.application_name, ''), a.backend_start, COALESCE(a.state, ''), a.state_change,
+       COALESCE(s.ssl, false), COALESCE(s.version, '')
+FROM pg_stat_activity a LEFT JOIN pg_stat_ssl s USING (pid)
+WHERE a.datname = $1 AND a.backend_type = 'client backend' AND a.pid <> pg_backend_pid()
+ORDER BY a.backend_start;
 ```
 
 Terminate a session: `pg_terminate_backend(pid)` after confirmation, only if `usename` is a role
-of that library. Audited with the user, IP and application of the terminated session.
+of that library (`SQS-L016` otherwise). Audited as `library.session_terminate` with the `pid`.
 
 Terminate every session of a database (maintenance, delete, restore): all client sessions except
 sqsolve's own and those of superusers. PostgreSQL does not let `sqsolve_admin` end a superuser
-session (`42501`), and that refusal used to abort the whole statement; now those sessions are
-left alone and counted (`TerminateAllSessions` returns how many were ended and how many belong to
-a superuser) so the caller can report them.
+session (`42501`), so those sessions are left alone and counted (`TerminateAllSessions` returns
+how many were ended and how many belong to a superuser) and the caller can report them.
 
 Activity mark (ADR 0022), to know whether a library changed since its last backup without reading
 its tables:
@@ -226,7 +233,7 @@ the mark so that a statistics reset is never read as "no changes".
 | Maintenance off | `ALTER ROLE <role> LOGIN` for the roles with an active credential (revoked ones stay `NOLOGIN`; a person added during maintenance was created `NOLOGIN` and gets `LOGIN` here) |
 | Temporary lock before a rename (delete, restore by swap, revert) | `ALTER DATABASE <slug> ALLOW_CONNECTIONS false` and terminate sessions; undone if anything fails before the rename |
 | Connection limit | `ALTER ROLE <role> CONNECTION LIMIT n` on the owner and on every member role; the database stays at `CONNECTION LIMIT -1` |
-| Optimize | `vacuumdb --analyze --dbname=<slug>` (equivalent to "Optimize" without reindexing); `REINDEX DATABASE CONCURRENTLY` only on demand |
+| Optimize | `vacuumdb --analyze --skip-locked` on every library in `active` or `maintenance` (the weekly `system.vacuum` job, or Settings, Maintenance, on demand); sqsolve does not reindex |
 
 The connection limit of a library counts workstation sessions only. It is set on each library
 role (the owner `<slug>` and every `<slug>__<person>`, also members added later), so `n` is the
@@ -244,18 +251,19 @@ Goal: detect that Resolve changed a library's structure (version upgrade) withou
 project data.
 
 ```sql
-SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod), a.attnum
+SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod)
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 JOIN pg_attribute a ON a.attrelid = c.oid
 WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped
-ORDER BY 1, 4;
+ORDER BY c.relname, a.attnum;
 ```
 
-The fingerprint is the SHA-256 of the rows serialized as `table|column|type` separated by
-newlines. It is stored together with the table count. It is recomputed every 5 min, on every
-backup and when a restore finishes. A change produces the event `library.schema_changed` with
-the previous and new fingerprint.
+The fingerprint is `sha256:` followed by the hex SHA-256 of the rows serialized as
+`table|column|type`, each followed by a newline; a database without tables has an empty
+fingerprint. It is stored together with the table count. It is recomputed every 5 min for the
+libraries in `active` and `maintenance`, on every backup and when a restore finishes. A change
+produces the event `library.schema_changed` with the previous and new fingerprint.
 
 Registry of known fingerprints: `internal/compat/fingerprints.json` maps fingerprints to Resolve
 versions and also states which exports were verified with that version (`verified`, see `22`
@@ -265,37 +273,49 @@ is shown.
 
 ## 10. PostgreSQL configuration
 
-`sqsolve-init` generates the files in the `pgconf` volume before PostgreSQL starts, and sqsolve
-regenerates them afterwards. PostgreSQL starts with:
+The configuration lives in the `sqsolve` folder of the db volume
+(`/var/lib/postgresql/sqsolve`, `db/sqsolve` on the host). `sqsolve-init` rewrites
+`postgresql.conf` at every start of the stack, before PostgreSQL starts, and writes `pg_hba.conf`
+(with no library lines) and an empty `pg_ident.conf` only when they are missing; afterwards
+sqsolve regenerates `pg_hba.conf` whenever libraries, credentials or the access settings change.
+PostgreSQL starts with:
 
 ```
-postgres -c config_file=/etc/sqsolve/pg/postgresql.conf
+postgres -c config_file=/var/lib/postgresql/sqsolve/postgresql.conf
 ```
 
-Base contents of `postgresql.conf` (values between `<>` are computed by sqsolve):
+Base contents of `postgresql.conf` (values between `<>` are computed by `sqsolve-init`; the
+`SQSOLVE_PG_*` variables of the compose file adjust them):
 
 | Parameter | Value | Reason |
 |---|---|---|
-| `data_directory` | `/var/lib/postgresql/18/docker` | Path of the official 18 image |
-| `hba_file` | `/etc/sqsolve/pg/pg_hba.conf` | Generated by sqsolve |
-| `listen_addresses` | `'*'` | Inside the container; the host decides what is published |
-| `port` | `5432` | Resolve |
-| `unix_socket_directories` | `'/var/run/postgresql'` | `pgsocket` volume shared with sqsolve |
-| `max_connections` | `200` (adjust after PoC-01 step 6) | Several connections per workstation |
+| `data_directory` | `/var/lib/postgresql/18/docker` (`SQSOLVE_PG_DATA_DIR`) | Path of the official 18 image |
+| `hba_file`, `ident_file` | `/var/lib/postgresql/sqsolve/pg_hba.conf`, `.../pg_ident.conf` | Generated by sqsolve; `pg_ident.conf` stays empty |
+| `listen_addresses` | `'*'` (`SQSOLVE_PG_LISTEN`) | Inside the container; the host decides what is published |
+| `port` | `5432` (`SQSOLVE_PG_PORT`) | Resolve |
+| `unix_socket_directories` | `'/var/run/postgresql'` (`SQSOLVE_PG_SOCKET_DIR`), `unix_socket_permissions = 0777` | `sqsolve-run` volume shared with sqsolve; `pg_hba.conf` admits only `postgres` and `sqsolve_admin` there |
+| `max_connections` | `200` (`SQSOLVE_PG_MAX_CONNECTIONS`, 20 to 5000) | Several connections per workstation: 1 idle, up to 6 in bursts (PoC-01 step 6) |
 | `superuser_reserved_connections` | `5` | Emergency access as `postgres` |
 | `reserved_connections` | `3` | Slots only for roles with `pg_use_reserved_connections` (`sqsolve_admin`), so busy workstations cannot starve backups |
 | `password_encryption` | `scram-sha-256` | RNF-SEG-02 |
-| `ssl` | `on` with `ssl_cert_file` and `ssl_key_file` in `db/sqsolve/tls` | Opportunistic encryption (PoC-06) |
-| `shared_buffers` | `<25 % of allocated memory, maximum 2 GB>` | Medium-sized databases |
+| `ssl` | `on` with `ssl_cert_file` and `ssl_key_file` in `db/sqsolve/tls` (`server.crt`, `server.key`), `ssl_min_protocol_version = 'TLSv1.2'` | Opportunistic encryption (PoC-06) |
+| `shared_buffers` | `<25 % of SQSOLVE_PG_MEMORY_MB (default 2048), between 32 MB and 2 GB>` | Medium-sized databases |
 | `log_connections`, `log_disconnections` | `on` | Access audit |
 | `log_line_prefix` | `'%m [%p] %u@%d %r '` | Correlation |
 | `log_lock_waits` | `on` | Lock diagnostics during backups |
 | `tcp_keepalives_idle`, `_interval`, `_count` | `60`, `10`, `6` | Clean up sessions from laptops that went to sleep |
 | `idle_session_timeout` | unset | Resolve keeps long-lived connections |
 
+It also sets fixed values: `effective_cache_size` at 75 % of `SQSOLVE_PG_MEMORY_MB`,
+`maintenance_work_mem = 128MB`, `work_mem = 8MB`, `wal_level = replica`, `max_wal_size = 2GB`,
+`checkpoint_timeout = 10min`, logs to stderr without the logging collector, `UTC` for
+`timezone` and `log_timezone`, `C.UTF-8` for `lc_messages`, `lc_monetary`, `lc_numeric` and
+`lc_time`, and `pg_catalog.simple` as `default_text_search_config`.
+
 Cluster initialization (first time only, by the official image):
-`POSTGRES_INITDB_ARGS="--encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8"`
-(subject to PoC-01 step 7). Reason: the `builtin` collation does not depend on the container's
+`POSTGRES_INITDB_ARGS="--encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8"`. How
+Resolve sorts accented names with this collation is To be confirmed (PoC-01 step 7 was
+inconclusive). Reason: the `builtin` collation does not depend on the container's
 glibc, so upgrading the base image cannot corrupt text indexes. PostgreSQL 18 also enables page
 checksums by default.
 
@@ -311,13 +331,13 @@ that the parameter cannot be changed without restarting the server at each reloa
 whole app is restarted.
 
 **Admin connections.** Every connection sqsolve opens through pgx (the `sqsolve_admin` pool, the
-per-database connections of backups, verification and export, and the audited superuser
-connections) starts with `lock_timeout = 60s`, the same wait as `pg_dump --lock-wait-timeout`, and
-`statement_timeout = 30min`. A row count, an `ALTER` or a `DROP DATABASE` behind a lock that
-Resolve or anyone else holds fails with `SQS-P050` instead of waiting forever and holding the
-heavy job slot; a statement cancelled by the time limit reports `SQS-P051`. `pg_dump` and
-`pg_restore` are separate processes and keep their own options. The export session also sets its
-own `statement_timeout` of 60 s (docs 22 §9).
+per-database connections of backups, verification and export, and the superuser connections of
+`pg.Bootstrap` and the doctor checks) starts with `lock_timeout = 60s`, the same wait as `pg_dump
+--lock-wait-timeout`, and `statement_timeout = 30min`. A row count, an `ALTER` or a `DROP
+DATABASE` behind a lock that Resolve or anyone else holds fails with `SQS-P050` instead of
+waiting forever and holding the heavy job slot; a statement cancelled by the time limit reports
+`SQS-P051`. `pg_dump` and `pg_restore` are separate processes and keep their own options. The
+export session also sets its own `statement_timeout` of 60 s (docs 22 §9).
 
 **Database list.** PostgreSQL marks a database invalid (`datconnlimit = -2`) while a
 `DROP DATABASE` runs, and leaves it so when the drop is interrupted; such a database can only be
@@ -334,82 +354,91 @@ and an administrator drops it with `DROP DATABASE` as the superuser after checki
 held by an invalid database is still taken: creating a library or restoring as new with that
 identifier fails with `SQS-L005`.
 
-Generated `pg_hba.conf` (order matters, first match wins):
+Generated `pg_hba.conf` (order matters, first match wins; fields are separated by tabs):
 
 ```
 # Generated by sqsolve. Manual changes are lost.
-local   all            postgres                      scram-sha-256
-local   all            sqsolve_admin                 scram-sha-256
-local   all            all                           reject
-# No administrative role enters over the network, even if it is a member of a library role:
-host    all            postgres,sqsolve_admin  0.0.0.0/0  reject
-host    all            postgres,sqsolve_admin  ::/0       reject
-# Per library and per allowed CIDR (0.0.0.0/0 and ::/0 if there are no rules).
-# Roles listed by name, never with "+role", so members are not admitted by accident:
-host    client_x      client_x,client_x__ana  192.168.1.0/24 scram-sha-256
-# Maintenance database, only if PoC-01 shows Resolve needs it:
-host    postgres       client_x      192.168.1.0/24 scram-sha-256
-host    all            all            0.0.0.0/0      reject
-host    all            all            ::/0           reject
+# TYPE  DATABASE  USER  ADDRESS  METHOD
+local   all       postgres                 scram-sha-256
+local   all       sqsolve_admin            scram-sha-256
+local   all       all                      reject
+host    all       postgres,sqsolve_admin   all              reject
+# library client_x
+host    client_x  client_x,client_x__ana   192.168.1.0/24   scram-sha-256
+host    postgres  client_x,client_x__ana   192.168.1.0/24   scram-sha-256
+host    all       all                      all              reject
 ```
 
-`hostssl` replaces `host` if PoC-06 confirms that Resolve uses TLS and the administrator enables
-"require TLS". Before reloading, sqsolve validates the file by reading `pg_hba_file_rules` and
-does not reload if there are errors; the previous version is kept as `pg_hba.conf.prev`. A change
-counts as applied only after a successful reload; how a failed one is retried is in docs 08 §7.
+- No administrative role enters over the network, even if it is a member of a library role; a
+  library line that names `postgres` or `sqsolve_admin` is refused (`SQS-P040`).
+- One line per library and per allowed CIDR, with `all` as the address when the library has no
+  rules. Only libraries in `awaiting_init`, `active`, `maintenance` and `restoring` get lines, with
+  the owner and every member whose credential is not revoked. Roles are listed by name, never
+  with `+role`, so members are not admitted by accident.
+- The `postgres` line of each library exists while Settings allows library users to enter the
+  maintenance database (on by default); whether Resolve needs that database was not tested.
+
+With "TLS only" in Settings, the library lines use `hostssl` instead of `host` (PoC-06: Resolve
+21.1.1 on Linux connects with it; other platforms were not tested). sqsolve writes the file
+keeping the previous version as `pg_hba.conf.prev` and, before reloading, validates it by reading
+`pg_hba_file_rules`; if there are errors it puts `.prev` back and does not reload (`SQS-P042`). A
+change counts as applied only after a successful reload; how a failed one is retried is in docs
+08 §7.
 
 ## 11. Control plane SQLite schema
 
-File `app/sqsolve.db`, WAL mode, `foreign_keys = on`. ULID identifiers as text. Dates in UTC in
-RFC 3339 format.
+File `app/sqsolve.db`, WAL mode, `foreign_keys = on`, `synchronous = FULL`, 10 s busy timeout.
+ULID identifiers as text. Dates in UTC in RFC 3339 format with microseconds.
 
 ```mermaid
 erDiagram
   admin_users ||--o{ sessions : has
   admin_users ||--o{ api_tokens : has
+  admin_users ||--o{ recovery_codes : has
   libraries ||--o{ library_credentials : has
   libraries ||--o{ network_rules : limits
   libraries ||--o| backup_policies : uses
   libraries ||--o{ backups : has
-  backups ||--o{ backup_table_counts : contains
+  backups ||--o{ export_workspaces : opens
   jobs ||--o{ job_steps : records
   jobs ||--o{ job_logs : writes
   jobs ||--o| backups : produces
   schedules ||--o{ jobs : triggers
-  notification_channels ||--o{ notification_rules : receives
 ```
 
 | Table | Main columns |
 |---|---|
-| `admin_users` | `id`, `username` unique, `display_name`, `password_hash`, `role` (`admin`, `operator`, `viewer`, `collaborator`), `totp_secret_enc`, `totp_enabled`, `locale`, `created_at`, `last_login_at`, `disabled_at` |
-| `sessions` | `id_hash` (SHA-256 of the token), `user_id`, `created_at`, `expires_at`, `last_seen_at`, `reauth_at`, `ip`, `user_agent` |
-| `api_tokens` | `id`, `user_id`, `name`, `token_hash`, `scopes` (JSON), `created_at`, `expires_at`, `last_used_at`, `revoked_at` |
-| `libraries` | `id`, `slug` unique, `display_name`, `state`, `db_name`, `owner_role`, `creation_strategy`, `init_window_expires_at`, `resolve_version_declared`, `schema_fingerprint`, `schema_table_count`, `fingerprint_checked_at`, `connection_limit`, `notes`, `created_at`, `updated_at`, `trashed_at`, `purge_after` |
-| `library_credentials` | `id`, `library_id`, `kind` (`owner`, `member`), `pg_role` unique, `person_label`, `password_enc`, `created_at`, `rotated_at`, `revoked_at`, `last_seen_at`, `last_seen_ip` |
+| `admin_users` | `id`, `username` unique (case-insensitive), `display_name`, `password_hash`, `role` (`admin`, `operator`, `viewer`), `totp_secret_enc`, `totp_enabled`, `totp_last_counter`, `created_at`, `password_changed_at`, `last_login_at`, `disabled_at`, `failed_logins`, `locked_at` |
+| `recovery_codes` | `user_id`, `code_hash`, `used_at` |
+| `sessions` | `id_hash` (SHA-256 of the token), `user_id`, `created_at`, `expires_at`, `last_seen_at`, `reauth_at`, `mfa_pending`, `ip`, `user_agent` |
+| `api_tokens` | `id`, `user_id`, `name`, `token_hash` unique, `scopes` (JSON), `created_at`, `expires_at`, `last_used_at`, `revoked_at` |
+| `libraries` | `id`, `slug` (unique among libraries that are not purged), `display_name`, `state`, `db_name`, `owner_role`, `creation_strategy` (`resolve`, `precreate`, `restore`), `init_window_expires_at`, `init_table_count`, `resolve_version`, `schema_fingerprint`, `schema_table_count`, `fingerprint_checked_at`, `connection_limit`, `notes`, `trash_db_name`, `prev_db_name`, `prev_expires_at`, `prev_backup_id`, `created_at`, `updated_at`, `trashed_at`, `purge_after`, `purged_at` |
+| `library_credentials` | `id`, `library_id`, `kind` (`owner`, `member`), `pg_role`, `person_label`, `password_enc`, `created_at`, `rotated_at`, `revoked_at` |
 | `network_rules` | `id`, `library_id`, `cidr`, `description`, `created_at` |
-| `backup_policies` | `library_id`, `enabled`, `schedule_cron`, `timezone`, `keep_last`, `keep_daily`, `keep_weekly`, `keep_monthly`, `min_verified`, `verify_l2_cron`, `compression` |
-| `backups` | `id`, `library_id`, `job_id`, `kind` (`manual`, `scheduled`, `pre_restore`, `pre_delete`, `pre_upgrade`, `imported`), `status` (`running`, `ok`, `failed`, `interrupted`, `expired`, `deleted`), `verify_level`, `verify_status`, `verified_at`, `file_path`, `size_bytes`, `sha256`, `pg_server_version`, `pg_dump_version`, `archive_version`, `schema_fingerprint`, `resolve_version_declared`, `pinned`, `started_at`, `finished_at`, `expires_reason` |
-| `backup_table_counts` | `backup_id`, `table_name`, `row_count` |
-| `jobs` | `id`, `type`, `library_id`, `params` (JSON), `state` (`queued`, `running`, `succeeded`, `failed`, `cancelled`, `interrupted`), `priority`, `scheduled_for`, `started_at`, `finished_at`, `progress` (0 to 100), `current_step`, `error_code`, `error_detail`, `created_by`, `schedule_id`, `attempt` |
+| `backup_policies` | `library_id`, `enabled`, `mode` (`cron`, `activity`), `schedule_cron`, `check_minutes`, `timezone`, `keep_last`, `keep_daily`, `keep_weekly`, `keep_monthly`, `min_verified`, `last_check_at`, `last_check_same`, `updated_at` |
+| `backups` | `id`, `library_id`, `job_id`, `kind` (`manual`, `scheduled`, `pre_restore`, `pre_delete`, `pre_upgrade`, `imported`), `status` (`running`, `ok`, `failed`, `interrupted`, `deleted`), `verify_level`, `verify_status` (`none`, `l1_ok`, `l2_ok`, `partial`, `failed`), `verified_at`, `verify_detail`, `file_path`, `size_bytes`, `sha256`, `pg_server_version`, `pg_dump_version`, `archive_version`, `compression`, `schema_fingerprint`, `table_count`, `counts_exact`, `resolve_version`, `pinned`, `source_db`, `activity_mark`, `started_at`, `finished_at`, `error`, `expired_reason`, `deleted_at` |
+| `export_workspaces` | `id`, `backup_id`, `db_name` (`sqsolve_export_<id8>`), `job_id`, `state` (`preparing`, `ready`, `failed`, `closed`), `error`, `created_at`, `expires_at` |
+| `jobs` | `id`, `type`, `library_id`, `params` (JSON), `state` (`queued`, `running`, `succeeded`, `failed`, `cancelled`, `interrupted`), `priority`, `scheduled_for`, `created_at`, `started_at`, `finished_at`, `progress` (0 to 100), `current_step`, `error_code`, `error_detail`, `created_by_type`, `created_by_id`, `created_by_name`, `schedule_id`, `attempt`, `result` (JSON), `reconcile_pending`, `audit` (the audit entry of the action that queued it, JSON) |
 | `job_steps` | `job_id`, `seq`, `name`, `state`, `started_at`, `finished_at`, `data` (JSON: journal for recovery, for example names before and after the rename) |
 | `job_logs` | `job_id`, `seq`, `ts`, `level`, `message` (no secrets) |
-| `schedules` | `id`, `kind` (`backup`, `verify`, `retention`, `maintenance`, `system`), `target_id`, `cron`, `timezone`, `enabled`, `misfire_window_minutes`, `next_run_at`, `last_run_at`, `last_job_id` |
-| `notification_channels` | `id`, `kind` (`webhook`, `smtp`, `ntfy`), `name`, `config_enc`, `enabled`, `last_ok_at`, `last_error` |
-| `notification_rules` | `id`, `channel_id`, `event_pattern`, `min_severity` |
+| `schedules` | `id`, `kind` (`backup`, `verify` or a `system.*` job), `target_id`, `cron`, `timezone`, `enabled`, `misfire_window_minutes`, `next_run_at`, `last_run_at`, `last_job_id`, `created_at`; unique `(kind, target_id)` |
+| `notification_channels` | `id`, `kind` (`webhook`, `ntfy`, `smtp`), `name`, `config_enc`, `enabled`, `min_severity`, `event_pattern`, `last_ok_at`, `last_error`, `created_at` |
 | `events` | `id`, `ts`, `type`, `severity`, `library_id`, `job_id`, `message`, `data` (JSON) |
-| `audit_log` | `seq`, `ts`, `actor_type`, `actor_id`, `actor_ip`, `action`, `target_type`, `target_id`, `outcome`, `details` (JSON), `prev_hash`, `hash` |
+| `audit_log` | `seq`, `ts`, `actor_type`, `actor_id`, `actor_name`, `actor_ip`, `action`, `target_type`, `target_id`, `outcome`, `details` (JSON), `prev_hash`, `hash` |
 | `settings` | `key`, `value` (JSON), `updated_at`, `updated_by` |
-| `schema_migrations` | `version`, `applied_at`, `checksum` |
+| `schema_migrations` | `version`, `name`, `checksum`, `applied_at` |
 
 Migrations: numbered embedded SQL files (`internal/store/migrations/NNNN_name.sql`), forward
-only, each in a transaction, with a recorded checksum. Before applying, a copy is made with
-`VACUUM INTO app/state-backups/sqsolve-before-<migration>-<stamp>.db`: one per pending migration
-(a migration that fails on every start is not copied again) and only the newest 5 are kept.
+only, each in a transaction, with a recorded checksum; a migration that changed after being
+applied stops the start (`SQS-X011`), and so does a database with a migration newer than the
+binary (`SQS-X012`). Before applying pending migrations to an existing database, a copy is made
+with `VACUUM INTO app/state-backups/sqsolve-before-<NNNN>-<stamp>.db`, named after the first
+pending migration (a migration that fails on every start is not copied again); only the newest
+5 copies are kept.
 
-## 12. External server mode (2.0)
+## 12. External server mode
 
-sqsolve manages an existing PostgreSQL 16 or later (for example, the one on another studio
-server). Requirements: a role with the attributes of `sqsolve_admin` created by the
-administrator, a verified TLS connection, and the administrator managing `pg_hba.conf` (sqsolve
-generates the lines and shows them to copy). Without a local socket, network rules and reloads
-become manual.
+sqsolve only manages the PostgreSQL of its own Compose stack, through the local socket: it
+generates that server's `postgresql.conf` and `pg_hba.conf` and reloads it. It does not manage an
+existing PostgreSQL on another server. An external server mode is a long-term roadmap direction
+(`20-roadmap.md`).

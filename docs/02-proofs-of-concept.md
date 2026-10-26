@@ -1,8 +1,11 @@
 # 02. Proofs of concept
 
-The PoCs turn the INVESTIGATE items of `01-research.md` into facts before writing the code that
-depends on them. Each PoC produces a report in `docs/poc/poc-NN-<name>.md` with the date, exact
-versions, steps, results and the decision taken.
+The PoCs were defined to turn the INVESTIGATE items of `01-research.md` into facts before writing
+the code that depends on them. This document keeps each PoC's question and procedure and records
+which ones ran, what they found and which were not run. Each PoC that ran has a report in
+`docs/poc/poc-NN-<name>.md` with the date, exact versions, steps, results and the decision taken.
+Resolve behaviour that neither those reports nor the acceptance records (`docs/acceptance/`) cover
+is not validated with real Resolve.
 
 ## Rules for all PoCs
 
@@ -13,26 +16,30 @@ versions, steps, results and the decision taken.
 - Logs containing Resolve's SQL statements are kept outside the repo (Diego's `/mnt/...`) and
   are not published. Only conclusions go into the report (for example, "it runs `CREATE
   DATABASE` while connected to the `postgres` database"), not the schema.
-- Base environment: the lab `compose.yaml` in `deploy/lab/` (SQS-020), with PostgreSQL 18 and
-  `log_statement = 'all'`, `log_connections = on`, `log_disconnections = on`.
+- Base environment of the PoCs that ran: the sqsolve test installation on mininas (TrueNAS
+  25.10.7, Custom App, PostgreSQL 18.6, sqsolve 0.1.5 and 0.1.6) and Diego's Linux workstation
+  with Resolve Studio 21.1.1 build 10. The results come from the system catalog,
+  `pg_stat_activity`, `pg_stat_ssl`, Resolve's log and its scripting API. A separate lab Compose
+  with `log_statement = 'all'` was not built.
 
-## Summary and blockers
+## Summary
 
-| PoC | Topic | Priority | Blocks |
-|---|---|---|---|
-| PoC-01 | Library lifecycle and minimum privileges | Critical | SQS-200 to SQS-230 (libraries). **Partially done on 2026-10-19** (`docs/poc/poc-01-lifecycle.md`): E1 confirmed, E0 does not work with 21.1.1; member role and `sqsolve_admin` as owner pending |
-| PoC-02 | Resolve × PostgreSQL version matrix | Critical | ADR 0006, `14-compatibility.md` |
-| PoC-03 | Schema fingerprint and upgrade detection | High | SQS-240. **Partially done on 2026-10-19** (`docs/poc/poc-03-fingerprint.md`): stable under use; a real Resolve upgrade is still missing |
-| PoC-04 | Backup format and cross restore | Critical | SQS-300 to SQS-340 (backups). **Partially done on 2026-10-19** (`docs/poc/poc-04-backup-format.md`): Resolve opens libraries restored by sqsolve; its own Backup and Restore remain untested |
-| PoC-05 | `.resolvedbkey` keys | Medium | SQS-610 (experimental module) |
-| PoC-06 | TLS and SCRAM from Resolve | High | Default values of `pg_hba.conf`. **Done on 2026-10-19** (`docs/poc/poc-06-tls.md`): Resolve 21.1.1 Linux encrypts on its own and connects with mandatory `hostssl` |
-| PoC-07 | Collaboration and network traffic | High | Documentation for editors |
-| PoC-08 | Network: source IP in Docker, port, VPN | High | Network rules per library, remote access guide. **Done on 2026-10-19** (`docs/poc/poc-08-network.md`): real IP on the LAN; through the TrueNAS Tailscale app the container IP arrives |
-| PoC-09 | Restricted states and forced disconnect | Critical | Restore by swap, maintenance mode. **Done on 2026-10-19** (`docs/poc/poc-09-forced-disconnect.md`): Resolve reconnects on its own after the swap; the project must be closed first. Seen on screen in the 1.2.2 acceptance (2026-10-26), for a revert too |
-| PoC-10 | Locks and `pg_dump` duration under real use | Medium | Scheduling recommendations |
+| PoC | Topic | Priority | Blocks | Status |
+|---|---|---|---|---|
+| PoC-01 | Library lifecycle and minimum privileges | Critical | Creation strategy, roles and credentials (`07` §3 to §6, ADR 0008) | **Partly run on 2026-10-19** (`docs/poc/poc-01-lifecycle.md`): E1 works, E0 does not work with 21.1.1, daily use works without `CREATEDB`. Not run: a database owned by `sqsolve_admin` (step 3) and a member role (step 5), so sqsolve's per-person credentials are not validated with Resolve |
+| PoC-02 | Resolve × PostgreSQL version matrix | Critical | ADR 0006, `14-compatibility.md` | **Not run.** The records cover only Resolve Studio 21.1.1 with PostgreSQL 18.6; 20.3.2 and the rest of the matrix are not validated |
+| PoC-03 | Schema fingerprint and upgrade detection | High | `library.schema_changed` (`07` §9) and the upgrade window (`14` §5) | **Partly run on 2026-10-19** (`docs/poc/poc-03-fingerprint.md`): stable under use. Not run: a real Resolve upgrade, so a fingerprint change on upgrade is not validated |
+| PoC-04 | Backup format and cross restore | Critical | Backup and restore (`11`), any claim about Resolve's own Backup and Restore | **Partly run on 2026-10-19** (`docs/poc/poc-04-backup-format.md`): Resolve opens a library restored by sqsolve. Not run: steps 1, 2 and 4, so Resolve's own Backup and Restore against sqsolve's files is not validated |
+| PoC-05 | `.resolvedbkey` keys | Medium | `.resolvedbkey` module (ADR 0013) | **Not run.** sqsolve does not generate keys |
+| PoC-06 | TLS and SCRAM from Resolve | High | Default values of `pg_hba.conf`, "TLS only" mode | **Run on 2026-10-19** (`docs/poc/poc-06-tls.md`): Resolve 21.1.1 on Linux encrypts on its own and connects with mandatory `hostssl`. Not tested on macOS or Windows |
+| PoC-07 | Collaboration and network traffic | High | Documentation for editors, ADR 0012 | **Not run.** Collaboration between two workstations is not validated |
+| PoC-08 | Network: source IP in Docker, port, VPN | High | Network rules per library, remote access guide | **Partly run on 2026-10-19** (`docs/poc/poc-08-network.md`): real IP on the LAN; through the TrueNAS Tailscale app the container IP arrives. Not run: another port or a host name in Resolve, Resolve and collaboration over the VPN |
+| PoC-09 | Restricted states and forced disconnect | Critical | Restore by swap, revert, maintenance mode | **Run on 2026-10-19** (`docs/poc/poc-09-forced-disconnect.md`): Resolve reconnects on its own after the swap; the project must be closed first. Seen on screen in the 1.2.2 acceptance (2026-10-26), for a revert too. Not run: steps 3 and 4 |
+| PoC-10 | Locks and `pg_dump` duration under real use | Medium | Scheduling recommendations | **Not run.** The effect of a hot backup on editors is not measured |
 
-Suggested order: PoC-01, PoC-02 and PoC-06 in one session; then PoC-04 and PoC-09; then the
-rest.
+PoC-01, 03, 04, 06, 08 and 09 ran on 2026-10-19, the day of the 1.0 acceptance
+(`docs/acceptance/1.0.md`); PoC-09 ran again by hand, watching Resolve's screen, on 2026-10-26
+(`docs/acceptance/1.2.2.md`). PoC-02, 05, 07 and 10 have not run.
 
 ## PoC-01. Lifecycle and minimum privileges
 
@@ -70,6 +77,16 @@ the library role), per-person credentials and `max_connections`.
 **Plan B.** If Resolve requires owning the database, the owner will be the library role and the
 swap renames will be done with the superuser over the local socket, with an audit entry.
 
+**Result (2026-10-19).** Partly run; report in `docs/poc/poc-01-lifecycle.md`. With Resolve Studio
+21.1.1 on Linux: "Create" from the Project Manager inside sqsolve's initialization window works
+(E1) and leaves the database owned by the library role with only `plpgsql`; "Connect" to an
+empty database (E0) does not initialize it and Resolve marks it incompatible; daily use works
+with the role without `CREATEDB`; an idle workstation holds 1 connection, with bursts of 6 when
+switching library or loading a project. Plan B became the normal path without the superuser:
+`sqsolve_admin` acts as owner through membership of the library role (`07` §3). Not run: steps 3
+(database owned by `sqsolve_admin`), 5 (member role), 7 (accent ordering) and 8 (Resolve 20.3.2),
+and the render case of step 6.
+
 ## PoC-02. Version matrix
 
 **Question.** Which Resolve versions work with which PostgreSQL versions?
@@ -88,6 +105,9 @@ media, edit a timeline, close and reopen, back up from Resolve:
 **Decision it enables.** PostgreSQL 18 is confirmed as the only default version, or an
 alternative profile (17) is added only for teams tied to a Resolve version.
 
+**Result.** Not run. The PoCs that ran and both acceptance records used only Resolve Studio 21.1.1
+with PostgreSQL 18.6. PostgreSQL 18 is the only packaged version and there is no 17 profile.
+
 ## PoC-03. Schema fingerprint
 
 **Question.** Does the fingerprint defined in `07-libraries-and-postgresql.md` §9 change when
@@ -100,6 +120,11 @@ offers it; recompute; open a project in 21.1; recompute.
 **Success.** The fingerprint does not change under normal use and changes when the schema
 changes. If upgrading does not change the schema (only project data), it is documented that the
 fingerprint does not detect that case and the upgrade window becomes mandatory in the guide.
+
+**Result (2026-10-19).** Partly run; report in `docs/poc/poc-03-fingerprint.md`. Only 21.1.1 was
+available: the fingerprint stayed the same under normal use (creating, editing, saving and
+deleting projects and timelines). The library was not created with 20.3.2 nor upgraded, so
+whether an upgrade changes the fingerprint is not validated.
 
 ## PoC-04. Backup format and cross restore
 
@@ -125,6 +150,13 @@ options, and whether restoring as a copy is safe.
 restores are done only from sqsolve. Nothing in the backup design depends on that
 compatibility.
 
+**Result (2026-10-19).** Partly run; report in `docs/poc/poc-04-backup-format.md`. Step 3: a backup
+of `apolo` restored by sqsolve as the new library `apolo_poc` opened in Resolve 21.1.1, which
+listed its projects and created one in it; the check that the original library did not receive
+that project was not run. Steps 1, 2 and 4 were not run (they need Resolve's Project Manager), so
+the format of Resolve's own backup file, whether Resolve restores sqsolve's files and which
+compression it accepts are not known.
+
 ## PoC-05. `.resolvedbkey` keys
 
 **Question.** Can sqsolve generate keys that Resolve accepts?
@@ -145,6 +177,9 @@ compatibility.
 **Plan B.** If the format is encrypted, signed or unstable across versions, the module is
 DISCARDED and the interface offers only manual connection instructions.
 
+**Result.** Not run. sqsolve does not generate `.resolvedbkey` keys: the library page gives the
+values to type in Resolve's Project Manager (ADR 0013, `docs/20-roadmap.md`).
+
 ## PoC-06. TLS and SCRAM
 
 **Question.** Does Resolve connect with `scram-sha-256` and over TLS?
@@ -160,7 +195,8 @@ access outside the LAN stays.
 
 **Result (2026-10-19).** Done; report in `docs/poc/poc-06-tls.md`. Resolve Studio 21.1.1 on
 Linux negotiates TLS 1.3 on its own, accepts the self-signed certificate without verifying it
-and also connects with mandatory `hostssl` ("TLS only" mode). Pending on macOS and Windows.
+and also connects with mandatory `hostssl` ("TLS only" mode). Not tested on macOS or Windows,
+and `ssl_min_protocol_version = TLSv1.3` was not tried.
 
 ## PoC-07. Collaboration and traffic
 
@@ -174,6 +210,10 @@ of one workstation and observe the symptom. Repeat with a workstation running fr
 
 **Success.** List of ports and traffic directions; visible symptoms of each failure for the
 troubleshooting guide; answer about the free version.
+
+**Result.** Not run. No record covers two workstations on the same library (the 1.0 acceptance
+left AC-04 to AC-06 undone), so collaboration, its ports and its behaviour with the free version
+are not validated.
 
 ## PoC-08. Network
 
@@ -194,6 +234,13 @@ Resolve accept another port? Do the library and collaboration work over a VPN?
 whether `host` is documented as a requirement to use them; the tested remote access is
 documented.
 
+**Result (2026-10-19).** Partly run; report in `docs/poc/poc-08-network.md`. On the LAN, with the
+port published by Docker on TrueNAS, PostgreSQL sees the workstation's real IP, for `psql` and for
+Resolve 21.1.1. Through the TrueNAS Tailscale app every connection arrives with the IP of the
+Tailscale container (`172.16.10.1`). Not run: the `network_mode: host` comparison, another port or
+a host name in Resolve's location field, and Resolve or collaboration over the VPN (only `psql`
+was tried over Tailscale).
+
 ## PoC-09. Restricted states and forced disconnect
 
 **Questions.** How does Resolve react when sqsolve cuts its connections, locks the database or
@@ -213,6 +260,17 @@ replaces it with a restored one under the same name?
 **Success.** The visible behaviour is known in order to write the interface warnings and the
 "before restoring" guide; it is decided whether the "archived (read only)" state is viable.
 
+**Result.** Run on 2026-10-19 through the scripting API (`docs/poc/poc-09-forced-disconnect.md`):
+maintenance without closing sessions does not interrupt an open session, and after a swap that
+closes the sessions Resolve 21.1.1 reconnects on its own to the restored database and keeps
+saving. On 2026-10-26 the 1.2.2 acceptance saw it on screen for three replacements and a revert
+(`docs/acceptance/1.2.2.md`): Resolve shows no dialog and its next save writes what it has in
+memory into the restored library. The replace and revert pages ask to close the project in
+Resolve first; a technical lock after a replacement is a roadmap item (`docs/20-roadmap.md`).
+Steps 3 and 4 were not run: the "archived (read only)" state was not evaluated and sqsolve has
+none, and what Resolve shows when maintenance, which sets the library roles `NOLOGIN` since ADR
+0024, refuses a new connection is To be confirmed.
+
 ## PoC-10. Locks and `pg_dump` duration
 
 **Question.** Does a hot backup affect editors?
@@ -224,3 +282,6 @@ in Resolve. Repeat the test restore into an auxiliary database.
 
 **Success.** Duration data per size for the guide; confirmation that the hot backup does not
 block normal work or, if it does, in which operations.
+
+**Result.** Not run: the duration of `pg_dump` per library size and its effect on editors are not
+measured.
