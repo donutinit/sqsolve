@@ -410,7 +410,18 @@ var (
 	// hookDBVolumeFree replaces the free space measured on the database
 	// volume by the restore space check.
 	hookDBVolumeFree atomic.Pointer[func() uint64]
+	// hookFault makes a PostgreSQL lookup or grant fail at a named point,
+	// where no trigger can (PLAN P0.4).
+	hookFault atomic.Pointer[func(point string) error]
 )
+
+// fault returns the error a test injects at point, or nil.
+func fault(point string) error {
+	if f := hookFault.Load(); f != nil {
+		return (*f)(point)
+	}
+	return nil
+}
 
 // importSettle is how long, in nanoseconds, the size of a file in _import
 // must stay the same before it is imported: a file still being copied grows.

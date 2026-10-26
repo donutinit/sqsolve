@@ -308,6 +308,12 @@ func Audited(action, targetType, targetID string, details map[string]any) Option
 	}
 }
 
+// ErrUnsettled marks the error of a job of a Reconcile type that stopped
+// after an irreversible step (PLAN P0.4): the job fails and stays pending
+// reconciliation, so its journal is kept and the next start settles it,
+// like an interrupted one. Other types just fail.
+var ErrUnsettled = errors.New("reconciliation finishes it at the next start of sqsolve")
+
 // ErrUnknownType is returned for unregistered job types.
 var ErrUnknownType = errors.New("SQS-J001 unknown job type")
 
@@ -960,7 +966,7 @@ func (m *Manager) finish(j *Job, state State, err error) {
 	}
 	recorded := false
 	for i := 0; ; i++ {
-		uerr := m.recordFinal(ctx, j.ID, state, code, detail, progress, stepState)
+		uerr := m.recordFinal(ctx, j.ID, state, code, detail, progress, stepState, m.specs[j.Type].Reconcile && errors.Is(err, ErrUnsettled))
 		if uerr == nil {
 			recorded = true
 			break
@@ -1011,12 +1017,16 @@ func (m *Manager) recordResult(ctx context.Context, j *Job, state State, code st
 
 // recordFinal writes the final state of the job and of its open steps. Both
 // updates are idempotent, so a failed attempt is simply repeated.
-func (m *Manager) recordFinal(ctx context.Context, id string, state State, code, detail string, progress int, stepState string) error {
+func (m *Manager) recordFinal(ctx context.Context, id string, state State, code, detail string, progress int, stepState string, unsettled bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	now := store.NowT()
-	if _, err := m.db.ExecContext(ctx, `UPDATE jobs SET state = ?, finished_at = ?, error_code = ?, error_detail = ?, progress = ? WHERE id = ?`,
-		string(state), now, code, detail, progress, id); err != nil {
+	q := `UPDATE jobs SET state = ?, finished_at = ?, error_code = ?, error_detail = ?, progress = ?`
+	if unsettled {
+		// Only then: the flag is otherwise left as reconciliation wrote it.
+		q += `, reconcile_pending = 1`
+	}
+	if _, err := m.db.ExecContext(ctx, q+` WHERE id = ?`, string(state), now, code, detail, progress, id); err != nil {
 		return err
 	}
 	_, err := m.db.ExecContext(ctx, `UPDATE job_steps SET state = ?, finished_at = ? WHERE job_id = ? AND state = 'running'`, stepState, now, id)

@@ -4,6 +4,7 @@ package core
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -264,6 +265,23 @@ func (s *Service) Purge(ctx context.Context, by audit.Actor, id, confirm string)
 	return s.Jobs.Enqueue(ctx, JobLibraryPurge, id, nil, by, jobs.Audited("library.purge", "library", id, nil))
 }
 
+// purgeJournal is stored by library.purge before it drops anything, so a
+// purge cut or failed after a drop is finished by reconciliation.
+type purgeJournal struct {
+	Library string `json:"purge_of"`
+	TrashDB string `json:"trash_db"`
+}
+
+// errPurge wraps what stops a purge; after a drop the purge is also
+// unsettled (jobs.ErrUnsettled) and reconciliation finishes it.
+func errPurge(err error, dropped bool) error {
+	err = fmt.Errorf("SQS-L047 the purge stopped before it finished: %w", err)
+	if dropped {
+		return fmt.Errorf("%w. %w", err, jobs.ErrUnsettled)
+	}
+	return err
+}
+
 func (s *Service) runPurge(ctx context.Context, r *jobs.Run) error {
 	l, err := s.Library(ctx, r.Job.LibraryID)
 	if err != nil {
@@ -288,48 +306,130 @@ func (s *Service) runPurge(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 	}
+	// From the journal on, a purge that stops after a drop is finished by
+	// reconciliation instead of leaving a trashed library without its
+	// database (PLAN P0.4).
+	if err := r.Step("journal", func() error { return r.Journal(purgeJournal{Library: l.ID, TrashDB: l.TrashDB}) }); err != nil {
+		return errPurge(err, false)
+	}
+	dropped := false
 	if l.PrevDB != "" {
 		// The state kept before the last restore goes only with a verified
 		// backup of its own; without one nothing is purged.
 		if err := r.Step("drop_previous_state", func() error { return s.dropPrevDB(ctx, r, l, l.PrevDB, l.PrevBackupID) }); err != nil {
 			return err
 		}
-		s.clearPrev(ctx, l.ID, l.PrevDB)
+		dropped = true
+		if !s.clearPrev(ctx, l.ID, l.PrevDB) {
+			return errPurge(fmt.Errorf("the previous state %s was dropped, but the catalog still names it", l.PrevDB), dropped)
+		}
 	}
 	if l.TrashDB != "" {
 		if err := r.Step("drop_database", func() error { return s.PG.DropDatabase(ctx, l.TrashDB) }); err != nil {
+			return errPurge(err, dropped)
+		}
+		dropped = true
+	}
+	if err := r.Step("drop_roles", func() error { return s.finishPurge(ctx, l) }); err != nil {
+		var owned *ownedError
+		if errors.As(err, &owned) {
 			return err
 		}
+		return errPurge(err, dropped)
 	}
-	// Any other database owned by the library roles (for example created during
-	// an init window) is reported and kept: dropping it is a manual decision.
-	if owned, err := s.PG.DatabasesOwnedBy(ctx, l.OwnerRole); err == nil && len(owned) > 0 {
-		return fmt.Errorf("SQS-L046 role %s still owns: %s; review them before purging", l.OwnerRole, strings.Join(owned, ", "))
-	}
-	if err := r.Step("drop_roles", func() error {
-		creds, err := s.Credentials(ctx, l.ID)
-		if err != nil {
-			return err
-		}
-		for i := len(creds) - 1; i >= 0; i-- {
-			if ok, _ := s.PG.RoleExists(ctx, creds[i].PGRole); !ok {
-				continue
-			}
-			if err := s.PG.DropRole(ctx, creds[i].PGRole); err != nil {
-				return err
-			}
-		}
-		s.DB.ExecContext(ctx, `UPDATE library_credentials SET revoked_at = COALESCE(revoked_at, ?), password_enc = '' WHERE library_id = ?`, store.NowT(), l.ID)
-		return nil
-	}); err != nil {
-		return err
-	}
-	s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'purged', purged_at = ?, trash_db_name = '', updated_at = ? WHERE id = ?`, store.NowT(), store.NowT(), l.ID)
-	s.Sched.Delete(ctx, ScheduleBackup, l.ID)
-	s.Sched.Delete(ctx, ScheduleVerify, l.ID)
 	s.Events.Emit(ctx, events.Event{Type: events.LibraryPurged, Severity: events.Warning, LibraryID: l.ID, JobID: r.Job.ID,
 		Message: fmt.Sprintf("%q was permanently deleted from the server; its backups are kept according to retention", l.DisplayName)})
 	return nil
+}
+
+// ownedError is a library role that still owns databases: dropping them is a
+// manual decision, so the purge stops without reconciliation.
+type ownedError struct {
+	role  string
+	names []string
+}
+
+func (e *ownedError) Error() string {
+	return fmt.Sprintf("SQS-L046 role %s still owns: %s; review them before purging", e.role, strings.Join(e.names, ", "))
+}
+
+// finishPurge drops the roles of a library whose databases are gone and
+// records it purged: credentials revoked, state, schedules, in one
+// transaction. Every lookup and write is checked; the backups are kept.
+func (s *Service) finishPurge(ctx context.Context, l *Library) error {
+	// Any other database owned by the library roles (for example created
+	// during an init window) is reported and kept: dropping it is a manual
+	// decision.
+	owned, err := s.PG.DatabasesOwnedBy(ctx, l.OwnerRole)
+	if ferr := fault("purge.owned_lookup"); ferr != nil {
+		err = ferr
+	}
+	if err != nil {
+		return fmt.Errorf("could not list the databases of %s: %w", l.OwnerRole, err)
+	}
+	if len(owned) > 0 {
+		return &ownedError{l.OwnerRole, owned}
+	}
+	creds, err := s.Credentials(ctx, l.ID)
+	if err != nil {
+		return err
+	}
+	for i := len(creds) - 1; i >= 0; i-- {
+		ok, err := s.PG.RoleExists(ctx, creds[i].PGRole)
+		if ferr := fault("purge.role_lookup"); ferr != nil {
+			err = ferr
+		}
+		if err != nil {
+			return fmt.Errorf("could not check the role %s: %w", creds[i].PGRole, err)
+		}
+		if !ok {
+			continue
+		}
+		if err := s.PG.DropRole(ctx, creds[i].PGRole); err != nil {
+			return err
+		}
+	}
+	return s.DB.Tx(ctx, func(tx *sql.Tx) error {
+		now := store.NowT()
+		if _, err := tx.ExecContext(ctx, `UPDATE library_credentials SET revoked_at = COALESCE(revoked_at, ?), password_enc = '' WHERE library_id = ?`, now, l.ID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE libraries SET state = 'purged', purged_at = ?, trash_db_name = '', updated_at = ? WHERE id = ?`, now, now, l.ID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM schedules WHERE target_id = ? AND kind IN (?, ?)`, l.ID, ScheduleBackup, ScheduleVerify)
+		return err
+	})
+}
+
+// reconcilePurge finishes a purge that stopped after a drop, from its
+// journal, and reports whether it is settled. A purge cut before it dropped
+// the database of the trash leaves the library in the trash, where it can be
+// purged again; one whose database is gone gets its roles dropped and is
+// recorded purged. The backups are always kept.
+func (s *Service) reconcilePurge(ctx context.Context, l *Library, j purgeJournal, note func(string, ...any)) (settled bool) {
+	if j.Library == "" || l.State != StateTrashed {
+		return true
+	}
+	if j.TrashDB != "" {
+		d, err := s.PG.Database(ctx, j.TrashDB)
+		if err != nil {
+			note("%s: could not check whether the purge dropped %s (%v); nothing was changed", l.Slug, j.TrashDB, err)
+			return false
+		}
+		if d != nil {
+			note("%s: the purge stopped before dropping %s; the library stays in the trash", l.Slug, j.TrashDB)
+			return true
+		}
+	}
+	if err := s.finishPurge(ctx, l); err != nil {
+		note("%s: could not finish the interrupted purge: %v", l.Slug, err)
+		return false
+	}
+	s.Events.Emit(ctx, events.Event{Type: events.LibraryPurged, Severity: events.Warning, LibraryID: l.ID,
+		Message: fmt.Sprintf("Finished the interrupted purge of %q; its backups are kept according to retention", l.DisplayName)})
+	note("%s: finished the interrupted purge", l.Slug)
+	return true
 }
 
 // PurgeExpired purges trash and previous states whose time is up.

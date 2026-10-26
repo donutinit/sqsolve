@@ -5,6 +5,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -217,5 +218,45 @@ func TestStepAndJournalAreRequired(t *testing.T) {
 	db.ExecContext(ctx, `INSERT INTO job_steps(job_id, seq, name, state, started_at) VALUES ('JX', 1, 'x', 'running', ?)`, store.NowT())
 	if err := r.Journal(map[string]string{"a": "b"}); !errors.Is(err, ErrJournal) || !strings.HasPrefix(err.Error(), "SQS-J041 the job journal was not written: ") || !strings.Contains(err.Error(), "journal refused") {
 		t.Fatalf("refused update: %v", err)
+	}
+}
+
+// PLAN P0.4: a job of a Reconcile type that stops after an irreversible
+// step (ErrUnsettled) fails and stays pending reconciliation, so its journal
+// is kept for the next start; other types just fail.
+func TestUnsettledFailureStaysPending(t *testing.T) {
+	m, db := newManager(t)
+	m.Register(Spec{Type: "t.recon", Reconcile: true, Run: func(ctx context.Context, r *Run) error {
+		return fmt.Errorf("SQS-L047 the database was dropped, but the catalog could not be updated: disk I/O error. %w", ErrUnsettled)
+	}})
+	m.Register(Spec{Type: "t.plain", Run: func(ctx context.Context, r *Run) error {
+		return fmt.Errorf("SQS-L047 x. %w", ErrUnsettled)
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.Start(ctx)
+	pending := func(id string) int {
+		t.Helper()
+		var n int
+		if err := db.QueryRowContext(ctx, `SELECT reconcile_pending FROM jobs WHERE id = ?`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	j, _ := m.Enqueue(ctx, "t.recon", "L1", nil, audit.System)
+	j = waitState(t, m, j.ID, Failed)
+	if j.ErrorCode != "SQS-L047" || !strings.HasSuffix(j.ErrorDetail, "reconciliation finishes it at the next start of sqsolve") || pending(j.ID) != 1 {
+		t.Fatalf("%s %q pending %d", j.ErrorCode, j.ErrorDetail, pending(j.ID))
+	}
+	if list, _ := m.PendingReconciliation(ctx); len(list) != 1 || list[0].ID != j.ID {
+		t.Fatalf("pending %+v", list)
+	}
+	if n, _ := m.Purge(ctx, time.Now().Add(time.Hour)); n != 0 {
+		t.Fatal("the purge deleted a job pending reconciliation")
+	}
+	p, _ := m.Enqueue(ctx, "t.plain", "L1", nil, audit.System)
+	p = waitState(t, m, p.ID, Failed)
+	if pending(p.ID) != 0 {
+		t.Fatal("a type without reconciliation was left pending")
 	}
 }

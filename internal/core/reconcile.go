@@ -332,6 +332,7 @@ func (s *Service) reconcileJournal(ctx context.Context, j *jobs.Job, retried boo
 	var journal swapJournal
 	var trashMove map[string]string
 	var recreate recreateJournal
+	var purge purgeJournal
 	for _, st := range steps {
 		var tmp swapJournal
 		if json.Unmarshal(st.Data, &tmp) == nil && tmp.Live != "" {
@@ -344,6 +345,10 @@ func (s *Service) reconcileJournal(ctx context.Context, j *jobs.Job, retried boo
 		var rj recreateJournal
 		if json.Unmarshal(st.Data, &rj) == nil && rj.Created != "" {
 			recreate = rj
+		}
+		var pj purgeJournal
+		if json.Unmarshal(st.Data, &pj) == nil && pj.Library != "" {
+			purge = pj
 		}
 	}
 	if j.Type == JobRestoreReplace || j.Type == JobRestoreRevert {
@@ -375,6 +380,8 @@ func (s *Service) reconcileJournal(ctx context.Context, j *jobs.Job, retried boo
 		return s.reconcileTrash(ctx, l, trashMove, note), nil, true
 	case JobRestoreRecreate:
 		return !s.reconcileRecreate(ctx, l, recreate, note), nil, true
+	case JobLibraryPurge:
+		return s.reconcilePurge(ctx, l, purge, note), nil, true
 	}
 	if journal.Live == "" {
 		// Cut before its journal: nothing was locked or renamed, and step 4

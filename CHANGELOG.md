@@ -38,6 +38,13 @@ from here (`.github/workflows/release.yml`).
   `SQS-X041`. Logins, logouts, refusals and what sqsolve does on its own stay best effort, but
   a failed entry is now logged instead of ignored, and a second-factor login no longer fails
   after completing the session when only its entry could not be written.
+- Purge and recreate no longer report a false success. Every PostgreSQL and SQLite call they
+  depend on is checked: role and database lookups, credential storage, grants, the library state
+  and the schedules. A purge journals what it is about to drop and records the purged library in
+  one transaction; a recreate stops with `SQS-R061` before creating the database when it cannot
+  rebuild the access. When either fails after its irreversible step (`SQS-L047`, `SQS-R060`), the
+  job fails and stays pending reconciliation, and the next start finishes the purge or adopts the
+  restored database; backups are always kept.
 
 Upgrade: change the image tag to `1` once (user guide, "Updating"); on TrueNAS it appears three
 times in the stored YAML. Pasting the new file instead needs your paths, `TZ` and user again.

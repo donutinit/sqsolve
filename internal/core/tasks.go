@@ -68,7 +68,7 @@ func (s *Service) Register() {
 	j.Register(jobs.Spec{Type: JobLibraryCreate, Title: "Create library", Priority: 90, Lock: jobs.LockWrite, Action: "library.create", Run: s.runLibraryCreate})
 	j.Register(jobs.Spec{Type: JobLibraryDelete, Title: "Move to trash", Priority: 90, Lock: jobs.LockWrite, Heavy: true, Reconcile: true, Action: "library.delete", Run: s.runTrash})
 	j.Register(jobs.Spec{Type: JobLibraryUntrash, Title: "Restore from trash", Priority: 90, Lock: jobs.LockWrite, Action: "library.delete", Run: s.runUntrash})
-	j.Register(jobs.Spec{Type: JobLibraryPurge, Title: "Purge library", Priority: 40, Lock: jobs.LockWrite, Action: "library.delete", Run: s.runPurge})
+	j.Register(jobs.Spec{Type: JobLibraryPurge, Title: "Purge library", Priority: 40, Lock: jobs.LockWrite, Reconcile: true, Action: "library.delete", Run: s.runPurge})
 	j.Register(jobs.Spec{Type: JobBackupCreate, Title: "Back up", Priority: 50, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Retryable: true, Action: "backup.create", Run: s.runBackupCreate})
 	j.Register(jobs.Spec{Type: JobBackupVerify, Title: "Verify backup", Priority: 30, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Retryable: true, Action: "backup.verify", Run: s.runVerify})
 	j.Register(jobs.Spec{Type: JobBackupExport, Title: "Prepare export from backup", Priority: 40, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Retryable: true, Action: "library.export", Run: s.runBackupExport})

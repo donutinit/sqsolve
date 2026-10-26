@@ -53,3 +53,16 @@ func SetImportSettle(d time.Duration) (restore func()) {
 	old := importSettle.Swap(int64(d))
 	return func() { importSettle.Store(old) }
 }
+
+// SetFault makes the PostgreSQL call at point fail with err. The returned
+// function removes it.
+func SetFault(point string, err error) (restore func()) {
+	f := func(p string) error {
+		if p == point {
+			return err
+		}
+		return nil
+	}
+	hookFault.Store(&f)
+	return func() { hookFault.Store(nil) }
+}

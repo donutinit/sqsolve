@@ -463,6 +463,12 @@ with a note and a `library.reconcile_pending` warning, and the job stays pending
 every start runs the same check again until it finishes (§8). If the journal itself cannot be
 written, the job stops with `SQS-R058` before creating anything.
 
+Every lookup and write of a recreate is checked (PLAN P0.4): a role lookup, the storage of a
+new password or a member's grant that fails stops the job with `SQS-R061` before the database is
+created. Once the database is restored, a failure while activating the library (its access, its
+state, its policy, `pg_hba.conf`) never ends as success: the job fails with `SQS-R060`, stays
+pending reconciliation, and the next start adopts the restored database as described above.
+
 ### 7.8 Delete, recover and purge
 
 Delete (`library.delete`) re-validates the state at run time (`SQS-L041`); for a `missing`
@@ -482,6 +488,16 @@ the library ends `trashed` with its trash database or gets its access back (§8)
 trash re-validates the state (`SQS-L042`), the identifier (`SQS-L043`) and that the trash
 database still exists (`SQS-L051`).
 
+Purge (`library.purge`) journals what it is about to drop before dropping anything (`SQS-L047`
+without the journal), then drops the previous state, the trash database and the roles, and
+records the library `purged` (credentials revoked, state and schedules) in one transaction.
+Every lookup and write is checked; a role that still owns another database stops it with
+`SQS-L046`. A failure after a drop never ends as success: the job fails with `SQS-L047` and stays
+pending reconciliation, and the next start finishes it from its journal (the roles are dropped and
+the library is recorded `purged`; a purge cut before it dropped the trash database leaves the
+library in the trash, where it can be purged again). The backups are always kept. Running the
+purge again also finishes it.
+
 ## 8. Failures and interruptions
 
 | Failure | Detection | Handling |
@@ -495,7 +511,8 @@ database still exists (`SQS-L051`).
 | Cut during the swap | Journal | Table in §7.3 |
 | Cut during the lock of a delete or a revert | Journal written before the lock | The lock is undone; reconciliation applies to every library the access of its state (ADR 0024) |
 | Cut during a recreate before its comparison | Journal written before creating the database | Cut during `pg_restore`: the empty database it created is dropped and the library stays `missing`. Cut after `pg_restore` committed: the database has tables and is kept and adopted without the comparison. Check not finished: kept, library left `missing`, tried again at every start (§7.7) |
-| A journal that reconciliation cannot settle (a check fails, a rename or a catalog write is refused, a swap state no rule covers) | The interrupted restore, revert, delete or recreate stays pending reconciliation; the 90-day job purge keeps it | Nothing is changed: the library keeps its state and access, the databases its journal names are kept (the `__restore_*` sweep skips them, a `__prev` is kept with `SQS-R090`, or `SQS-R091` when the pending jobs cannot be read), note and warning `library.reconcile_pending` at every start; every start tries again until it is settled, and a journal whose library moved on since is settled without changes (§7.3, §7.7, §7.8) |
+| A recreate or a purge that fails after its irreversible step | The job fails (`SQS-R060`, `SQS-L047`) and stays pending reconciliation | The next start adopts the restored database, or finishes the purge from its journal (§7.7, §7.8) |
+| A journal that reconciliation cannot settle (a check fails, a rename or a catalog write is refused, a swap state no rule covers) | The interrupted restore, revert, delete, recreate or purge stays pending reconciliation; the 90-day job purge keeps it | Nothing is changed: the library keeps its state and access, the databases its journal names are kept (the `__restore_*` sweep skips them, a `__prev` is kept with `SQS-R090`, or `SQS-R091` when the pending jobs cannot be read), note and warning `library.reconcile_pending` at every start; every start tries again until it is settled, and a journal whose library moved on since is settled without changes (§7.3, §7.7, §7.8) |
 | The jobs pending reconciliation cannot be read | Reading them at a start fails | Every `__restore_*` database is kept, libraries left `restoring` stay so, no previous state is forgotten; warning `library.reconcile_pending` without a library; tried again at every start (§7.3) |
 | A database with the name of a `missing` library is on the server | Reconciliation at every start connects and reads its structure (a database closed to connections is opened for the check) | Adopted (`active`, `library.found`) only when it has tables or the library never had any; otherwise kept, neither adopted nor dropped, closed to connections (also when found open), warning `library.missing` (§7.7) |
 | The previous state of a library is no longer on the server | Reconciliation at every start | `prev_db_name` cleared with a note, unless an invalid database holds the name, the check fails or the library has a pending journal (§7.4) |

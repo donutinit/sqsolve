@@ -11,6 +11,7 @@ package core_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1272,4 +1273,150 @@ func TestMemberAddNeedsItsAuditEntry(t *testing.T) {
 	if ok, _ := e.svc.PG.RoleExists(ctx, role); !ok {
 		t.Fatal("the role is missing")
 	}
+}
+
+// trashed creates an active library with a backup and moves it to the trash.
+func (e *env) trashed(slug string) *core.Library {
+	e.t.Helper()
+	l, _ := e.createActive(slug)
+	e.firstBackup(l)
+	e.idle()
+	tj, err := e.svc.Trash(e.ctx, admin, l.ID, l.Slug)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.wait(tj, jobs.Succeeded)
+	return e.lib(l.ID)
+}
+
+// PLAN P0.4: a purge whose catalog writes fail after the database or the
+// roles were dropped fails, stays pending reconciliation, and the next start
+// finishes it: the library is purged, its roles are gone and its backups are
+// kept. A lookup that fails stops the purge before the roles are dropped.
+func TestPurgeFaultsAreNeverSuccess(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	exec := func(q string) {
+		t.Helper()
+		if _, err := e.svc.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	finished := func(l *core.Library, notes string) {
+		t.Helper()
+		got := e.lib(l.ID)
+		if got.State != core.StatePurged || got.TrashDB != "" {
+			t.Fatalf("%s after the next start: %s %q\n%s", l.Slug, got.State, got.TrashDB, notes)
+		}
+		if ok, _ := e.svc.PG.RoleExists(ctx, l.OwnerRole); ok {
+			t.Fatalf("%s: the role survived", l.Slug)
+		}
+		if bs, _ := e.svc.Backups(ctx, core.BackupFilter{LibraryID: l.ID, Statuses: []string{core.BackupOK}}); len(bs) == 0 {
+			t.Fatalf("%s: the backups were lost", l.Slug)
+		}
+		var n int
+		e.svc.DB.QueryRowContext(ctx, `SELECT count(*) FROM schedules WHERE target_id = ?`, l.ID).Scan(&n)
+		if n != 0 {
+			t.Fatalf("%s: %d schedules left", l.Slug, n)
+		}
+	}
+	faults := []struct {
+		name, trigger, code string
+	}{
+		{"credentials", `CREATE TRIGGER fault BEFORE UPDATE OF revoked_at ON library_credentials BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`, "SQS-L047"},
+		{"state", `CREATE TRIGGER fault BEFORE UPDATE OF state ON libraries WHEN NEW.state = 'purged' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`, "SQS-L047"},
+		{"schedules", `CREATE TRIGGER fault BEFORE DELETE ON schedules BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`, "SQS-L047"},
+	}
+	for i, f := range faults {
+		l := e.trashed(fmt.Sprintf("pf_lib%d", i))
+		exec(f.trigger)
+		j, err := e.svc.Purge(ctx, admin, l.ID, l.Slug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := e.failsWith(j, f.code, "reconciliation finishes it at the next start of sqsolve")
+		if e.pendingFlag(got.ID) != 1 {
+			t.Fatalf("%s: the failed purge is not pending reconciliation", f.name)
+		}
+		exec(`DROP TRIGGER fault`)
+		notes := e.start()
+		finished(l, notes)
+		if e.pendingFlag(got.ID) != 0 {
+			t.Fatalf("%s: still pending after the start\n%s", f.name, notes)
+		}
+	}
+	// A role lookup that fails stops the purge before any role is dropped.
+	l := e.trashed("pf_lookup")
+	restore := core.SetFault("purge.role_lookup", errors.New("lookup refused"))
+	j, _ := e.svc.Purge(ctx, admin, l.ID, l.Slug)
+	e.failsWith(j, "SQS-L047", "lookup refused")
+	if ok, _ := e.svc.PG.RoleExists(ctx, l.OwnerRole); !ok {
+		t.Fatal("the role was dropped although the lookup failed")
+	}
+	restore()
+	restore = core.SetFault("purge.owned_lookup", errors.New("lookup refused"))
+	j, _ = e.svc.Purge(ctx, admin, l.ID, l.Slug)
+	e.failsWith(j, "SQS-L047", "lookup refused")
+	if ok, _ := e.svc.PG.RoleExists(ctx, l.OwnerRole); !ok {
+		t.Fatal("the role was dropped although the lookup of its databases failed")
+	}
+	restore()
+	// The purge can run again and finishes.
+	j, _ = e.svc.Purge(ctx, admin, l.ID, l.Slug)
+	e.wait(j, jobs.Succeeded)
+	finished(l, "")
+}
+
+// PLAN P0.4: a recreate whose activation fails after the database was
+// restored fails, stays pending reconciliation, and the next start adopts
+// the restored database; a grant that fails is not ignored.
+func TestRecreateFaultsAreNeverSuccess(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	exec := func(q string) {
+		t.Helper()
+		if _, err := e.svc.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, pass := e.createActive("rf_lib")
+	e.firstBackup(l)
+	e.lose(l, true)
+	exec(`CREATE TRIGGER fault BEFORE UPDATE OF state ON libraries WHEN NEW.state = 'active' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`)
+	j, err := e.svc.Recreate(ctx, admin, l.ID, "", l.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.failsWith(j, "SQS-R060", "reconciliation finishes it at the next start of sqsolve")
+	if e.lib(l.ID).State == core.StateActive || e.pendingFlag(got.ID) != 1 {
+		t.Fatalf("state %s, pending %d", e.lib(l.ID).State, e.pendingFlag(got.ID))
+	}
+	exec(`DROP TRIGGER fault`)
+	notes := e.start()
+	if e.lib(l.ID).State != core.StateActive {
+		t.Fatalf("not adopted at the next start: %s\n%s", e.lib(l.ID).State, notes)
+	}
+	if n := e.count(l.OwnerRole, pass, l.DBName, "SM_Project"); n != 50 {
+		t.Fatalf("%d rows", n)
+	}
+	// A member whose grant fails: the recreate fails instead of leaving the
+	// person without access.
+	m, _ := e.createActive("rg_lib")
+	if _, err := e.svc.AddMember(ctx, admin, m.ID, "ana"); err != nil {
+		t.Fatal(err)
+	}
+	e.firstBackup(m)
+	e.lose(m, true)
+	e.svc.PG.DropRole(ctx, m.Slug+"__ana")
+	restore := core.SetFault("recreate.grant", errors.New("grant refused"))
+	j, _ = e.svc.Recreate(ctx, admin, m.ID, "", m.Slug)
+	e.failsWith(j, "SQS-R061", "grant refused")
+	if e.lib(m.ID).State == core.StateActive {
+		t.Fatal("recreated without the member's grant")
+	}
+	restore()
+	restore = core.SetFault("recreate.role_lookup", errors.New("lookup refused"))
+	j, _ = e.svc.Recreate(ctx, admin, m.ID, "", m.Slug)
+	e.failsWith(j, "SQS-R061", "lookup refused")
+	restore()
 }

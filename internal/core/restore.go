@@ -4,6 +4,7 @@ package core
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -1228,7 +1229,14 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 			if c.RevokedAt != nil {
 				continue
 			}
-			if ok, _ := s.PG.RoleExists(ctx, c.PGRole); ok {
+			ok, err := s.PG.RoleExists(ctx, c.PGRole)
+			if ferr := fault("recreate.role_lookup"); ferr != nil {
+				err = ferr
+			}
+			if err != nil {
+				return fmt.Errorf("SQS-R061 could not recreate the access of the library: %w", err)
+			}
+			if ok {
 				continue
 			}
 			pass, err := s.Box.Open(c.passwordEnc, credAAD(c.ID))
@@ -1239,7 +1247,11 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 				if err != nil {
 					return err
 				}
-				s.DB.ExecContext(ctx, `UPDATE library_credentials SET password_enc = ?, rotated_at = ? WHERE id = ?`, enc, store.NowT(), c.ID)
+				// Stored before the role gets it: a role whose password
+				// nobody can read would lock the person out.
+				if _, err := s.DB.ExecContext(ctx, `UPDATE library_credentials SET password_enc = ?, rotated_at = ? WHERE id = ?`, enc, store.NowT(), c.ID); err != nil {
+					return fmt.Errorf("SQS-R061 could not recreate the access of the library: %w", err)
+				}
 			}
 			v, err := pg.ScramVerifier(pass)
 			if err != nil {
@@ -1250,8 +1262,16 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 				return err
 			}
 			if c.Kind == "member" {
-				s.PG.GrantRole(ctx, l.OwnerRole, c.PGRole)
-				s.PG.SetRoleDefaultRole(ctx, c.PGRole, l.DBName, l.OwnerRole)
+				err := s.PG.GrantRole(ctx, l.OwnerRole, c.PGRole)
+				if ferr := fault("recreate.grant"); ferr != nil {
+					err = ferr
+				}
+				if err == nil {
+					err = s.PG.SetRoleDefaultRole(ctx, c.PGRole, l.DBName, l.OwnerRole)
+				}
+				if err != nil {
+					return fmt.Errorf("SQS-R061 could not recreate the access of the library: %w", err)
+				}
 			}
 			if kept {
 				r.Infof("Role %s recreated with its original password", c.PGRole)
@@ -1296,6 +1316,9 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 	}); err != nil {
 		return dropCreated(err)
 	}
+	// The database is restored: from here on a failure leaves the job
+	// pending, and reconciliation adopts the database at the next start
+	// (PLAN P0.4).
 	if err := r.Step("activate", func() error {
 		// Grants, LOGIN and the members' per-database role, which stayed with
 		// the lost database.
@@ -1313,17 +1336,25 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 			}
 			gone = err == nil && db == nil
 		}
-		if gone {
-			s.DB.ExecContext(ctx, `UPDATE libraries SET prev_db_name = '', prev_expires_at = NULL, prev_backup_id = '' WHERE id = ?`, l.ID)
+		err := s.DB.Tx(ctx, func(tx *sql.Tx) error {
+			if gone {
+				if _, err := tx.ExecContext(ctx, `UPDATE libraries SET prev_db_name = '', prev_expires_at = NULL, prev_backup_id = '' WHERE id = ?`, l.ID); err != nil {
+					return err
+				}
+			}
+			_, err := tx.ExecContext(ctx, `UPDATE libraries SET state = 'active', schema_fingerprint = ?, schema_table_count = ?, updated_at = ? WHERE id = ?`,
+				m.Schema.Fingerprint, m.Schema.Tables, store.NowT(), l.ID)
+			return err
+		})
+		if err != nil {
+			return err
 		}
-		s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'active', schema_fingerprint = ?, schema_table_count = ?, updated_at = ? WHERE id = ?`,
-			m.Schema.Fingerprint, m.Schema.Tables, store.NowT(), l.ID)
 		if err := s.ensurePolicy(ctx, l.ID); err != nil {
 			return err
 		}
 		return s.SyncHBA(ctx)
 	}); err != nil {
-		return err
+		return fmt.Errorf("SQS-R060 the database was restored, but the library could not be activated: %w. %w", err, jobs.ErrUnsettled)
 	}
 	s.Events.Emit(ctx, events.Event{Type: events.RestoreSucceeded, LibraryID: l.ID, JobID: r.Job.ID,
 		Message: fmt.Sprintf("Recreated %q from the backup from %s", l.DisplayName, b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"))})
