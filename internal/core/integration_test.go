@@ -35,6 +35,16 @@ type env struct {
 	ctx context.Context
 }
 
+// mustAbs is the checked path of b; the backups of these tests have valid
+// paths.
+func mustAbs(s *core.Service, b *core.Backup) string {
+	p, err := s.AbsPath(b)
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
+
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	c := testpg.Start(t)
@@ -193,7 +203,7 @@ func TestLibraryBackupRestoreLifecycle(t *testing.T) {
 	if b.VerifyStatus != core.VerifyL1OK || b.TableCount != 2 || b.SizeBytes == 0 || !strings.HasPrefix(b.PGDumpVersion, "18") {
 		t.Fatalf("backup %+v", b)
 	}
-	m, err := core.ReadManifest(strings.TrimSuffix(e.svc.AbsPath(b), ".backup") + ".manifest.json")
+	m, err := core.ReadManifest(strings.TrimSuffix(mustAbs(e.svc, b), ".backup") + ".manifest.json")
 	if err != nil || m.RowCounts["SM_Project"] != 50 || m.RowCounts["Sm2TiItem"] != 2000 {
 		t.Fatalf("manifest %+v %v", m, err)
 	}
@@ -213,14 +223,14 @@ func TestLibraryBackupRestoreLifecycle(t *testing.T) {
 	}
 
 	// Tampering is detected.
-	tampered, _ := os.ReadFile(e.svc.AbsPath(b))
+	tampered, _ := os.ReadFile(mustAbs(e.svc, b))
 	if len(tampered) > 100 {
 		orig := append([]byte(nil), tampered...)
 		tampered[len(tampered)-10] ^= 0xff
-		os.WriteFile(e.svc.AbsPath(b), tampered, 0o600)
+		os.WriteFile(mustAbs(e.svc, b), tampered, 0o600)
 		vj, _ = e.svc.Jobs.Enqueue(ctx, core.JobBackupVerify, l.ID, core.VerifyParams{BackupID: b.ID}, admin)
 		e.wait(vj, jobs.Failed)
-		os.WriteFile(e.svc.AbsPath(b), orig, 0o600)
+		os.WriteFile(mustAbs(e.svc, b), orig, 0o600)
 		vj, _ = e.svc.Jobs.Enqueue(ctx, core.JobBackupVerify, l.ID, core.VerifyParams{BackupID: b.ID}, admin)
 		e.wait(vj, jobs.Succeeded)
 	}
@@ -359,7 +369,7 @@ func TestImportAndCatalogRebuild(t *testing.T) {
 	b := e.firstBackup(l)
 	// Put a copy of the backup in _import and import it.
 	os.MkdirAll(e.svc.ImportDir(), 0o700)
-	data, _ := os.ReadFile(e.svc.AbsPath(b))
+	data, _ := os.ReadFile(mustAbs(e.svc, b))
 	os.WriteFile(filepath.Join(e.svc.ImportDir(), "externo.backup"), data, 0o600)
 	if _, err := e.svc.Import(ctx, admin, l.ID, "../etc/passwd", false); err == nil {
 		t.Fatal("path traversal accepted")

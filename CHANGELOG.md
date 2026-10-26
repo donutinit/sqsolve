@@ -13,6 +13,16 @@ from here (`.github/workflows/release.yml`).
   `CHOWN`, `DAC_OVERRIDE`, `FOWNER` and `FSETID`, without the image's health check; `postgres`
   runs without capabilities and its health check calls `pg_isready` itself instead of the Perl
   wrapper.
+- Backup paths are confined to the backups volume. A manifest is read only when it is a complete
+  version 1 manifest (`api/schemas/manifest.v1.json`, `SQS-B042`) whose `file` is the base name of
+  a `.backup` file; rebuilding the catalog also requires the manifest to name its own backup file
+  and both to stay on the volume once symlinks are resolved. A catalog row whose path is absolute,
+  contains `..`, is not a `.backup` under `libraries/` or leaves the volume through a symlink is
+  never read, verified, restored, downloaded or deleted (`SQS-B043`, 409 in the API), retention
+  leaves it alone, and it is not rewritten: every start and every catalog check report such rows
+  in one critical `backup.path_invalid` event, and after review `sqsolve catalog forget
+  <backup-id>` removes the row without touching any file (`SQS-B044`,
+  `docs/runbooks/invalid-backup-path.md`).
 
 Upgrade: change the image tag to `1` once (user guide, "Updating"); on TrueNAS it appears three
 times in the stored YAML. Pasting the new file instead needs your paths, `TZ` and user again.

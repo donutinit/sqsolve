@@ -4,6 +4,8 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,8 +116,9 @@ func (e *bkEnv) backup(l *Library, o bkOpt) *Backup {
 		if err := os.WriteFile(abs, content, 0o600); err != nil {
 			e.t.Fatal(err)
 		}
-		var m Manifest
-		m.BackupID, m.Size, m.Server.DatabaseSize = id, int64(len(content)), o.dbSize
+		sum := sha256.Sum256(content)
+		m := Manifest{ManifestVersion: 1, BackupID: id, Kind: o.kind, File: filepath.Base(abs), Size: int64(len(content)), SHA256: hex.EncodeToString(sum[:])}
+		m.Library.ID, m.Library.Slug, m.Server.DatabaseSize = l.ID, l.Slug, o.dbSize
 		mb, _ := json.Marshal(m)
 		if err := os.WriteFile(manifestPath(abs), mb, 0o600); err != nil {
 			e.t.Fatal(err)
@@ -156,6 +159,16 @@ func (e *bkEnv) events(typ string) []events.Event {
 		}
 	}
 	return out
+}
+
+// mustAbs is the checked path of b; the backups of these tests have valid
+// paths.
+func mustAbs(s *Service, b *Backup) string {
+	p, err := s.AbsPath(b)
+	if err != nil {
+		panic(err)
+	}
+	return p
 }
 
 func onDisk(path string) bool {
@@ -238,7 +251,7 @@ func TestApplyRetentionUsesInsertionOrder(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("applyRetention: %d %v", n, err)
 	}
-	if b, _ := e.svc.Backup(e.ctx, after.ID); b.Status != BackupOK || !onDisk(e.svc.AbsPath(b)) {
+	if b, _ := e.svc.Backup(e.ctx, after.ID); b.Status != BackupOK || !onDisk(mustAbs(e.svc, b)) {
 		t.Fatalf("the backup just taken was expired: %+v", b)
 	}
 	if b, _ := e.svc.Backup(e.ctx, before.ID); b.Status != BackupDeleted {
@@ -266,7 +279,7 @@ func TestApplyRetentionDeletesExpired(t *testing.T) {
 	}
 	for i, b := range bs {
 		got, _ := e.svc.Backup(e.ctx, b.ID)
-		abs := e.svc.AbsPath(b)
+		abs := mustAbs(e.svc, b)
 		if i < 2 {
 			if got.Status != BackupDeleted || got.ExpiredReason != "retention" || got.DeletedAt == nil || onDisk(abs) || onDisk(manifestPath(abs)) {
 				t.Fatalf("expired backup %d not removed: %+v", i, got)
@@ -279,7 +292,7 @@ func TestApplyRetentionDeletesExpired(t *testing.T) {
 		t.Fatalf("expired event %+v", evs)
 	}
 	for _, b := range []*Backup{failedOld, failedNew} {
-		if onDisk(e.svc.AbsPath(b)) || onDisk(manifestPath(e.svc.AbsPath(b))) {
+		if onDisk(mustAbs(e.svc, b)) || onDisk(manifestPath(mustAbs(e.svc, b))) {
 			t.Fatalf("leftovers of %s remain", b.Status)
 		}
 	}
@@ -322,7 +335,7 @@ func TestRetentionSkipsBackupsInUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, b := range []*Backup{restoreSrc, verifySrc, exportSrc} {
-		if got, _ := e.svc.Backup(e.ctx, b.ID); got.Status != BackupOK || !onDisk(e.svc.AbsPath(b)) {
+		if got, _ := e.svc.Backup(e.ctx, b.ID); got.Status != BackupOK || !onDisk(mustAbs(e.svc, b)) {
 			t.Fatalf("backup in use was deleted: %+v", got)
 		}
 	}
@@ -344,7 +357,7 @@ func TestDeleteBackupGuard(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "most recent verified backup of the library; it cannot be deleted manually") {
 			t.Fatalf("%s: latest verified deleted: %v", st, err)
 		}
-		if b, _ := e.svc.Backup(e.ctx, latest.ID); b.Status != BackupOK || !onDisk(e.svc.AbsPath(b)) {
+		if b, _ := e.svc.Backup(e.ctx, latest.ID); b.Status != BackupOK || !onDisk(mustAbs(e.svc, b)) {
 			t.Fatalf("%s: refused delete touched the backup: %+v", st, b)
 		}
 		if err := e.svc.DeleteBackup(e.ctx, bkActor, older.ID); err != nil {
@@ -376,7 +389,7 @@ func TestDeleteBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := e.svc.Backup(e.ctx, old.ID)
-	abs := e.svc.AbsPath(old)
+	abs := mustAbs(e.svc, old)
 	if got.Status != BackupDeleted || got.ExpiredReason != "deleted manually" || got.DeletedAt == nil || onDisk(abs) || onDisk(manifestPath(abs)) {
 		t.Fatalf("not deleted: %+v", got)
 	}
@@ -405,7 +418,7 @@ func TestRemoveBackupFiles(t *testing.T) {
 	}
 	// A file that cannot be removed keeps the row as it was.
 	stuck := e.backup(l, bkOpt{noFiles: true})
-	abs := e.svc.AbsPath(stuck)
+	abs := mustAbs(e.svc, stuck)
 	if err := os.MkdirAll(filepath.Join(abs, "child"), 0o700); err != nil {
 		t.Fatal(err)
 	}

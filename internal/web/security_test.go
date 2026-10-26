@@ -452,3 +452,38 @@ func TestDisclosuresNeedTheirAuditEntry(t *testing.T) {
 		}
 	}
 }
+
+// PLAN P0.1: a backup whose catalog path leaves the backups volume is not
+// served, by the panel or the API, and its page says it is blocked.
+func TestBackupWithAnInvalidPathIsNotServed(t *testing.T) {
+	ctx := context.Background()
+	a, srv := sqliteApp(t)
+	a.Auth.CreateUser(ctx, audit.System, "boss", "", "tungsten light 3200K", auth.RoleAdmin)
+	b := mustSignIn(t, srv, "boss", "tungsten light 3200K")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := a.DB.ExecContext(ctx, `INSERT INTO libraries(id, slug, display_name, state, db_name, owner_role, creation_strategy, created_at, updated_at)
+		VALUES ('L1', 'lib', 'Lib', 'active', 'lib', 'lib', 'resolve', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	os.WriteFile(filepath.Join(outside, "secret.backup"), []byte("outside bytes"), 0o600)
+	os.MkdirAll(filepath.Join(a.Cfg.BackupDir, "libraries", "lib"), 0o700)
+	os.Symlink(outside, filepath.Join(a.Cfg.BackupDir, "libraries", "lib", "esc"))
+	if _, err := a.DB.ExecContext(ctx, `INSERT INTO backups(id, library_id, kind, status, file_path, started_at) VALUES ('B1', 'L1', 'manual', 'ok', 'libraries/lib/esc/secret.backup', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/backups/B1/download", "/api/v1/backups/B1/download"} {
+		st, _, body := b.do("GET", path, nil)
+		if st != http.StatusConflict || strings.Contains(body, "outside bytes") || !strings.Contains(body, "SQS-B043") {
+			t.Errorf("%s: %d %q", path, st, body[:min(len(body), 200)])
+		}
+	}
+	entries, _ := a.Audit.List(ctx, 0, 50, "B1")
+	if len(entries) != 0 {
+		t.Errorf("a refused download was audited as done: %+v", entries)
+	}
+	page := b.page("/backups/B1")
+	if !strings.Contains(page, "SQS-B043") || strings.Contains(page, `href="/backups/B1/download"`) || strings.Contains(page, `href="/backups/B1/restore"`) {
+		t.Error("the backup page does not show the block, or still offers download or restore")
+	}
+}

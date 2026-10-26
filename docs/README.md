@@ -33,7 +33,7 @@ Docker versions is reviewed on every major Resolve release (see `14-compatibilit
 | ACC | [1.0 acceptance](acceptance/1.0.md) | Acceptance run for release 1.0 |
 | GUIDE | [User guide](manual/user-guide.md) | Install, first start, libraries, backups, restore, access, API, console, updating, disaster recovery, troubleshooting |
 | MAN | [Manual: error codes](manual/errors.md) | Every `SQS-` code with its message, generated with `make errors` |
-| RB | Runbooks: [restore and revert](runbooks/restore-and-revert.md), [recover an installation](runbooks/recover-installation.md), [upgrade](runbooks/upgrade.md) | Numbered steps with the expected output |
+| RB | Runbooks: [restore and revert](runbooks/restore-and-revert.md), [recover an installation](runbooks/recover-installation.md), [upgrade](runbooks/upgrade.md), [invalid backup path](runbooks/invalid-backup-path.md) | Numbered steps with the expected output |
 | BR | [Brand](brand/README.md) | "Node" brand: files, palette, typography, icons and usage rules (ADR 0020) |
 | ADR | [Decisions](adr/README.md) | Architecture decision log |
 

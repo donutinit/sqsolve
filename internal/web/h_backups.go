@@ -68,8 +68,10 @@ func (s *Server) backup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := map[string]any{"B": b, "L": l}
-	if m, err := core.ReadManifest(strings.TrimSuffix(s.A.Svc.AbsPath(b), ".backup") + ".manifest.json"); err == nil {
+	if m, err := s.A.Svc.BackupManifest(b); err == nil {
 		data["M"] = m
+	} else if errors.Is(err, core.ErrBackupPath) {
+		data["PathError"] = humanError(err)
 	}
 	if b.JobID != "" {
 		data["Job"], _ = s.A.Jobs.Get(r.Context(), b.JobID)
@@ -127,7 +129,12 @@ func (s *Server) backupDownload(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, r, principalOf(r), http.StatusGone, "SQS-B001 The file of this backup no longer exists.")
 		return
 	}
-	f, err := os.Open(s.A.Svc.AbsPath(b))
+	abs, err := s.A.Svc.AbsPath(b)
+	if err != nil {
+		s.renderError(w, r, principalOf(r), http.StatusConflict, humanError(err))
+		return
+	}
+	f, err := os.Open(abs)
 	if err != nil {
 		s.renderError(w, r, principalOf(r), http.StatusNotFound, "SQS-B001 File not found: "+err.Error())
 		return

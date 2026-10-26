@@ -225,3 +225,40 @@ func TestWritePairAfterAnInterruptedOne(t *testing.T) {
 		t.Fatalf("the pair is %s", got)
 	}
 }
+
+func TestConfined(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "a", "b"), 0o700)
+	os.WriteFile(filepath.Join(dir, "a", "b", "f"), nil, 0o600)
+	os.WriteFile(filepath.Join(outside, "secret"), nil, 0o600)
+	os.Symlink(outside, filepath.Join(dir, "a", "esc"))
+	os.Symlink(filepath.Join(outside, "secret"), filepath.Join(dir, "a", "link"))
+	os.Symlink(filepath.Join(outside, "gone"), filepath.Join(dir, "a", "dangling"))
+	os.Symlink(filepath.Join(dir, "a", "b", "f"), filepath.Join(dir, "a", "inner"))
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{filepath.Join(dir, "a", "b", "f"), true},
+		{filepath.Join(dir, "a", "b", "missing"), true},
+		{filepath.Join(dir, "a", "new", "deeper", "missing"), true},
+		{filepath.Join(dir, "a", "inner"), true},
+		{filepath.Join(dir, "a", "link"), false},
+		{filepath.Join(dir, "a", "esc", "secret"), false},
+		{filepath.Join(dir, "a", "esc", "missing"), false},
+		{filepath.Join(dir, "a", "dangling"), false},
+		{filepath.Join(dir, "..", "x"), false},
+		{outside, false},
+		{dir, false},
+	}
+	for _, c := range cases {
+		got, err := Confined(dir, c.path)
+		if err != nil {
+			t.Fatalf("%s: %v", c.path, err)
+		}
+		if got != c.want {
+			t.Errorf("Confined(%s) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}

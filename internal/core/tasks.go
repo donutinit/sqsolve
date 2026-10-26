@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -235,11 +236,19 @@ func (s *Service) runCatalogCheck(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
+	invalid, err := s.CheckCatalogPaths(ctx)
+	if err != nil {
+		return err
+	}
 	missing := 0
 	known := map[string]bool{}
 	for _, b := range bs {
 		known[b.FilePath] = true
-		if _, err := os.Stat(s.AbsPath(b)); errors.Is(err, os.ErrNotExist) {
+		abs, err := s.AbsPath(b)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) {
 			missing++
 			s.DB.ExecContext(ctx, `UPDATE backups SET verify_status = 'failed', verify_detail = 'The file does not exist on the volume' WHERE id = ?`, b.ID)
 			r.Warnf("Missing file for %s", b.FilePath)
@@ -261,8 +270,35 @@ func (s *Service) runCatalogCheck(ctx context.Context, r *jobs.Run) error {
 		s.Events.Emit(ctx, events.Event{Type: "backup.catalog_mismatch", Severity: events.Warning,
 			Message: fmt.Sprintf("Catalog and files do not match: %d files are missing and %d files are not in the catalog", missing, orphans)})
 	}
-	r.Infof("%d backups checked; %d missing; %d orphaned", len(bs), missing, orphans)
+	r.Infof("%d backups checked; %d missing; %d orphaned; %d with a path that is not valid", len(bs), missing, orphans, len(invalid))
 	return nil
+}
+
+// CheckCatalogPaths lists, sorted, the backups of the catalog (deleted ones
+// aside) whose path is not valid, and reports them in one critical event.
+// The rows are left as they are: AbsPath blocks every operation on them
+// until an administrator reviews them (PLAN 1.3.2,
+// docs/runbooks/invalid-backup-path.md). Startup and the catalog check run
+// it.
+func (s *Service) CheckCatalogPaths(ctx context.Context) ([]string, error) {
+	bs, err := s.Backups(ctx, BackupFilter{})
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, b := range bs {
+		if _, err := s.AbsPath(b); errors.Is(err, ErrBackupPath) {
+			ids = append(ids, b.ID)
+		}
+	}
+	slices.Sort(ids)
+	if len(ids) > 0 {
+		s.Events.Emit(ctx, events.Event{Type: events.BackupPathInvalid, Severity: events.Critical,
+			Message: fmt.Sprintf("%d backups in the catalog have a path outside the backups volume or not valid; sqsolve does not read, restore or delete them until an administrator reviews them: %s",
+				len(ids), strings.Join(ids, ", ")),
+			Data: map[string]any{"backup_ids": ids}})
+	}
+	return ids, nil
 }
 
 // runCatalogRebuild adds backups found on disk to the catalog.
@@ -276,6 +312,10 @@ func (s *Service) runCatalogRebuild(ctx context.Context, r *jobs.Run) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".manifest.json") {
 			return nil
 		}
+		if ok, err := fsx.Confined(s.Cfg.BackupDir, p); err != nil || !ok {
+			r.Warnf("%s: the manifest leaves the backups volume; skipped", p)
+			return nil
+		}
 		m, err := ReadManifest(p)
 		if err != nil {
 			r.Warnf("%s: %v", p, err)
@@ -285,6 +325,18 @@ func (s *Service) runCatalogRebuild(ctx context.Context, r *jobs.Run) error {
 			return nil
 		}
 		backupFile := filepath.Join(filepath.Dir(p), m.File)
+		if manifestPath(backupFile) != p {
+			r.Warnf("%s: the manifest names the file %s, which is not its own backup file; skipped", p, m.File)
+			return nil
+		}
+		rel, err := filepath.Rel(s.Cfg.BackupDir, backupFile)
+		if err != nil {
+			return nil
+		}
+		if _, err := s.AbsPath(&Backup{ID: m.BackupID, FilePath: rel}); err != nil {
+			r.Warnf("%s: %v; skipped", p, err)
+			return nil
+		}
 		if _, err := os.Stat(backupFile); err != nil {
 			r.Warnf("Manifest without file: %s", p)
 			return nil
@@ -300,7 +352,6 @@ func (s *Service) runCatalogRebuild(ctx context.Context, r *jobs.Run) error {
 				return nil
 			}
 		}
-		rel, _ := filepath.Rel(s.Cfg.BackupDir, backupFile)
 		_, err = s.DB.ExecContext(ctx, `INSERT INTO backups(id, library_id, kind, status, file_path, size_bytes, sha256, pg_server_version, pg_dump_version, archive_version,
 			compression, schema_fingerprint, table_count, counts_exact, resolve_version, started_at, finished_at, verify_status, verify_detail)
 			VALUES (?, ?, ?, 'ok', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none', 'Recovered from the volume; verify it before using it')`,

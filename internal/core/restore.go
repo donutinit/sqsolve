@@ -39,6 +39,15 @@ func (s *Service) pgRestore(ctx context.Context, path, db, role string) error {
 	return nil
 }
 
+// pgRestoreBackup is pgRestore of the file of b, through its checked path.
+func (s *Service) pgRestoreBackup(ctx context.Context, b *Backup, db, role string) error {
+	abs, err := s.AbsPath(b)
+	if err != nil {
+		return err
+	}
+	return s.pgRestore(ctx, abs, db, role)
+}
+
 // compareWithManifest checks counts and fingerprint of a restored database.
 func (s *Service) compareWithManifest(ctx context.Context, db string, m *Manifest) (string, error) {
 	conn, err := s.PG.ConnectDB(ctx, db)
@@ -143,7 +152,7 @@ func (s *Service) verifyL2(ctx context.Context, r *jobs.Run, id string) error {
 		return outcome(err, errors.As(err, &vf))
 	}
 	r.Progress(15)
-	m, err := ReadManifest(manifestPath(s.AbsPath(b)))
+	m, err := s.backupManifest(b)
 	if err != nil {
 		// The level 1 check has just read it.
 		return outcome(err, false)
@@ -160,7 +169,7 @@ func (s *Service) verifyL2(ctx context.Context, r *jobs.Run, id string) error {
 			return err
 		}
 		s.PG.SetDatabaseConnLimit(ctx, db, 2)
-		loadErr = s.pgRestore(ctx, s.AbsPath(b), db, "")
+		loadErr = s.pgRestoreBackup(ctx, b, db, "")
 		return loadErr
 	})
 	if err != nil {
@@ -278,7 +287,7 @@ func (s *Service) runRestoreNew(ctx context.Context, r *jobs.Run) error {
 		if err := s.verifyL1(ctx, b.ID); err != nil {
 			return err
 		}
-		m, err = ReadManifest(manifestPath(s.AbsPath(b)))
+		m, err = s.backupManifest(b)
 		return err
 	}); err != nil {
 		return rollback(err)
@@ -310,7 +319,7 @@ func (s *Service) runRestoreNew(ctx context.Context, r *jobs.Run) error {
 		if err := s.PG.SetAllowConnections(ctx, l.DBName, true); err != nil {
 			return err
 		}
-		return s.pgRestore(ctx, s.AbsPath(b), l.DBName, l.OwnerRole)
+		return s.pgRestoreBackup(ctx, b, l.DBName, l.OwnerRole)
 	}); err != nil {
 		return rollback(err)
 	}
@@ -556,7 +565,7 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 		if err := s.verifyL1(ctx, b.ID); err != nil {
 			return err
 		}
-		m, err = ReadManifest(manifestPath(s.AbsPath(b)))
+		m, err = s.backupManifest(b)
 		if err != nil {
 			return err
 		}
@@ -584,7 +593,7 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 		createdRestore = true
-		return s.pgRestore(ctx, s.AbsPath(b), restoreDB, l.OwnerRole)
+		return s.pgRestoreBackup(ctx, b, restoreDB, l.OwnerRole)
 	}); err != nil {
 		return cleanup(err)
 	}
@@ -1191,7 +1200,7 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 		if err := s.verifyL1(ctx, b.ID); err != nil {
 			return err
 		}
-		m, err = ReadManifest(manifestPath(s.AbsPath(b)))
+		m, err = s.backupManifest(b)
 		return err
 	}); err != nil {
 		return err
@@ -1256,7 +1265,7 @@ func (s *Service) runRecreate(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 		createdDB = true
-		return s.pgRestore(ctx, s.AbsPath(b), l.DBName, l.OwnerRole)
+		return s.pgRestoreBackup(ctx, b, l.DBName, l.OwnerRole)
 	}); err != nil {
 		return dropCreated(err)
 	}

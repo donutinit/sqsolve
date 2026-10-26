@@ -13,6 +13,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -242,8 +244,56 @@ func (s *Service) latestVerified(ctx context.Context, libraryID string, notAfter
 	return b, err
 }
 
-// AbsPath returns the absolute path of a backup file.
-func (s *Service) AbsPath(b *Backup) string { return filepath.Join(s.Cfg.BackupDir, b.FilePath) }
+// ErrBackupPath is a catalog row whose path is not one sqsolve writes: a
+// .backup file under libraries/ on the backups volume, also after resolving
+// symlinks. Such a row is never read, restored, downloaded or deleted, and
+// it is not rewritten either: an administrator reviews it
+// (docs/runbooks/invalid-backup-path.md).
+var ErrBackupPath = errors.New("SQS-B043 the catalog path of this backup is not valid; it is blocked until an administrator reviews it")
+
+// validBackupRel reports whether rel is a clean relative path of a .backup
+// file under libraries/.
+func validBackupRel(rel string) bool {
+	return rel != "" && !filepath.IsAbs(rel) && filepath.Clean(rel) == rel && strings.HasPrefix(rel, "libraries/") &&
+		!slices.Contains(strings.Split(rel, "/"), "..") && backupFileName(filepath.Base(rel))
+}
+
+// backupFileName reports whether name is the base name of a .backup file.
+func backupFileName(name string) bool {
+	return name == filepath.Base(name) && !strings.ContainsRune(name, '/') && strings.HasSuffix(name, ".backup") && len(name) > len(".backup")
+}
+
+// AbsPath returns the absolute path of a backup file, or ErrBackupPath when
+// the catalog path is not valid or leaves the backups volume.
+func (s *Service) AbsPath(b *Backup) (string, error) {
+	bad := fmt.Errorf("%w (backup %s)", ErrBackupPath, b.ID)
+	if !validBackupRel(b.FilePath) {
+		return "", bad
+	}
+	abs := filepath.Join(s.Cfg.BackupDir, b.FilePath)
+	for _, p := range []string{abs, manifestPath(abs)} {
+		ok, err := fsx.Confined(s.Cfg.BackupDir, p)
+		if err != nil {
+			return "", fmt.Errorf("could not check the path of backup %s: %w", b.ID, err)
+		}
+		if !ok {
+			return "", bad
+		}
+	}
+	return abs, nil
+}
+
+// backupManifest reads the manifest of b through its checked path.
+func (s *Service) backupManifest(b *Backup) (*Manifest, error) {
+	abs, err := s.AbsPath(b)
+	if err != nil {
+		return nil, err
+	}
+	return ReadManifest(manifestPath(abs))
+}
+
+// BackupManifest is the manifest of b, for the panel.
+func (s *Service) BackupManifest(b *Backup) (*Manifest, error) { return s.backupManifest(b) }
 
 func manifestPath(path string) string { return strings.TrimSuffix(path, ".backup") + ".manifest.json" }
 
@@ -288,7 +338,14 @@ type Manifest struct {
 // errManifestUnreadable is a manifest whose content is not valid.
 var errManifestUnreadable = errors.New("SQS-B040 unreadable manifest")
 
-// ReadManifest loads the manifest of a backup.
+// ErrManifestInvalid is a manifest that is JSON but not a complete version 1
+// manifest (api/schemas/manifest.v1.json).
+var ErrManifestInvalid = errors.New("SQS-B042 the manifest is not a valid version 1 manifest")
+
+var sha256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// ReadManifest loads the manifest of a backup and checks that it is a
+// complete version 1 manifest whose file is the base name of a .backup file.
 func ReadManifest(path string) (*Manifest, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -298,7 +355,33 @@ func ReadManifest(path string) (*Manifest, error) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		return nil, fmt.Errorf("%w: %w", errManifestUnreadable, err)
 	}
+	if why := m.invalid(); why != "" {
+		return nil, fmt.Errorf("%w: %s", ErrManifestInvalid, why)
+	}
 	return &m, nil
+}
+
+// invalid says why m is not a valid version 1 manifest, or "".
+func (m *Manifest) invalid() string {
+	switch {
+	case m.ManifestVersion != 1:
+		return fmt.Sprintf("unsupported manifest_version %d", m.ManifestVersion)
+	case !ulid.Valid(m.BackupID):
+		return "backup_id is not a valid ID"
+	case !ulid.Valid(m.Library.ID):
+		return "library.id is not a valid ID"
+	case pg.ValidateSlug(m.Library.Slug) != nil:
+		return "library.slug is not a valid identifier"
+	case KindLabel(m.Kind) == m.Kind:
+		return fmt.Sprintf("kind %q is not known", m.Kind)
+	case !backupFileName(m.File):
+		return "file must be the name of a .backup file in the same folder"
+	case m.Size < 0:
+		return "size_bytes is negative"
+	case !sha256Re.MatchString(m.SHA256):
+		return "sha256 is not a SHA-256 checksum in hexadecimal"
+	}
+	return ""
 }
 
 // Version of sqsolve, set by main.
@@ -781,7 +864,12 @@ func (s *Service) checkL1(ctx context.Context, id string, notice bool) error {
 	if b.Status != BackupOK {
 		return fmt.Errorf("SQS-B021 the backup is not available (%s)", b.Status)
 	}
-	abs := s.AbsPath(b)
+	// A path that is not valid is no verdict on the backup: the row stays
+	// as it is until an administrator reviews it.
+	abs, err := s.AbsPath(b)
+	if err != nil {
+		return err
+	}
 	verdict := func(detail string) error {
 		s.DB.ExecContext(context.WithoutCancel(ctx), `UPDATE backups SET verify_status = 'failed', verified_at = ?, verify_detail = ? WHERE id = ?`,
 			store.NowT(), detail, id)
@@ -840,7 +928,7 @@ func (s *Service) checkL1(ctx context.Context, id string, notice bool) error {
 // (indexes being built, WAL), or four times the archive when the manifest
 // does not say.
 func (s *Service) restoreSpaceNeed(b *Backup) int64 {
-	if m, err := ReadManifest(manifestPath(s.AbsPath(b))); err == nil && m.Server.DatabaseSize > 0 {
+	if m, err := s.backupManifest(b); err == nil && m.Server.DatabaseSize > 0 {
 		return m.Server.DatabaseSize / 5 * 6
 	}
 	return b.SizeBytes * 4
@@ -946,6 +1034,9 @@ func (s *Service) DeleteBackup(ctx context.Context, by audit.Actor, id string) e
 	if b.Status == BackupDeleted {
 		return nil
 	}
+	if _, err := s.AbsPath(b); err != nil {
+		return err
+	}
 	if b.Pinned {
 		return errors.New("SQS-B033 unpin the backup before deleting it")
 	}
@@ -959,8 +1050,35 @@ func (s *Service) DeleteBackup(ctx context.Context, by audit.Actor, id string) e
 	})
 }
 
+// ForgetInvalidBackup removes from the catalog a backup whose path is not
+// valid, once an administrator reviewed it (docs/runbooks/
+// invalid-backup-path.md): the row is marked deleted, in one transaction
+// with its audit entry, and no file is touched.
+func (s *Service) ForgetInvalidBackup(ctx context.Context, by audit.Actor, id string) error {
+	b, err := s.Backup(ctx, id)
+	if err != nil {
+		return err
+	}
+	if _, err := s.AbsPath(b); !errors.Is(err, ErrBackupPath) || b.Status == BackupDeleted {
+		return errors.New("SQS-B044 only a backup whose catalog path is not valid can be removed from the catalog this way")
+	}
+	return s.DB.Tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE backups SET status = 'deleted', deleted_at = ?, expired_reason = ? WHERE id = ?`,
+			store.NowT(), "removed from the catalog after review: its path was not valid", b.ID); err != nil {
+			return err
+		}
+		if err := s.Audit.RecordTx(ctx, tx, by, "backup.forget", "backup", b.ID, audit.OK, map[string]any{"library_id": b.LibraryID, "file_path": b.FilePath}); err != nil {
+			return fmt.Errorf("%w: %v", audit.ErrUnavailable, err)
+		}
+		return nil
+	})
+}
+
 func (s *Service) removeBackupFiles(ctx context.Context, b *Backup, reason string) error {
-	abs := s.AbsPath(b)
+	abs, err := s.AbsPath(b)
+	if err != nil {
+		return err
+	}
 	if err := os.Remove(abs); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -968,6 +1086,6 @@ func (s *Service) removeBackupFiles(ctx context.Context, b *Backup, reason strin
 		return err
 	}
 	fsx.SyncDir(filepath.Dir(abs))
-	_, err := s.DB.ExecContext(ctx, `UPDATE backups SET status = 'deleted', deleted_at = ?, expired_reason = ? WHERE id = ?`, store.NowT(), reason, b.ID)
+	_, err = s.DB.ExecContext(ctx, `UPDATE backups SET status = 'deleted', deleted_at = ?, expired_reason = ? WHERE id = ?`, store.NowT(), reason, b.ID)
 	return err
 }

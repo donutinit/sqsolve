@@ -6,13 +6,14 @@
     <p class="muted">{{with .Data.L}}<a href="/libraries/{{.ID}}">{{.DisplayName}}</a> · {{end}}{{kind $b.Kind}} · {{template "badge" (dict "tone" (backuptone $b.Status) "label" (backuplabel $b.Status))}}</p>
   </div>
   <div class="actions">
-    {{if eq $b.Status "ok"}}
+    {{if and (eq $b.Status "ok") (not .Data.PathError)}}
       {{if $p.Can "restore.new"}}<a class="button" href="/backups/{{$b.ID}}/restore">Restore</a>{{end}}
       {{if $p.Can "backup.download"}}<a class="button ghost" href="/backups/{{$b.ID}}/download">Download</a>{{end}}
       <a class="button ghost" href="/backups/{{$b.ID}}/export">Export .drp and .drx</a>
     {{end}}
   </div>
 </div>
+{{with .Data.PathError}}<div class="flash error" role="alert">{{.}}. See docs/runbooks/invalid-backup-path.md.</div>{{end}}
 <div class="grid2">
   <section class="card">
     <h2>Details</h2>

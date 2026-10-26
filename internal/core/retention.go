@@ -282,7 +282,11 @@ func (s *Service) applyRetention(ctx context.Context, libraryID string) (int, er
 	// Remove files of failed or interrupted backups and old failed rows.
 	failed, _ := s.Backups(ctx, BackupFilter{LibraryID: libraryID, Statuses: []string{BackupFailed, BackupInterrupted}})
 	for _, b := range failed {
-		abs := s.AbsPath(b)
+		abs, err := s.AbsPath(b)
+		if err != nil {
+			s.Log.Error("retention: the leftovers of a failed backup were kept", "backup", b.ID, "err", err)
+			continue
+		}
 		for _, p := range []string{abs, abs + ".partial", manifestPath(abs)} {
 			_ = removeIfExists(p)
 		}

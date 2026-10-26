@@ -359,6 +359,7 @@ docker compose exec sqsolve sqsolve admin reset-password <user>
 docker compose exec sqsolve sqsolve admin disable-totp <user>
 docker compose exec sqsolve sqsolve admin unlock <user>         # lifts a lock before its 15 minutes
 docker compose exec sqsolve sqsolve catalog rebuild --wait     # rebuilds the catalog from the manifests
+docker compose exec sqsolve sqsolve catalog forget <backup-id> # removes a blocked row after review (no file is touched)
 docker compose exec sqsolve sqsolve audit verify
 ```
 

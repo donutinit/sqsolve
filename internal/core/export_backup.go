@@ -162,7 +162,7 @@ func (s *Service) runBackupExport(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 		s.PG.SetDatabaseConnLimit(ctx, w.DBName, 4)
-		return s.pgRestore(ctx, s.AbsPath(b), w.DBName, "")
+		return s.pgRestoreBackup(ctx, b, w.DBName, "")
 	})
 	if err != nil {
 		return fail(err)

@@ -236,12 +236,24 @@ func (a *App) removeStalePartials() {
 	}
 }
 
+// checkBackupPaths reports the backup rows whose path is not valid (PLAN
+// 1.3.2): an upgrade does not rewrite them; they stay blocked until an
+// administrator reviews them.
+func (a *App) checkBackupPaths(ctx context.Context) {
+	if ids, err := a.Svc.CheckCatalogPaths(ctx); err != nil {
+		a.Log.Error("could not check the paths of the backup catalog", "err", err)
+	} else if len(ids) > 0 {
+		a.Log.Error("backups with a path that is not valid are blocked", "backups", ids)
+	}
+}
+
 // Background starts the monitor, the PostgreSQL connection, reconciliation
 // and the loops. The monitor and the notifier start first, so a PostgreSQL
 // that never answers is reported (postgres.down after the startup grace).
 func (a *App) Background(ctx context.Context) {
 	ctx, a.cancel = context.WithCancel(ctx)
 	a.removeStalePartials()
+	a.checkBackupPaths(ctx)
 	go a.Notify.Run(ctx)
 	go a.Monitor.Run(ctx)
 	go func() {

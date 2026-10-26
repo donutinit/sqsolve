@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/donutinit/sqsolve/api/schemas/manifest.v1.json",
+  "title": "sqsolve backup manifest, version 1",
+  "description": "Written next to each backup as <name>.manifest.json (docs/10-api.md section 8.1). sqsolve reads a manifest only when the required fields are valid; the rest is informative.",
+  "type": "object",
+  "required": ["manifest_version", "backup_id", "library", "kind", "file", "size_bytes", "sha256"],
+  "properties": {
+    "manifest_version": { "const": 1 },
+    "backup_id": { "$ref": "#/$defs/ulid" },
+    "library": {
+      "type": "object",
+      "required": ["id", "slug"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ulid" },
+        "slug": {
+          "description": "3 to 40 characters, lowercase letters, digits and underscore, starting with a letter; no two consecutive underscores and none of the prefixes pg_, sqsolve, template or postgres.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{2,39}$"
+        },
+        "display_name": { "type": "string" }
+      }
+    },
+    "kind": { "enum": ["manual", "scheduled", "pre_restore", "pre_delete", "pre_upgrade", "imported"] },
+    "file": {
+      "description": "Base name of the backup file, in the same folder as the manifest and named like it: <name>.backup next to <name>.manifest.json.",
+      "type": "string",
+      "pattern": "^[^/]+\\.backup$"
+    },
+    "size_bytes": { "type": "integer", "minimum": 0 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "format": {
+      "type": "object",
+      "properties": {
+        "tool": { "type": "string" },
+        "tool_version": { "type": "string" },
+        "format": { "type": "string" },
+        "compression": { "type": "string" },
+        "archive_version": { "type": "string" }
+      }
+    },
+    "server": {
+      "type": "object",
+      "properties": {
+        "postgres_version": { "type": "string" },
+        "database_size_bytes": { "type": "integer", "minimum": 0 },
+        "activity_mark": { "type": "string" }
+      }
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "fingerprint": { "type": "string" },
+        "tables": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "resolve_version_declared": { "type": "string" },
+    "counts_exact": { "type": "boolean" },
+    "row_counts": { "type": "object", "additionalProperties": { "type": "integer" } },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "sqsolve_version": { "type": "string" },
+    "instance_id": { "type": "string" }
+  },
+  "$defs": {
+    "ulid": { "type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" }
+  }
+}

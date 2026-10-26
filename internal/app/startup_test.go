@@ -144,6 +144,34 @@ func TestStartupRemovesStalePartials(t *testing.T) {
 	}
 }
 
+// PLAN 1.3.2: a backup row whose path leaves the backups volume is reported
+// at startup as a critical event and left as it is.
+func TestStartupReportsInvalidBackupPaths(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cfg := testConfig(t)
+	a := openApp(t, ctx, cfg)
+	defer a.Close()
+	now := store.NowT()
+	if _, err := a.DB.ExecContext(ctx, `INSERT INTO libraries(id, slug, display_name, state, db_name, owner_role, creation_strategy, created_at, updated_at)
+		VALUES ('L1', 'client_x', 'Client X', 'active', 'client_x', 'client_x', 'resolve', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DB.ExecContext(ctx, `INSERT INTO backups(id, library_id, kind, status, file_path, started_at) VALUES ('B1', 'L1', 'manual', 'ok', '../../etc/passwd', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	a.checkBackupPaths(ctx)
+	evs, err := a.Events.List(ctx, events.Filter{TypePrefix: events.BackupPathInvalid})
+	if err != nil || len(evs) != 1 || evs[0].Severity != events.Critical || !strings.Contains(evs[0].Message, "B1") {
+		t.Fatalf("events %+v %v", evs, err)
+	}
+	var path, status string
+	a.DB.QueryRowContext(ctx, `SELECT file_path, status FROM backups WHERE id = 'B1'`).Scan(&path, &status)
+	if path != "../../etc/passwd" || status != "ok" {
+		t.Fatalf("the row was rewritten: %s %s", path, status)
+	}
+}
+
 func certOf(t *testing.T, a *App) *x509.Certificate {
 	t.Helper()
 	c, err := a.Certificate()

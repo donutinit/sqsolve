@@ -239,6 +239,7 @@ sqsolve backup verify <id> [--level 2]
 sqsolve restore <id> --new <new-slug>
 sqsolve restore <id> --replace --confirm <slug>
 sqsolve catalog rebuild
+sqsolve catalog forget <backup-id>
 sqsolve audit verify
 sqsolve version
 ```
@@ -251,7 +252,9 @@ respect job locks.
 ### 8.1 Backup manifest
 
 File `<name>.manifest.json` next to each backup. JSON schema in
-`api/schemas/manifest.v1.json`.
+`api/schemas/manifest.v1.json`, checked against the Go type by
+`TestManifestSchemaMatchesTheGoType`; `ReadManifest` refuses a manifest whose required fields are
+not valid (`SQS-B042`).
 
 ```json
 {
@@ -263,9 +266,10 @@ File `<name>.manifest.json` next to each backup. JSON schema in
   "size_bytes": 184467221,
   "sha256": "9f2c...",
   "format": { "tool": "pg_dump", "tool_version": "18.6", "format": "custom", "compression": "gzip:6", "archive_version": "<read from the header>" },
-  "server": { "postgres_version": "18.6", "encoding": "UTF8", "locale_provider": "builtin", "locale": "C.UTF-8" },
+  "server": { "postgres_version": "18.6", "database_size_bytes": 1048576000, "activity_mark": "..." },
   "schema": { "fingerprint": "sha256:51ab...", "tables": 214 },
   "resolve_version_declared": "21.1.1",
+  "counts_exact": true,
   "row_counts": { "table_a": 120, "table_b": 98431 },
   "started_at": "2026-10-18T07:00:00Z",
   "finished_at": "2026-10-18T07:00:41Z",

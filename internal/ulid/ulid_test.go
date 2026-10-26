@@ -27,3 +27,14 @@ func TestShort(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestValid(t *testing.T) {
+	if id := New(); !Valid(id) {
+		t.Fatalf("%s is not valid", id)
+	}
+	for _, s := range []string{"", "B1", "../../etc/passwd", "01JB0000000000000000000000X", "01jb0000000000000000000000", "01JB000000000000000000000I", "81JB0000000000000000000000", "01JB00000000000000000000/0"} {
+		if Valid(s) {
+			t.Errorf("%q accepted", s)
+		}
+	}
+}

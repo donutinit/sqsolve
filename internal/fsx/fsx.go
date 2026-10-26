@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -358,6 +360,38 @@ func Within(dir, path string) (bool, error) {
 		return false, nil
 	}
 	return rel != ".." && !filepath.IsAbs(rel) && (len(rel) < 3 || rel[:3] != "../"), nil
+}
+
+// Confined reports whether path lies strictly below dir once every symlink
+// of its existing part is resolved; the part that does not exist yet cannot
+// hold a symlink. A dangling symlink, or one that loops, is not confined.
+func Confined(dir, path string) (bool, error) {
+	rd, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false, err
+	}
+	p, rest := filepath.Clean(path), ""
+	for {
+		if _, err := os.Lstat(p); err == nil {
+			rp, err := filepath.EvalSymlinks(p)
+			if err != nil {
+				return false, nil
+			}
+			rel, err := filepath.Rel(rd, filepath.Join(rp, rest))
+			if err != nil {
+				return false, nil
+			}
+			return rel != "." && rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, "../"), nil
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return false, err
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false, nil
+		}
+		rest = filepath.Join(filepath.Base(p), rest)
+		p = parent
+	}
 }
 
 // trace, when set, sees each change made to a folder and each folder sync,

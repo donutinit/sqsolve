@@ -38,6 +38,21 @@ at least one copy outside the building (L2 or NAS replication).
   _import/                                folder for importing external files
 ```
 
+Every path in the catalog is relative to the volume and names a `.backup` file under
+`libraries/`, with its manifest next to it under the same name (`<name>.manifest.json`). sqsolve
+only reads, restores, downloads or deletes a backup whose path is clean (no `..`, not absolute)
+and stays on the volume once its symlinks are resolved (`fsx.Confined`). A row that does not
+meet that is never rewritten or deleted automatically: it is blocked (`SQS-B043`), reported at
+every start and by the catalog check as one critical `backup.path_invalid` event, and an
+administrator reviews it (`docs/runbooks/invalid-backup-path.md`).
+
+A manifest is read only when it is a complete version 1 manifest
+(`api/schemas/manifest.v1.json`): `manifest_version` 1, valid IDs, a valid slug, a known kind, a
+`file` that is the base name of a `.backup` file, a size and a SHA-256; otherwise `SQS-B042`.
+Rebuilding the catalog adds a manifest only when it is valid, stays on the volume and names its
+own backup file (`x.manifest.json` next to `x.backup`); the rest are skipped with a warning in
+the job log.
+
 Permissions: directories 0700 and files 0600 for the sqsolve UID. The marker is created in the
 wizard and checked before every write (RNF-FIA-04): if the volume is not mounted, the path
 exists empty inside the container and writing there would fill the container layer or the wrong
@@ -97,8 +112,8 @@ Only a **verdict** on the content of a backup sets `verify_status = failed` (whi
 unusable for restores and drops it from "latest verified"):
 
 - the SHA-256 or the size does not match the manifest;
-- the manifest or the file is gone, or the manifest is not valid JSON, while the backups volume
-  carries its marker;
+- the manifest or the file is gone, or the manifest is not valid JSON or not a valid version 1
+  manifest (`SQS-B042`), while the backups volume carries its marker;
 - `pg_restore` starts and exits with an error reading the archive;
 - the test restore fails on the content of the archive, or the restored structure or row counts
   differ from the manifest (`SQS-R011`, `SQS-R012`).

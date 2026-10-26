@@ -73,7 +73,7 @@ func statusFor(err error) int {
 	switch {
 	case errors.Is(err, core.ErrLibraryNotFound), errors.Is(err, core.ErrBackupNotFound), errors.Is(err, jobs.ErrNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, jobs.ErrNotCancellable):
+	case errors.Is(err, jobs.ErrNotCancellable), errors.Is(err, core.ErrBackupPath):
 		return http.StatusConflict
 	case errors.Is(err, audit.ErrUnavailable):
 		return http.StatusServiceUnavailable
@@ -631,7 +631,12 @@ func (a *API) download(w http.ResponseWriter, r *http.Request, p *auth.Principal
 		problem(w, r, 404, core.ErrBackupNotFound)
 		return
 	}
-	f, err := os.Open(a.A.Svc.AbsPath(b))
+	abs, err := a.A.Svc.AbsPath(b)
+	if err != nil {
+		problem(w, r, statusFor(err), err)
+		return
+	}
+	f, err := os.Open(abs)
 	if err != nil {
 		problem(w, r, 404, err)
 		return

@@ -57,6 +57,7 @@ Usage:
   sqsolve restore <backup-id> --new <identifier> [--name <name>] [--wait]
   sqsolve restore <backup-id> --replace --confirm <identifier> [--wait]
   sqsolve catalog rebuild [--wait]
+  sqsolve catalog forget <backup-id>     removes a blocked row (invalid path) after review
   sqsolve audit verify
 
 Console actions are queued in the same database the server uses; the running
@@ -567,14 +568,22 @@ func restoreCmd(args []string) error {
 }
 
 func catalogCmd(args []string) error {
-	if len(args) < 1 || args[0] != "rebuild" {
-		return errors.New("usage: sqsolve catalog rebuild [--wait]")
+	const use = "usage: sqsolve catalog rebuild [--wait] | forget <backup-id>"
+	if len(args) < 1 || args[0] != "rebuild" && (args[0] != "forget" || len(args) != 2) {
+		return errors.New(use)
 	}
 	a, ctx, done, err := openCLI(false)
 	if err != nil {
 		return err
 	}
 	defer done()
+	if args[0] == "forget" {
+		if err := a.Svc.ForgetInvalidBackup(ctx, audit.CLI, args[1]); err != nil {
+			return err
+		}
+		fmt.Printf("Backup %s removed from the catalog; no file was touched.\n", args[1])
+		return nil
+	}
 	j, err := a.Jobs.Enqueue(ctx, core.JobCatalogRebuild, "", nil, audit.CLI)
 	if err != nil {
 		return err

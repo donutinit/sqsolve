@@ -45,7 +45,7 @@ func newQuietEnv(t *testing.T) *env {
 // manifest is not part of the checksum, so the backup stays valid.
 func (e *env) setManifestDBSize(b *core.Backup, size int64) {
 	e.t.Helper()
-	mp := strings.TrimSuffix(e.svc.AbsPath(b), ".backup") + ".manifest.json"
+	mp := strings.TrimSuffix(mustAbs(e.svc, b), ".backup") + ".manifest.json"
 	m, err := core.ReadManifest(mp)
 	if err != nil {
 		e.t.Fatal(err)
@@ -205,7 +205,7 @@ func TestVerifyMismatchIsVerdict(t *testing.T) {
 	l, _ := e.createActive("mismatch")
 	b := e.firstBackup(l)
 	e.quiesce()
-	mp := strings.TrimSuffix(e.svc.AbsPath(b), ".backup") + ".manifest.json"
+	mp := strings.TrimSuffix(mustAbs(e.svc, b), ".backup") + ".manifest.json"
 	m, err := core.ReadManifest(mp)
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +278,7 @@ func TestVerifyL1Outcomes(t *testing.T) {
 		t.Fatalf("%d verify_skipped events", n)
 	}
 	// Verdicts: the file is gone from a mounted volume, then it is back.
-	abs := e.svc.AbsPath(b)
+	abs := mustAbs(e.svc, b)
 	os.Rename(abs, abs+".away")
 	err = e.svc.VerifyL1(ctx, b.ID)
 	if err == nil || err.Error() != "SQS-B020 verification failed: the backup file does not exist" || status() != core.VerifyFailed {
@@ -324,7 +324,7 @@ func TestImportReadsWholeArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.wait(bj, jobs.Succeeded)
-	full, err := os.ReadFile(e.svc.AbsPath(e.okBackups(l.ID)[0]))
+	full, err := os.ReadFile(mustAbs(e.svc, e.okBackups(l.ID)[0]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +365,7 @@ func TestImportReadsWholeArchive(t *testing.T) {
 	if onDiskT(cutPath) {
 		t.Fatal("source kept although delete_source was set")
 	}
-	if got, _ := os.ReadFile(e.svc.AbsPath(bs[0])); !bytes.Equal(got, full) {
+	if got, _ := os.ReadFile(mustAbs(e.svc, bs[0])); !bytes.Equal(got, full) {
 		t.Fatal("catalogued file differs from the source")
 	}
 }
@@ -379,7 +379,7 @@ func TestImportRefusesFileStillBeingWritten(t *testing.T) {
 	l, _ := e.createActive("growing")
 	b := e.firstBackup(l)
 	e.quiesce()
-	data, _ := os.ReadFile(e.svc.AbsPath(b))
+	data, _ := os.ReadFile(mustAbs(e.svc, b))
 	os.MkdirAll(e.svc.ImportDir(), 0o700)
 	src := filepath.Join(e.svc.ImportDir(), "growing.backup")
 	os.WriteFile(src, data, 0o600)
@@ -425,7 +425,7 @@ func TestImportCrashKeepsSource(t *testing.T) {
 	l, _ := e.createActive("powercut")
 	b := e.firstBackup(l)
 	e.quiesce()
-	data, _ := os.ReadFile(e.svc.AbsPath(b))
+	data, _ := os.ReadFile(mustAbs(e.svc, b))
 	os.MkdirAll(e.svc.ImportDir(), 0o700)
 	src := filepath.Join(e.svc.ImportDir(), "only-copy.backup")
 	os.WriteFile(src, data, 0o600)
@@ -464,7 +464,7 @@ func TestImportKeepsReplacedSource(t *testing.T) {
 	l, _ := e.createActive("replaced")
 	b := e.firstBackup(l)
 	e.quiesce()
-	data, _ := os.ReadFile(e.svc.AbsPath(b))
+	data, _ := os.ReadFile(mustAbs(e.svc, b))
 	os.MkdirAll(e.svc.ImportDir(), 0o700)
 	src := filepath.Join(e.svc.ImportDir(), "swap.backup")
 	os.WriteFile(src, data, 0o600)
@@ -483,7 +483,7 @@ func TestImportKeepsReplacedSource(t *testing.T) {
 		t.Fatalf("the replacing file was deleted or changed: %v", err)
 	}
 	imported := e.okBackups(l.ID)[0]
-	if got, _ := os.ReadFile(e.svc.AbsPath(imported)); imported.Kind != core.KindImported || !bytes.Equal(got, data) {
+	if got, _ := os.ReadFile(mustAbs(e.svc, imported)); imported.Kind != core.KindImported || !bytes.Equal(got, data) {
 		t.Fatalf("catalogued backup is not the original file: %+v", imported)
 	}
 	logs, _ := e.svc.Jobs.Logs(ctx, j.ID, 0)
@@ -509,7 +509,7 @@ func TestImportRefusesSourceWrittenInPlace(t *testing.T) {
 	l, _ := e.createActive("inplace")
 	b := e.firstBackup(l)
 	e.quiesce()
-	data, _ := os.ReadFile(e.svc.AbsPath(b))
+	data, _ := os.ReadFile(mustAbs(e.svc, b))
 	os.MkdirAll(e.svc.ImportDir(), 0o700)
 	src := filepath.Join(e.svc.ImportDir(), "growing-later.backup")
 	os.WriteFile(src, data, 0o600)
@@ -587,7 +587,7 @@ func TestActivityMarkReadBeforeSnapshot(t *testing.T) {
 	e.wait(j, jobs.Succeeded)
 	restore()
 	bs := e.okBackups(l.ID)
-	m, err := core.ReadManifest(strings.TrimSuffix(e.svc.AbsPath(bs[0]), ".backup") + ".manifest.json")
+	m, err := core.ReadManifest(strings.TrimSuffix(mustAbs(e.svc, bs[0]), ".backup") + ".manifest.json")
 	if err != nil {
 		t.Fatal(err)
 	}

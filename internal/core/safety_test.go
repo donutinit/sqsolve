@@ -115,7 +115,7 @@ func TestStaleRestoreNewKeepsOtherLibrary(t *testing.T) {
 		t.Fatal(err)
 	}
 	b2, _ := e.svc.Backup(ctx, resultBackupID(t, e.wait(bj, jobs.Succeeded)))
-	abs := e.svc.AbsPath(b)
+	abs := mustAbs(e.svc, b)
 	os.Rename(abs, abs+".away")
 	_, j1, err := e.svc.RestoreAsNew(ctx, admin, b.ID, "copy_lib", "Copy one")
 	if err != nil {
@@ -155,7 +155,7 @@ func TestStaleRecreateKeepsLiveDB(t *testing.T) {
 	l, pass := e.createActive("dbl_click")
 	b := e.firstBackup(l)
 	e.lose(l, true)
-	abs := e.svc.AbsPath(b)
+	abs := mustAbs(e.svc, b)
 	os.Rename(abs, abs+".away")
 	failed, err := e.svc.Jobs.Enqueue(ctx, core.JobRestoreRecreate, l.ID, core.RestoreParams{BackupID: b.ID}, admin)
 	if err != nil {
@@ -687,7 +687,7 @@ func TestPreviousStateBackedUpAfterSwap(t *testing.T) {
 	if pb.SourceDB != l.PrevDB || !pb.Verified() {
 		t.Fatalf("previous state not covered by its own backup: %+v (prev %s)", pb, l.PrevDB)
 	}
-	m, err := core.ReadManifest(strings.TrimSuffix(e.svc.AbsPath(pb), ".backup") + ".manifest.json")
+	m, err := core.ReadManifest(strings.TrimSuffix(mustAbs(e.svc, pb), ".backup") + ".manifest.json")
 	if err != nil || m.RowCounts["SM_Project"] != 57 {
 		t.Fatalf("backup of the previous state misses the late edits: %+v %v", m, err)
 	}

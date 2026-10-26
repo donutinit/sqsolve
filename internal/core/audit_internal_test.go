@@ -95,7 +95,7 @@ func TestDestructiveActionsNeedTheirAuditEntry(t *testing.T) {
 		t.Error("a password was returned without its entry")
 	}
 	unavailable("backup.delete", s.DeleteBackup(ctx, by, b.ID))
-	if _, err := os.Stat(s.AbsPath(b)); err != nil {
+	if _, err := os.Stat(mustAbs(s, b)); err != nil {
 		t.Errorf("the backup file was deleted without its entry: %v", err)
 	}
 	if got, _ := s.Backup(ctx, b.ID); got.Status != BackupOK {

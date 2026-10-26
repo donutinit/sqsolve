@@ -6,6 +6,7 @@ package ulid
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"strings"
 	"sync"
 	"time"
 )
@@ -87,4 +88,18 @@ func lower(s string) string {
 		}
 	}
 	return string(b)
+}
+
+// Valid reports whether s is a ULID as New writes it: 26 characters of the
+// Crockford alphabet in upper case, the first one at most 7.
+func Valid(s string) bool {
+	if len(s) != 26 || s[0] > '7' {
+		return false
+	}
+	for i := range len(s) {
+		if strings.IndexByte(alphabet, s[i]) < 0 {
+			return false
+		}
+	}
+	return true
 }
