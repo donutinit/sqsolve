@@ -69,8 +69,8 @@ from here (`.github/workflows/release.yml`).
   recovery form of the setup wizard now shows why a recovery was refused (a wrong code or key
   sent you back to the form without a word); a schedule expression typed for the default policy
   is checked also in activity mode; an unknown maintenance action is `SQS-C041`.
-- Tests: statement coverage of `internal/` rises from 70.6 % to the figure recorded in
-  `docs/16-testing.md`, with handler tests for every API route and most panel forms, and fault
+- Tests: statement coverage of `internal/` rises from 70.6 % to 87.1 % (
+  `docs/16-testing.md`), with handler tests for every API route and most panel forms, and fault
   tests for recovery, system jobs, PostgreSQL failures and audit failures.
 - The identifier suggested for a name that does not start with a letter now starts with
   `library_` (it was the Spanish `biblioteca_`), as the panel already suggested while typing.

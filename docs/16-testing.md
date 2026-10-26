@@ -19,10 +19,14 @@ pending items have no target release yet: To be confirmed by Diego.
 | Acceptance | Criteria AC-01 to AC-11 | Script in §8, part automated and part manual | Before each release | Manual; recorded for 1.0 (`docs/acceptance/1.0.md`) |
 | Performance | Page and backup times | `go test -bench`, synthetic loads | Before each release | Planned: there are no benchmarks |
 
-Coverage (RNF-MAN-01 asks for 80 % of the lines of `internal/`): 70.5 % of the statements of
-`internal/` on 2026-10-22, measured with the integration tests (66.7 % in the 2026-10-21 audit).
-The requirement is not met. Furthest below it: `internal/api` (34.5 %), `internal/web` (59.4 %),
-both handlers that the end-to-end tests over HTTP only partly reach, and `internal/fsx` (67.1 %).
+Coverage (RNF-MAN-01 asks for 80 % of the lines of `internal/`): 87.1 % of the statements of
+`internal/` on 2026-10-25, measured with the integration tests (`go test -cover ./internal/...`
+with PostgreSQL 18 installed; 70.5 % on 2026-10-22 and 66.7 % in the 2026-10-21 audit). The
+requirement is met. Every package is above 80 % except `internal/secrets` (79.4 %); the API is
+at 95.9 % and the panel at 88.0 %, with handler tests for every API route and most panel forms,
+their permission refusals and their audit failures. Without PostgreSQL the integration tests
+skip and the figure is lower.
+
 Coverage is raised first where a failure costs data or access (recovery, audit failures,
 concurrent authentication, request contracts), not with tests of getters.
 
