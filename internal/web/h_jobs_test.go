@@ -237,7 +237,8 @@ func TestAPIJobCancelChecksTheType(t *testing.T) {
 		t.Fatalf("admin: %d %v", st, out)
 	}
 	es := auditEntries(t, a, "job.cancel")
-	if len(es) != 2 || es[0].Outcome != audit.OK || es[1].Outcome != audit.Denied {
+	// The entry goes before the cancellation and its result after (ADR 0026).
+	if len(es) != 3 || es[0].Outcome != audit.OK || es[1].Outcome != audit.Accepted || es[2].Outcome != audit.Denied {
 		t.Fatalf("cancel audit %+v", es)
 	}
 }
@@ -314,5 +315,59 @@ func TestChannelSaveWarnsAboutPrivateAddresses(t *testing.T) {
 	_, loc, _ = boss.do("POST", "/settings/notifications", form)
 	if page := boss.page(loc); strings.Contains(page, "SQS-N042") || !strings.Contains(page, "Channel saved.") {
 		t.Fatal("a public address got the warning")
+	}
+}
+
+// PLAN P0.3: cancelling a job needs its audit entry (SQS-X040, nothing is
+// cancelled); when only the result entry fails after the cancellation, the
+// answer is SQS-X041.
+func TestJobCancelNeedsItsAuditEntry(t *testing.T) {
+	a, srv, admin := jobsPanel(t)
+	ctx := context.Background()
+	j, err := a.Jobs.Enqueue(ctx, core.JobBackupCreate, "LIB1", core.BackupParams{Kind: core.KindManual}, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boss, tok := jobsLogin(t, srv, "boss", jobsAdminPass)
+	exec := func(q string) {
+		t.Helper()
+		if _, err := a.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := func() jobs.State {
+		t.Helper()
+		got, err := a.Jobs.Get(ctx, j.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.State
+	}
+	exec(`CREATE TRIGGER audit_down BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`)
+	boss.do("POST", "/jobs/"+j.ID+"/cancel", url.Values{"csrf": {tok}})
+	if f := flashOf(boss); !strings.HasPrefix(f, "SQS-X040 ") || state() != jobs.Queued {
+		t.Fatalf("panel without the entry: %q, %s", f, state())
+	}
+	req, _ := http.NewRequest("POST", srv.URL+"/api/v1/jobs/"+j.ID+"/cancel", nil)
+	req.Header.Set("X-CSRF-Token", tok)
+	resp, err := boss.c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable || out["code"] != "SQS-X040" || state() != jobs.Queued {
+		t.Fatalf("API without the entry: %d %v, %s", resp.StatusCode, out, state())
+	}
+	exec(`DROP TRIGGER audit_down`)
+	exec(`CREATE TRIGGER result_down BEFORE INSERT ON audit_log WHEN NEW.outcome = 'ok' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`)
+	boss.do("POST", "/jobs/"+j.ID+"/cancel", url.Values{"csrf": {tok}})
+	if f := flashOf(boss); !strings.HasPrefix(f, "SQS-X041 ") || state() != jobs.Cancelled {
+		t.Fatalf("panel with a failed result entry: %q, %s", f, state())
+	}
+	es := auditEntries(t, a, "job.cancel")
+	if len(es) != 1 || es[0].Outcome != audit.Accepted || es[0].TargetID != j.ID {
+		t.Fatalf("entries %+v", es)
 	}
 }

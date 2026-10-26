@@ -584,7 +584,7 @@ func catalogCmd(args []string) error {
 		fmt.Printf("Backup %s removed from the catalog; no file was touched.\n", args[1])
 		return nil
 	}
-	j, err := a.Jobs.Enqueue(ctx, core.JobCatalogRebuild, "", nil, audit.CLI)
+	j, err := a.Jobs.Enqueue(ctx, core.JobCatalogRebuild, "", nil, audit.CLI, jobs.Audited("maintenance.catalog", "system", "", nil))
 	if err != nil {
 		return err
 	}

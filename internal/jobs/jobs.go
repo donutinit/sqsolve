@@ -359,10 +359,7 @@ func (m *Manager) Enqueue(ctx context.Context, typ, libraryID string, params any
 		details := map[string]any{}
 		maps.Copy(details, o.details)
 		details["job_id"] = id
-		if err := m.audit.RecordTx(ctx, tx, by, o.audit.Action, o.audit.TargetType, o.audit.TargetID, audit.Accepted, details); err != nil {
-			return fmt.Errorf("%w: %v", audit.ErrUnavailable, err)
-		}
-		return nil
+		return m.audit.RecordTx(ctx, tx, by, o.audit.Action, o.audit.TargetType, o.audit.TargetID, audit.Accepted, details)
 	})
 	if err != nil {
 		return nil, err

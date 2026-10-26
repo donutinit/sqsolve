@@ -218,14 +218,25 @@ cannot be written, the action is not done and the caller gets `SQS-X040` (503 in
 
 | Kind of action | When the entry is written | Results |
 |---|---|---|
-| Change inside SQLite (users, roles, panel passwords, API tokens) | In the same transaction | `ok` |
-| Action that runs as a job (library create, delete, purge, untrash; back up now; restores, revert, recreate; import; export preparation; maintenance jobs; Retry; upgrade window) | In the transaction that queues the job, with `job_id` | `accepted`, then `ok` or `failed` (with `state` and `error_code`) when the job ends |
-| Change in PostgreSQL or in files (delete a backup, rotate a password, revoke a member, network rules, maintenance, end a session, reopen the initialization window, close an export workspace, regenerate `pg_hba.conf`) | Before the change; the change does not run without it | `accepted`, then `ok` or `failed` (with `error`) |
-| Disclosure (reveal a password, download a backup, the recovery kit, the diagnostics, an export) | Before anything is sent | `ok` |
+| Change inside SQLite (users, roles, panel passwords, API tokens, settings, pin or unpin a backup, unlock a user, turn the second factor on or off, notification channels, remove a blocked backup row from the catalog) | In the same transaction (`RecordTx`) | `ok` |
+| Action that runs as a job (library create, delete, purge, untrash; back up now; verify a backup; restores, revert, recreate; import; export preparation; maintenance jobs, also from the console; Retry; upgrade window) | In the transaction that queues the job, with `job_id` (`jobs.Audited`) | `accepted`, then `ok` or `failed` (with `state` and `error_code`) when the job ends |
+| Change in PostgreSQL, in files or in several steps (delete a backup, rotate a password, add or revoke a member, network rules, maintenance, end a session, reopen the initialization window, close an export workspace, regenerate `pg_hba.conf`, edit a library, change a backup policy, install a panel certificate, cancel a job) | Before the change; the change does not run without it (`Audit.Do`) | `accepted`, then `ok` or `failed` (with `error`); a result that cannot be written after a successful change is `SQS-X041` |
+| Disclosure (reveal a password, download a backup, the recovery kit, the diagnostics, an export) | Before anything is sent (`Audit.Require`) | `ok` |
 
-Logins, failed logins, logouts and refusals (`denied`) are recorded on a best-effort basis:
-refusing a login because the audit log cannot be written would lock everyone out of the panel
-that shows the problem.
+Recorded on a best-effort basis, with a log line when the entry cannot be written (no result is
+ignored silently): logins, failed logins, the use of a recovery code at login, logouts, refusals
+(`denied`), the summary entries of the setup wizard (`setup.complete`, `setup.recover`; the user
+and the settings it creates have their own entries), and what sqsolve does on its own at start
+or on a timer (`system.upgrade`, `tls.panel_renewed`). Refusing a login because the audit log
+cannot be written would lock everyone out of the panel that shows the problem, and a start or a
+certificate renewal that stopped on it would turn a disk problem into an outage. Accepting a new
+PostgreSQL cluster (`postgres.cluster_accepted`) is stored with its entry or not at all, and is
+tried again at the next start.
+
+The inventory above was checked against every call of the audit log on 2026-10-25 (PLAN P0.3);
+`TestCatalogChangesNeedTheirAuditEntry`, `TestUnlockAndTOTPNeedTheirAuditEntry`,
+`TestChannelChangesNeedTheirAuditEntry`, `TestMemberAddNeedsItsAuditEntry` and
+`TestJobCancelNeedsItsAuditEntry` inject the failure.
 
 ## 10. Incident response and disclosure
 

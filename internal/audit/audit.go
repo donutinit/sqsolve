@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"sync"
 	"time"
@@ -102,12 +103,25 @@ func hashOf(prev string, c canonical) string {
 
 // Log writes and verifies audit entries.
 type Log struct {
-	db *store.DB
-	mu sync.Mutex
+	db  *store.DB
+	mu  sync.Mutex
+	log *slog.Logger
 }
 
 // New creates a Log.
-func New(db *store.DB) *Log { return &Log{db: db} }
+func New(db *store.DB) *Log { return &Log{db: db, log: slog.Default()} }
+
+// SetLogger sets where BestEffort reports the entries it could not write.
+func (l *Log) SetLogger(log *slog.Logger) { l.log = log }
+
+// BestEffort appends an entry that the action does not depend on (logins,
+// logouts, refusals, what sqsolve does on its own at start; docs 08 §9): a
+// failure is logged, never ignored silently.
+func (l *Log) BestEffort(ctx context.Context, a Actor, action, targetType, targetID, outcome string, details map[string]any) {
+	if err := l.Record(ctx, a, action, targetType, targetID, outcome, details); err != nil {
+		l.log.Error("could not write an audit entry", "action", action, "target", targetType+":"+targetID, "outcome", outcome, "err", err)
+	}
+}
 
 // Record appends an entry.
 func (l *Log) Record(ctx context.Context, a Actor, action, targetType, targetID, outcome string, details map[string]any) error {
@@ -122,8 +136,13 @@ func (l *Log) Record(ctx context.Context, a Actor, action, targetType, targetID,
 // RecordTx appends an entry inside tx, so it is written if and only if the
 // change tx makes is. The transactions of the store are immediate (one
 // writer at a time), which keeps the chain in order without Record's lock.
+// An entry that cannot be written is ErrUnavailable: the caller rolls tx
+// back and the change is not done.
 func (l *Log) RecordTx(ctx context.Context, tx *sql.Tx, a Actor, action, targetType, targetID, outcome string, details map[string]any) error {
-	return appendEntry(context.WithoutCancel(ctx), tx, a, action, targetType, targetID, outcome, details)
+	if err := appendEntry(context.WithoutCancel(ctx), tx, a, action, targetType, targetID, outcome, details); err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	return nil
 }
 
 // Require appends an entry that the action it records depends on: on error

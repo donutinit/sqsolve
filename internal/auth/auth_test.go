@@ -452,3 +452,65 @@ func TestUserAndTokenChangesNeedTheirAuditEntry(t *testing.T) {
 		t.Error("the token was revoked")
 	}
 }
+
+// PLAN P0.3: unlocking a user and turning the second factor on or off are
+// stored with their audit entry or not at all (SQS-X040).
+func TestUnlockAndTOTPNeedTheirAuditEntry(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t)
+	u, err := s.CreateUser(ctx, audit.System, "root1", "", "a long and odd password", RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := s.CreateUser(ctx, audit.System, "ana", "", "reference monitor 709", RoleOperator)
+	_, p, _, _ := s.Login(ctx, "root1", "a long and odd password", "1.1.1.1", "")
+	secret := NewTOTPSecret()
+	code, _ := TOTPCode(secret, Counter(s.Now()))
+	s.db.ExecContext(ctx, `UPDATE admin_users SET failed_logins = 5, locked_at = ? WHERE id = ?`, store.NowT(), other.ID)
+	enabled, _ := s.CreateUser(ctx, audit.System, "luis", "", "tungsten light 3200K", RoleAdmin)
+	s.db.ExecContext(ctx, `UPDATE admin_users SET totp_enabled = 1, totp_secret_enc = 'x' WHERE id = ?`, enabled.ID)
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER audit_down BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	unavailable := func(what string, err error) {
+		t.Helper()
+		if !errors.Is(err, audit.ErrUnavailable) || !strings.HasPrefix(err.Error(), "SQS-X040 ") {
+			t.Errorf("%s: want SQS-X040, got %v", what, err)
+		}
+	}
+	unavailable("auth.unlock", s.Unlock(ctx, audit.CLI, other.ID))
+	if got, _ := s.UserByID(ctx, other.ID); got.LockedAt == nil {
+		t.Error("the user was unlocked")
+	}
+	_, err = s.EnableTOTP(ctx, p, secret, code)
+	unavailable("auth.totp_enable", err)
+	if got, _ := s.UserByID(ctx, u.ID); got.TOTPEnabled {
+		t.Error("the second factor was enabled")
+	}
+	unavailable("auth.totp_disable", s.DisableTOTP(ctx, audit.System, enabled.ID))
+	if got, _ := s.UserByID(ctx, enabled.ID); !got.TOTPEnabled {
+		t.Error("the second factor was disabled")
+	}
+}
+
+// ADR 0026 and PLAN P0.3: a login is best effort, also its second step. An
+// audit log that cannot be written does not turn a valid code into an error
+// after the session was already completed.
+func TestSecondFactorLoginSurvivesAnAuditOutage(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t)
+	start := time.Now()
+	secret := enrolledTOTP(t, s, start)
+	s.Now = func() time.Time { return start.Add(time.Minute) }
+	_, p, mfa, err := s.Login(ctx, "ana", "reference monitor 709", "1.1.1.1", "")
+	if err != nil || !mfa {
+		t.Fatalf("login: mfa %v, %v", mfa, err)
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER audit_down BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	code, _ := TOTPCode(secret, Counter(s.Now()))
+	if err := s.VerifySecondFactor(ctx, p, code); err != nil {
+		t.Fatalf("a valid code failed because of the audit log: %v", err)
+	}
+}

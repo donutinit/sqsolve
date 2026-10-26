@@ -187,6 +187,24 @@ func TestAPIBackupNowQueuesAnAuditedJob(t *testing.T) {
 	if r.status != 200 || !found {
 		t.Fatalf("audit %d: %s", r.status, r.body)
 	}
+	// Verifying a backup queues an audited job too (PLAN P0.3).
+	if _, err := e.a.DB.Exec(`INSERT INTO backups(id, library_id, kind, status, file_path, started_at) VALUES ('B1', 'L1', 'manual', 'ok', 'libraries/lib/B1.backup', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	r = e.call(t, "POST", "/api/v1/backups/B1/verify", e.admin, "", false)
+	json.Unmarshal([]byte(r.body), &job)
+	if r.status != http.StatusAccepted || job.ID == "" {
+		t.Fatalf("verify: %d %s", r.status, r.body)
+	}
+	r = e.call(t, "GET", "/api/v1/audit", e.admin, "", false)
+	json.Unmarshal([]byte(r.body), &log)
+	found = false
+	for _, en := range log.Items {
+		found = found || en.Action == "backup.verify" && en.Outcome == audit.Accepted && en.Details["job_id"] == job.ID && en.TargetID == "B1"
+	}
+	if !found {
+		t.Fatalf("verify audit: %s", r.body)
+	}
 	// Maintenance needs its body: an empty one is not "enabled: false".
 	if r := e.call(t, "POST", "/api/v1/libraries/L1/maintenance", e.admin, "", false); r.status != 400 || r.problem.Code != "SQS-C061" {
 		t.Fatalf("empty maintenance body: %d %s", r.status, r.body)

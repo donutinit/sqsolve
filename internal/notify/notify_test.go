@@ -5,12 +5,14 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -86,5 +88,37 @@ func TestValidate(t *testing.T) {
 	}
 	if !matches("backup.*, storage.low", "storage.low") || matches("backup.*", "library.created") || !matches("*", "x.y") {
 		t.Fatal("pattern matching")
+	}
+}
+
+// PLAN P0.3: a notification channel is saved or deleted with its audit entry
+// or not at all (SQS-X040).
+func TestChannelChangesNeedTheirAuditEntry(t *testing.T) {
+	ctx := context.Background()
+	db, _ := store.Open(ctx, filepath.Join(t.TempDir(), "n.db"), "")
+	box, _ := secrets.NewBox(secrets.RandomBytes(32))
+	n := New(db, box, audit.New(db), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	kept := &Channel{Kind: Webhook, Name: "kept", Enabled: true, MinSeverity: events.Error, Config: map[string]string{"url": "https://example.invalid/hook"}}
+	if err := n.Save(ctx, audit.System, kept); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER audit_down BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	unavailable := func(what string, err error) {
+		t.Helper()
+		if !errors.Is(err, audit.ErrUnavailable) || !strings.HasPrefix(err.Error(), "SQS-X040 ") {
+			t.Errorf("%s: want SQS-X040, got %v", what, err)
+		}
+	}
+	added := &Channel{Kind: Webhook, Name: "new", Enabled: true, MinSeverity: events.Error, Config: map[string]string{"url": "https://example.invalid/new"}}
+	unavailable("notify.save (new)", n.Save(ctx, audit.System, added))
+	renamed := *kept
+	renamed.Name = "renamed"
+	unavailable("notify.save (edit)", n.Save(ctx, audit.System, &renamed))
+	unavailable("notify.delete", n.Delete(ctx, audit.System, kept.ID))
+	chs, err := n.Channels(ctx)
+	if err != nil || len(chs) != 1 || chs[0].ID != kept.ID || chs[0].Name != "kept" {
+		t.Fatalf("channels changed without their entry: %+v %v", chs, err)
 	}
 }

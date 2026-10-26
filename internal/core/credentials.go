@@ -222,6 +222,27 @@ func (s *Service) AddMember(ctx context.Context, by audit.Actor, libraryID, pers
 	if err != nil {
 		return nil, err
 	}
+	var c *Credential
+	// The role is created in PostgreSQL, so the entry goes first (ADR 0026).
+	err = s.Audit.Do(ctx, by, "library.member_add", "library", libraryID, map[string]any{"role": role}, func() error {
+		var err error
+		c, err = s.createMember(ctx, l, role, person, pass, v)
+		return err
+	})
+	if c == nil {
+		return nil, err
+	}
+	// Created, even when its result entry failed (SQS-X041): the network
+	// rules must include the new role.
+	if herr := s.SyncHBA(ctx); err == nil {
+		err = herr
+	}
+	return c, err
+}
+
+// createMember creates the role of a person and its credential; on failure
+// it removes what it created.
+func (s *Service) createMember(ctx context.Context, l *Library, role, person string, pass secrets.String, v string) (*Credential, error) {
 	// CreateLibraryRole is atomic: when it fails there is nothing to undo.
 	// In maintenance the new person waits for it to end, like everyone (ADR 0024).
 	if err := s.PG.CreateLibraryRole(ctx, role, pg.RoleOptions{Verifier: v, Login: l.State != StateMaintenance, ConnLimit: l.ConnLimit}); err != nil {
@@ -248,14 +269,14 @@ func (s *Service) AddMember(ctx context.Context, by audit.Actor, libraryID, pers
 	if err := s.PG.SetRoleDefaultRole(ctx, role, l.DBName, l.OwnerRole); err != nil {
 		return nil, undo(err)
 	}
-	if c, err = s.addCredential(ctx, libraryID, "member", role, person, pass); err != nil {
+	var err error
+	if c, err = s.addCredential(ctx, l.ID, "member", role, person, pass); err != nil {
 		return nil, undo(err)
 	}
 	if err := s.PG.SecureDatabase(ctx, l.DBName, []string{role}); err != nil {
 		return nil, undo(err)
 	}
-	s.Audit.Record(ctx, by, "library.member_add", "library", libraryID, audit.OK, map[string]any{"role": role})
-	return c, s.SyncHBA(ctx)
+	return c, nil
 }
 
 // RevokeMember disables a personal credential and closes its sessions.

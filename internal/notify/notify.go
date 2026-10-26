@@ -737,25 +737,34 @@ func (n *Notifier) Save(ctx context.Context, by audit.Actor, c *Channel) error {
 	if err != nil {
 		return err
 	}
-	if isNew {
-		_, err = n.db.ExecContext(ctx, `INSERT INTO notification_channels(id, kind, name, config_enc, enabled, min_severity, event_pattern, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			c.ID, c.Kind, strings.TrimSpace(c.Name), enc, c.Enabled, string(c.MinSeverity), c.Pattern, store.NowT())
-	} else {
-		_, err = n.db.ExecContext(ctx, `UPDATE notification_channels SET name = ?, config_enc = ?, enabled = ?, min_severity = ?, event_pattern = ? WHERE id = ?`,
-			strings.TrimSpace(c.Name), enc, c.Enabled, string(c.MinSeverity), c.Pattern, c.ID)
+	err = n.db.Tx(ctx, func(tx *sql.Tx) error {
+		var err error
+		if isNew {
+			_, err = tx.ExecContext(ctx, `INSERT INTO notification_channels(id, kind, name, config_enc, enabled, min_severity, event_pattern, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				c.ID, c.Kind, strings.TrimSpace(c.Name), enc, c.Enabled, string(c.MinSeverity), c.Pattern, store.NowT())
+		} else {
+			_, err = tx.ExecContext(ctx, `UPDATE notification_channels SET name = ?, config_enc = ?, enabled = ?, min_severity = ?, event_pattern = ? WHERE id = ?`,
+				strings.TrimSpace(c.Name), enc, c.Enabled, string(c.MinSeverity), c.Pattern, c.ID)
+		}
+		if err != nil {
+			return err
+		}
+		return n.audit.RecordTx(ctx, tx, by, "notify.save", "channel", c.ID, audit.OK, map[string]any{"kind": c.Kind, "name": c.Name})
+	})
+	if err != nil && isNew {
+		c.ID = ""
 	}
-	if err != nil {
-		return err
-	}
-	return n.audit.Record(ctx, by, "notify.save", "channel", c.ID, audit.OK, map[string]any{"kind": c.Kind, "name": c.Name})
+	return err
 }
 
-// Delete removes a channel.
+// Delete removes a channel, in one transaction with its audit entry.
 func (n *Notifier) Delete(ctx context.Context, by audit.Actor, id string) error {
-	if _, err := n.db.ExecContext(ctx, `DELETE FROM notification_channels WHERE id = ?`, id); err != nil {
-		return err
-	}
-	return n.audit.Record(ctx, by, "notify.delete", "channel", id, audit.OK, nil)
+	return n.db.Tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM notification_channels WHERE id = ?`, id); err != nil {
+			return err
+		}
+		return n.audit.RecordTx(ctx, tx, by, "notify.delete", "channel", id, audit.OK, nil)
+	})
 }
 
 // Test sends a test event synchronously.

@@ -180,7 +180,7 @@ func (s *Server) jobForAction(w http.ResponseWriter, r *http.Request, action str
 		return nil, false
 	}
 	if !p.Can(s.jobAction(j.Type)) {
-		s.A.Audit.Record(ctx, p.Actor(), action, "job", id, audit.Denied, map[string]any{"type": j.Type})
+		s.A.Audit.BestEffort(ctx, p.Actor(), action, "job", id, audit.Denied, map[string]any{"type": j.Type})
 		s.renderError(w, r, p, http.StatusForbidden, "SQS-A030 Your role does not allow this action.")
 		return nil, false
 	}
@@ -192,11 +192,14 @@ func (s *Server) jobCancel(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.A.Jobs.Cancel(r.Context(), j.ID); err != nil {
+	ctx := r.Context()
+	// The entry goes before the cancellation (ADR 0026).
+	if err := s.A.Audit.Do(ctx, principalOf(r).Actor(), "job.cancel", "job", j.ID, map[string]any{"type": j.Type}, func() error {
+		return s.A.Jobs.Cancel(ctx, j.ID)
+	}); err != nil {
 		s.fail(w, r, "/jobs/"+j.ID, err)
 		return
 	}
-	s.A.Audit.Record(r.Context(), principalOf(r).Actor(), "job.cancel", "job", j.ID, audit.OK, map[string]any{"type": j.Type})
 	s.ok(w, r, "/jobs/"+j.ID, "Cancellation requested.")
 }
 

@@ -115,6 +115,7 @@ func Open(ctx context.Context, c *config.Config, log *slog.Logger) (*App, error)
 		return nil, err
 	}
 	a.Audit = audit.New(a.DB)
+	a.Audit.SetLogger(a.Log)
 	a.Bus = events.NewBus()
 	a.Events = events.NewRecorder(a.DB, a.Bus, log)
 	a.Jobs = jobs.NewManager(a.DB, a.Events, a.Bus, log, c.Workers, c.HeavyJobs)
@@ -359,7 +360,7 @@ func (a *App) RecordStart(ctx context.Context) {
 	a.DB.GetSetting(ctx, "last_version", &last)
 	if last != "" && last != Version {
 		a.Events.Emit(ctx, events.Event{Type: events.SystemUpgraded, Message: fmt.Sprintf("sqsolve was upgraded from %s to %s", last, Version)})
-		a.Audit.Record(ctx, audit.System, "system.upgrade", "system", "", audit.OK, map[string]any{"from": last, "to": Version})
+		a.Audit.BestEffort(ctx, audit.System, "system.upgrade", "system", "", audit.OK, map[string]any{"from": last, "to": Version})
 	}
 	a.DB.SetSetting(ctx, "last_version", Version, "system")
 	a.Events.Emit(ctx, events.Event{Type: events.SystemStarted, Message: "sqsolve " + Version + " started"})

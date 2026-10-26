@@ -190,11 +190,13 @@ func (s *Server) settingsCert(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "/settings", errors.New("SQS-C021 upload the certificate and the key in PEM format"))
 		return
 	}
-	if err := s.A.InstallPanelCert(cert, key); err != nil {
+	// The entry goes before the files are replaced (ADR 0026).
+	if err := s.A.Audit.Do(r.Context(), principalOf(r).Actor(), "settings.certificate", "system", "", nil, func() error {
+		return s.A.InstallPanelCert(cert, key)
+	}); err != nil {
 		s.fail(w, r, "/settings", err)
 		return
 	}
-	s.A.Audit.Record(r.Context(), principalOf(r).Actor(), "settings.certificate", "system", "", audit.OK, nil)
 	s.ok(w, r, "/settings", "Certificate installed. It is already in use.")
 }
 

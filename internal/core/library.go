@@ -601,17 +601,18 @@ func (s *Service) UpdateLibrary(ctx context.Context, by audit.Actor, id string, 
 	if len(in.Notes) > 10000 {
 		return errors.New("SQS-L014 notes too long")
 	}
-	if in.ConnLimit != l.ConnLimit && l.Live() {
-		if err := s.applyConnLimit(ctx, l, in.ConnLimit); err != nil {
-			return err
+	// The connection limit lives on the roles in PostgreSQL, so the entry
+	// goes first (ADR 0026).
+	return s.Audit.Do(ctx, by, "library.update", "library", id, map[string]any{"name": name, "resolve_version": rv, "connection_limit": in.ConnLimit}, func() error {
+		if in.ConnLimit != l.ConnLimit && l.Live() {
+			if err := s.applyConnLimit(ctx, l, in.ConnLimit); err != nil {
+				return err
+			}
 		}
-	}
-	_, err = s.DB.ExecContext(ctx, `UPDATE libraries SET display_name = ?, notes = ?, resolve_version = ?, connection_limit = ?, updated_at = ? WHERE id = ?`,
-		name, in.Notes, rv, in.ConnLimit, store.NowT(), id)
-	if err != nil {
+		_, err := s.DB.ExecContext(ctx, `UPDATE libraries SET display_name = ?, notes = ?, resolve_version = ?, connection_limit = ?, updated_at = ? WHERE id = ?`,
+			name, in.Notes, rv, in.ConnLimit, store.NowT(), id)
 		return err
-	}
-	return s.Audit.Record(ctx, by, "library.update", "library", id, audit.OK, map[string]any{"name": name, "resolve_version": rv, "connection_limit": in.ConnLimit})
+	})
 }
 
 // SetMaintenance closes or reopens a library to its workstations (ADR 0024):
@@ -927,23 +928,26 @@ func (s *Service) SetPolicy(ctx context.Context, by audit.Actor, libraryID strin
 		p.Cron = p.EffectiveCron()
 		misfire = 24 * time.Hour
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO backup_policies(library_id, enabled, schedule_cron, timezone, keep_last, keep_daily, keep_weekly, keep_monthly, min_verified, mode, check_minutes, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(library_id) DO UPDATE SET enabled = excluded.enabled, schedule_cron = excluded.schedule_cron, timezone = excluded.timezone,
-		keep_last = excluded.keep_last, keep_daily = excluded.keep_daily, keep_weekly = excluded.keep_weekly, keep_monthly = excluded.keep_monthly,
-		min_verified = excluded.min_verified, mode = excluded.mode, check_minutes = excluded.check_minutes, updated_at = excluded.updated_at`,
-		libraryID, p.Enabled, p.Cron, p.Timezone, p.KeepLast, p.KeepDaily, p.KeepWeekly, p.KeepMonthly, p.MinVerified, p.Mode, p.CheckMinutes, store.NowT())
-	if err != nil {
-		return err
+	save := func() error {
+		_, err := s.DB.ExecContext(ctx, `INSERT INTO backup_policies(library_id, enabled, schedule_cron, timezone, keep_last, keep_daily, keep_weekly, keep_monthly, min_verified, mode, check_minutes, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(library_id) DO UPDATE SET enabled = excluded.enabled, schedule_cron = excluded.schedule_cron, timezone = excluded.timezone,
+			keep_last = excluded.keep_last, keep_daily = excluded.keep_daily, keep_weekly = excluded.keep_weekly, keep_monthly = excluded.keep_monthly,
+			min_verified = excluded.min_verified, mode = excluded.mode, check_minutes = excluded.check_minutes, updated_at = excluded.updated_at`,
+			libraryID, p.Enabled, p.Cron, p.Timezone, p.KeepLast, p.KeepDaily, p.KeepWeekly, p.KeepMonthly, p.MinVerified, p.Mode, p.CheckMinutes, store.NowT())
+		if err != nil {
+			return err
+		}
+		enabled := p.Enabled && (l.State == StateActive || l.State == StateMaintenance)
+		return s.Sched.Upsert(ctx, ScheduleBackup, libraryID, p.Cron, p.Timezone, enabled, misfire)
 	}
-	enabled := p.Enabled && (l.State == StateActive || l.State == StateMaintenance)
-	if err := s.Sched.Upsert(ctx, ScheduleBackup, libraryID, p.Cron, p.Timezone, enabled, misfire); err != nil {
-		return err
+	// The policy and its schedule are two writes, so the entry goes first
+	// (ADR 0026). sqsolve setting the default policy of a library has no
+	// actor and no entry.
+	if by.Type == "" {
+		return save()
 	}
-	if by.Type != "" {
-		s.Audit.Record(ctx, by, "library.policy", "library", libraryID, audit.OK, map[string]any{"policy": p})
-	}
-	return nil
+	return s.Audit.Do(ctx, by, "library.policy", "library", libraryID, map[string]any{"policy": p}, save)
 }
 
 func (s *Service) ensurePolicy(ctx context.Context, libraryID string) error {

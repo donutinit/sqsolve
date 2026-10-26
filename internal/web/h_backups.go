@@ -84,7 +84,8 @@ func (s *Server) backupVerify(w http.ResponseWriter, r *http.Request) {
 	if b == nil {
 		return
 	}
-	j, err := s.A.Jobs.Enqueue(r.Context(), core.JobBackupVerify, b.LibraryID, core.VerifyParams{BackupID: b.ID}, principalOf(r).Actor(), jobs.Priority(60))
+	j, err := s.A.Jobs.Enqueue(r.Context(), core.JobBackupVerify, b.LibraryID, core.VerifyParams{BackupID: b.ID}, principalOf(r).Actor(), jobs.Priority(60),
+		jobs.Audited("backup.verify", "backup", b.ID, nil))
 	if err != nil {
 		s.fail(w, r, "/backups/"+b.ID, err)
 		return

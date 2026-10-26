@@ -129,3 +129,72 @@ func TestDestructiveActionsAuditEntries(t *testing.T) {
 		t.Fatalf("details %+v", list[2].Details)
 	}
 }
+
+// PLAN P0.3: the settings, a pin, a library edit and a backup policy are
+// stored with their audit entry or not at all (SQS-X040).
+func TestCatalogChangesNeedTheirAuditEntry(t *testing.T) {
+	ctx := context.Background()
+	s, l, b := auditedCatalog(t)
+	by := audit.Actor{Type: "user", ID: "u1", Name: "diego"}
+	settings := s.Settings(ctx)
+	policy, _ := s.Policy(ctx, l.ID)
+	breakAudit(t, s)
+	unavailable := func(what string, err error) {
+		t.Helper()
+		if !errors.Is(err, audit.ErrUnavailable) || !strings.HasPrefix(err.Error(), "SQS-X040 ") {
+			t.Errorf("%s: want SQS-X040, got %v", what, err)
+		}
+	}
+	changed := settings
+	changed.AdvertisedHost = "10.9.8.7"
+	unavailable("settings.update", s.SaveSettings(ctx, by, changed))
+	if got := s.Settings(ctx); got.AdvertisedHost != settings.AdvertisedHost {
+		t.Errorf("the settings were saved: %q", got.AdvertisedHost)
+	}
+	unavailable("backup.pin", s.SetPinned(ctx, by, b.ID, true))
+	if got, _ := s.Backup(ctx, b.ID); got.Pinned {
+		t.Error("the backup was pinned")
+	}
+	unavailable("library.update", s.UpdateLibrary(ctx, by, l.ID, UpdateInput{DisplayName: "Renamed", ConnLimit: l.ConnLimit}))
+	if got, _ := s.Library(ctx, l.ID); got.DisplayName != l.DisplayName {
+		t.Errorf("the library was renamed to %q", got.DisplayName)
+	}
+	p := policy
+	p.KeepLast = policy.KeepLast + 7
+	unavailable("library.policy", s.SetPolicy(ctx, by, l.ID, p))
+	if got, _ := s.Policy(ctx, l.ID); got.KeepLast != policy.KeepLast {
+		t.Errorf("the policy was stored: keep %d", got.KeepLast)
+	}
+}
+
+// With a working log each of those changes leaves its entry.
+func TestCatalogChangesAreAudited(t *testing.T) {
+	ctx := context.Background()
+	s, l, b := auditedCatalog(t)
+	by := audit.Actor{Type: "user", ID: "u1", Name: "diego"}
+	st := s.Settings(ctx)
+	st.AdvertisedHost = "10.9.8.7"
+	if err := s.SaveSettings(ctx, by, st); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPinned(ctx, by, b.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateLibrary(ctx, by, l.ID, UpdateInput{DisplayName: "Renamed", ConnLimit: l.ConnLimit}); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := s.Policy(ctx, l.ID)
+	p.KeepLast++
+	if err := s.SetPolicy(ctx, by, l.ID, p); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := s.Audit.List(ctx, 0, 20, "")
+	var got []string
+	for i := len(list) - 1; i >= 0; i-- {
+		got = append(got, list[i].Action+":"+list[i].Outcome)
+	}
+	want := "settings.update:ok backup.pin:ok library.update:accepted library.update:ok library.policy:accepted library.policy:ok"
+	if s := strings.Join(got, " "); s != want {
+		t.Fatalf("entries %s, want %s", s, want)
+	}
+}

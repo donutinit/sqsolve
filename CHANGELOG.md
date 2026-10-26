@@ -28,6 +28,16 @@ from here (`.github/workflows/release.yml`).
   `SQS-J041`, and the action it describes is not done. Restoring by replacing now also requires
   the journal of the copy being restored and the one written between the two renames
   (`SQS-R059`): without the second one the original database goes back under its name.
+- Audit log (ADR 0026 finished): every state change and disclosure was inventoried. Settings,
+  pinning a backup, unlocking a user, turning the second factor on or off, and notification
+  channels are now stored in one transaction with their entry; editing a library, changing a
+  backup policy, adding a person, installing a panel certificate and cancelling a job write
+  `accepted` before the change and their result after it; verifying a backup and rebuilding the
+  catalog from the console write their entry with the job. Without the entry the action is not
+  done (`SQS-X040`, 503 in the API); a result that cannot be written after the change is
+  `SQS-X041`. Logins, logouts, refusals and what sqsolve does on its own stay best effort, but
+  a failed entry is now logged instead of ignored, and a second-factor login no longer fails
+  after completing the session when only its entry could not be written.
 
 Upgrade: change the image tag to `1` once (user guide, "Updating"); on TrueNAS it appears three
 times in the stored YAML. Pasting the new file instead needs your paths, `TZ` and user again.

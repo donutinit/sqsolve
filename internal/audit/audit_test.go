@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -160,5 +161,36 @@ func TestDoReportsAnUnwrittenResult(t *testing.T) {
 	}
 	if list, _ := l.List(ctx, 0, 10, ""); len(list) != 1 || list[0].Outcome != Accepted {
 		t.Fatalf("entries %+v", list)
+	}
+}
+
+// PLAN P0.3: an entry RecordTx cannot write is SQS-X040, so every caller
+// reports the same code.
+func TestRecordTxFailureIsUnavailable(t *testing.T) {
+	ctx := context.Background()
+	l, db := newLog(t)
+	breakLog(t, db)
+	err := db.Tx(ctx, func(tx *sql.Tx) error {
+		return l.RecordTx(ctx, tx, System, "settings.update", "settings", "app", OK, nil)
+	})
+	if !errors.Is(err, ErrUnavailable) || !strings.HasPrefix(err.Error(), "SQS-X040 ") || !strings.Contains(err.Error(), "disk I/O error") {
+		t.Fatalf("want SQS-X040, got %v", err)
+	}
+}
+
+// PLAN P0.3: a best-effort entry that cannot be written is logged.
+func TestBestEffortLogsAFailure(t *testing.T) {
+	ctx := context.Background()
+	l, db := newLog(t)
+	var buf bytes.Buffer
+	l.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	l.BestEffort(ctx, System, "auth.login", "user", "U1", OK, nil)
+	if buf.Len() != 0 {
+		t.Fatalf("logged a written entry: %s", buf.String())
+	}
+	breakLog(t, db)
+	l.BestEffort(ctx, System, "auth.login", "user", "U1", OK, nil)
+	if out := buf.String(); !strings.Contains(out, "could not write an audit entry") || !strings.Contains(out, "action=auth.login") || !strings.Contains(out, "disk I/O error") {
+		t.Fatalf("log %q", out)
 	}
 }

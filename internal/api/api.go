@@ -580,7 +580,8 @@ func (a *API) backupVerify(w http.ResponseWriter, r *http.Request, p *auth.Princ
 		problem(w, r, statusFor(err), err)
 		return
 	}
-	j, err := a.A.Jobs.Enqueue(r.Context(), core.JobBackupVerify, b.LibraryID, core.VerifyParams{BackupID: b.ID}, p.Actor())
+	j, err := a.A.Jobs.Enqueue(r.Context(), core.JobBackupVerify, b.LibraryID, core.VerifyParams{BackupID: b.ID}, p.Actor(),
+		jobs.Audited("backup.verify", "backup", b.ID, nil))
 	if err != nil {
 		problem(w, r, statusFor(err), err)
 		return
@@ -704,15 +705,17 @@ func (a *API) jobCancel(w http.ResponseWriter, r *http.Request, p *auth.Principa
 		action = auth.ActSettingsEdit
 	}
 	if !p.Can(action) {
-		a.A.Audit.Record(ctx, p.Actor(), "job.cancel", "job", j.ID, audit.Denied, map[string]any{"type": j.Type})
+		a.A.Audit.BestEffort(ctx, p.Actor(), "job.cancel", "job", j.ID, audit.Denied, map[string]any{"type": j.Type})
 		problem(w, r, http.StatusForbidden, errors.New("SQS-A030 the role or the token scopes do not allow this action"))
 		return
 	}
-	if err := a.A.Jobs.Cancel(ctx, j.ID); err != nil {
+	// The entry goes before the cancellation (ADR 0026).
+	if err := a.A.Audit.Do(ctx, p.Actor(), "job.cancel", "job", j.ID, map[string]any{"type": j.Type}, func() error {
+		return a.A.Jobs.Cancel(ctx, j.ID)
+	}); err != nil {
 		problem(w, r, statusFor(err), err)
 		return
 	}
-	a.A.Audit.Record(ctx, p.Actor(), "job.cancel", "job", j.ID, audit.OK, map[string]any{"type": j.Type})
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "cancel_requested"})
 }
 

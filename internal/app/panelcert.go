@@ -119,7 +119,7 @@ func (a *App) RenewPanelCert(ctx context.Context) error {
 		return fmt.Errorf("SQS-C082 could not renew the panel certificate, which expires on %s: %w", x.NotAfter.Format("2006-01-02"), err)
 	}
 	a.cert.Store(&pair)
-	a.Audit.Record(ctx, audit.System, "tls.panel_renewed", "system", "", audit.OK, map[string]any{"previous_not_after": x.NotAfter.UTC().Format(time.RFC3339)})
+	a.Audit.BestEffort(ctx, audit.System, "tls.panel_renewed", "system", "", audit.OK, map[string]any{"previous_not_after": x.NotAfter.UTC().Format(time.RFC3339)})
 	a.Log.Info("panel certificate renewed", "previous_not_after", x.NotAfter)
 	return nil
 }

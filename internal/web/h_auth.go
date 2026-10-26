@@ -111,7 +111,7 @@ func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request) {
 	})
 	switch {
 	case !matched:
-		s.A.Audit.Record(ctx, audit.Actor{Type: "anonymous", IP: s.clientIP(r)}, "setup.code", "system", "", audit.Denied, nil)
+		s.A.Audit.BestEffort(ctx, audit.Actor{Type: "anonymous", IP: s.clientIP(r)}, "setup.code", "system", "", audit.Denied, nil)
 		time.Sleep(time.Second)
 		back("The installation code is not correct. Look for it in the sqsolve container log.")
 		return
@@ -148,7 +148,7 @@ func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setCookie(w, sessionCookie, token, int(auth.SessionAbsolute.Seconds()))
-	s.A.Audit.Record(ctx, p.Actor(), "setup.complete", "system", "", audit.OK, map[string]any{"advertised_host": st.AdvertisedHost})
+	s.A.Audit.BestEffort(ctx, p.Actor(), "setup.complete", "system", "", audit.OK, map[string]any{"advertised_host": st.AdvertisedHost})
 	http.Redirect(w, r, "/setup/kit", http.StatusSeeOther)
 }
 
@@ -186,7 +186,7 @@ func (s *Server) setupRecover(w http.ResponseWriter, r *http.Request) {
 		back(humanError(err))
 		return
 	}
-	s.A.Audit.Record(ctx, audit.Actor{Type: "setup", Name: "recovery", IP: s.clientIP(r)}, "setup.recover", "system", "", audit.OK, map[string]any{"copy": name})
+	s.A.Audit.BestEffort(ctx, audit.Actor{Type: "setup", Name: "recovery", IP: s.clientIP(r)}, "setup.recover", "system", "", audit.OK, map[string]any{"copy": name})
 	s.render(w, r, "recovering", "Recovering", "", map[string]any{"Copy": name})
 	go func() {
 		time.Sleep(2 * time.Second)

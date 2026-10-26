@@ -1015,12 +1015,15 @@ func (s *Service) BackupNow(ctx context.Context, by audit.Actor, libraryID strin
 		jobs.Audited("backup.create", "library", libraryID, nil))
 }
 
-// SetPinned fixes or releases a backup from retention.
+// SetPinned fixes or releases a backup from retention, in one transaction
+// with its audit entry.
 func (s *Service) SetPinned(ctx context.Context, by audit.Actor, id string, pinned bool) error {
-	if _, err := s.DB.ExecContext(ctx, `UPDATE backups SET pinned = ? WHERE id = ?`, pinned, id); err != nil {
-		return err
-	}
-	return s.Audit.Record(ctx, by, "backup.pin", "backup", id, audit.OK, map[string]any{"pinned": pinned})
+	return s.DB.Tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE backups SET pinned = ? WHERE id = ?`, pinned, id); err != nil {
+			return err
+		}
+		return s.Audit.RecordTx(ctx, tx, by, "backup.pin", "backup", id, audit.OK, map[string]any{"pinned": pinned})
+	})
 }
 
 // DeleteBackup removes one backup by hand. The newest verified backup of a
@@ -1067,10 +1070,7 @@ func (s *Service) ForgetInvalidBackup(ctx context.Context, by audit.Actor, id st
 			store.NowT(), "removed from the catalog after review: its path was not valid", b.ID); err != nil {
 			return err
 		}
-		if err := s.Audit.RecordTx(ctx, tx, by, "backup.forget", "backup", b.ID, audit.OK, map[string]any{"library_id": b.LibraryID, "file_path": b.FilePath}); err != nil {
-			return fmt.Errorf("%w: %v", audit.ErrUnavailable, err)
-		}
-		return nil
+		return s.Audit.RecordTx(ctx, tx, by, "backup.forget", "backup", b.ID, audit.OK, map[string]any{"library_id": b.LibraryID, "file_path": b.FilePath})
 	})
 }
 

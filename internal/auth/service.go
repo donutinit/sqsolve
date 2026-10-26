@@ -360,7 +360,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 	u, uerr := s.UserByName(ctx, username)
 	if uerr == nil && u.LockedAt != nil {
 		if u.IsLocked(now) {
-			s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: username, IP: ip}, "auth.login", "user", u.ID, audit.Denied, map[string]any{"locked": true})
+			s.audit.BestEffort(ctx, audit.Actor{Type: "anonymous", Name: username, IP: ip}, "auth.login", "user", u.ID, audit.Denied, map[string]any{"locked": true})
 			return "", nil, false, ErrAccountLocked
 		}
 		s.expireLock(ctx, u, now)
@@ -382,7 +382,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 			s.ev.Emit(ctx, events.Event{Type: events.AuthBruteforce, Severity: events.Warning,
 				Message: fmt.Sprintf("Many failed login attempts from %s", ip), Data: map[string]any{"ip": ip, "username": username}})
 		}
-		s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: username, IP: ip}, "auth.login", "user", username, audit.Denied, nil)
+		s.audit.BestEffort(ctx, audit.Actor{Type: "anonymous", Name: username, IP: ip}, "auth.login", "user", username, audit.Denied, nil)
 		if uerr == nil && !ok && s.countFailure(ctx, u, ip, now) {
 			return "", nil, false, ErrAccountLocked
 		}
@@ -398,7 +398,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 	}
 	if !u.TOTPEnabled {
 		s.db.ExecContext(ctx, `UPDATE admin_users SET last_login_at = ? WHERE id = ?`, store.NowT(), u.ID)
-		s.audit.Record(ctx, p.Actor(), "auth.login", "user", u.ID, audit.OK, nil)
+		s.audit.BestEffort(ctx, p.Actor(), "auth.login", "user", u.ID, audit.OK, nil)
 	}
 	return token, p, u.TOTPEnabled, nil
 }
@@ -430,7 +430,7 @@ func (s *Service) countFailure(ctx context.Context, u *User, ip string, now time
 	}
 	if first, _ := res.RowsAffected(); first == 1 {
 		minutes := int(LockoutDuration.Minutes())
-		s.audit.Record(ctx, audit.Actor{Type: "anonymous", Name: u.Username, IP: ip}, "auth.locked", "user", u.ID, audit.OK, map[string]any{"attempts": n, "minutes": minutes})
+		s.audit.BestEffort(ctx, audit.Actor{Type: "anonymous", Name: u.Username, IP: ip}, "auth.locked", "user", u.ID, audit.OK, map[string]any{"attempts": n, "minutes": minutes})
 		s.ev.Emit(ctx, events.Event{Type: events.AuthLocked, Severity: events.Critical,
 			Message: fmt.Sprintf("Account %q was locked for %d minutes after %d consecutive incorrect passwords. Its open sessions and API tokens keep working. To unlock it sooner: \"sqsolve admin unlock %s\" in the container console", u.Username, minutes, n, u.Username),
 			Data:    map[string]any{"username": u.Username, "ip": ip}})
@@ -445,10 +445,12 @@ func (s *Service) Unlock(ctx context.Context, by audit.Actor, userID string) err
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET failed_logins = 0, locked_at = NULL WHERE id = ?`, userID); err != nil {
-		return err
-	}
-	return s.audit.Record(ctx, by, "auth.unlock", "user", userID, audit.OK, map[string]any{"username": u.Username})
+	return s.db.Tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE admin_users SET failed_logins = 0, locked_at = NULL WHERE id = ?`, userID); err != nil {
+			return err
+		}
+		return s.audit.RecordTx(ctx, tx, by, "auth.unlock", "user", userID, audit.OK, map[string]any{"username": u.Username})
+	})
 }
 
 func hashToken(t string) string {
@@ -532,13 +534,13 @@ func (s *Service) Logout(ctx context.Context, p *Principal) {
 		return
 	}
 	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id_hash = ?`, p.SessionID)
-	s.audit.Record(ctx, p.Actor(), "auth.logout", "user", p.User.ID, audit.OK, nil)
+	s.audit.BestEffort(ctx, p.Actor(), "auth.logout", "user", p.User.ID, audit.OK, nil)
 }
 
 // LogoutEverywhere deletes every session of the user except the current one.
 func (s *Service) LogoutEverywhere(ctx context.Context, p *Principal) {
 	s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND id_hash <> ?`, p.User.ID, p.SessionID)
-	s.audit.Record(ctx, p.Actor(), "auth.logout_all", "user", p.User.ID, audit.OK, nil)
+	s.audit.BestEffort(ctx, p.Actor(), "auth.logout_all", "user", p.User.ID, audit.OK, nil)
 }
 
 // ErrBadCode is returned for a wrong second factor.
@@ -570,7 +572,7 @@ func (s *Service) checkSecondFactor(ctx context.Context, u *User, code string) e
 	res, err := s.db.ExecContext(ctx, `UPDATE recovery_codes SET used_at = ? WHERE user_id = ? AND code_hash = ? AND used_at IS NULL`, store.NowT(), u.ID, h)
 	if err == nil {
 		if n, _ := res.RowsAffected(); n == 1 {
-			s.audit.Record(ctx, audit.Actor{Type: "user", ID: u.ID, Name: u.Username}, "auth.recovery_code", "user", u.ID, audit.OK, nil)
+			s.audit.BestEffort(ctx, audit.Actor{Type: "user", ID: u.ID, Name: u.Username}, "auth.recovery_code", "user", u.ID, audit.OK, nil)
 			return nil
 		}
 	}
@@ -585,13 +587,14 @@ func (s *Service) VerifySecondFactor(ctx context.Context, p *Principal, code str
 		return ErrLocked{until}
 	}
 	if err := s.checkSecondFactor(ctx, p.User, code); err != nil {
-		s.audit.Record(ctx, p.Actor(), "auth.totp", "user", p.User.ID, audit.Denied, nil)
+		s.audit.BestEffort(ctx, p.Actor(), "auth.totp", "user", p.User.ID, audit.Denied, nil)
 		return err
 	}
 	s.limiter.success(p.IP, p.User.Username)
 	s.db.ExecContext(ctx, `UPDATE sessions SET mfa_pending = 0, reauth_at = ? WHERE id_hash = ?`, store.T(now), p.SessionID)
 	s.db.ExecContext(ctx, `UPDATE admin_users SET last_login_at = ? WHERE id = ?`, store.NowT(), p.User.ID)
-	return s.audit.Record(ctx, p.Actor(), "auth.login", "user", p.User.ID, audit.OK, map[string]any{"mfa": true})
+	s.audit.BestEffort(ctx, p.Actor(), "auth.login", "user", p.User.ID, audit.OK, map[string]any{"mfa": true})
+	return nil
 }
 
 // BeginTOTP generates a secret for enrolment (not yet enabled).
@@ -626,12 +629,11 @@ func (s *Service) EnableTOTP(ctx context.Context, p *Principal, secret, code str
 				return err
 			}
 		}
-		return nil
+		return s.audit.RecordTx(ctx, tx, p.Actor(), "auth.totp_enable", "user", p.User.ID, audit.OK, nil)
 	})
 	if err != nil {
 		return nil, err
 	}
-	s.audit.Record(ctx, p.Actor(), "auth.totp_enable", "user", p.User.ID, audit.OK, nil)
 	return codes, nil
 }
 
@@ -658,11 +660,15 @@ func MustEnrollTOTP(p *Principal, required func() bool) bool {
 
 // DisableTOTP turns the second factor off.
 func (s *Service) DisableTOTP(ctx context.Context, by audit.Actor, userID string) error {
-	if _, err := s.db.ExecContext(ctx, `UPDATE admin_users SET totp_secret_enc = '', totp_enabled = 0 WHERE id = ?`, userID); err != nil {
-		return err
-	}
-	s.db.ExecContext(ctx, `DELETE FROM recovery_codes WHERE user_id = ?`, userID)
-	return s.audit.Record(ctx, by, "auth.totp_disable", "user", userID, audit.OK, nil)
+	return s.db.Tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE admin_users SET totp_secret_enc = '', totp_enabled = 0 WHERE id = ?`, userID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM recovery_codes WHERE user_id = ?`, userID); err != nil {
+			return err
+		}
+		return s.audit.RecordTx(ctx, tx, by, "auth.totp_disable", "user", userID, audit.OK, nil)
+	})
 }
 
 // Token is an API token (without its secret).

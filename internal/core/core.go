@@ -8,6 +8,7 @@ package core
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -146,13 +147,18 @@ func (s *Service) SaveSettings(ctx context.Context, by audit.Actor, st Settings)
 		return fmt.Errorf("SQS-C032 retention periods must be between 1 and %d days", MaxRetentionDays)
 	}
 	old := s.Settings(ctx)
-	if err := s.DB.SetSetting(ctx, settingsKey, st, by.Name); err != nil {
+	err := s.DB.Tx(ctx, func(tx *sql.Tx) error {
+		if err := s.DB.SetSettingTx(ctx, tx, settingsKey, st, by.Name); err != nil {
+			return err
+		}
+		return s.Audit.RecordTx(ctx, tx, by, "settings.update", "settings", settingsKey, audit.OK, map[string]any{
+			"advertised_host": st.AdvertisedHost, "require_tls": st.RequireTLS, "maintenance_db_access": st.MaintenanceDBAccess,
+			"experimental_exports": st.ExperimentalExports,
+		})
+	})
+	if err != nil {
 		return err
 	}
-	s.Audit.Record(ctx, by, "settings.update", "settings", settingsKey, audit.OK, map[string]any{
-		"advertised_host": st.AdvertisedHost, "require_tls": st.RequireTLS, "maintenance_db_access": st.MaintenanceDBAccess,
-		"experimental_exports": st.ExperimentalExports,
-	})
 	if old.RequireTLS != st.RequireTLS || old.MaintenanceDBAccess != st.MaintenanceDBAccess {
 		return s.SyncHBA(ctx)
 	}

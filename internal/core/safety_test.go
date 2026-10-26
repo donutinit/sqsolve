@@ -10,12 +10,14 @@ package core_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/donutinit/sqsolve/internal/audit"
 	"github.com/donutinit/sqsolve/internal/core"
 	"github.com/donutinit/sqsolve/internal/fsx"
 	"github.com/donutinit/sqsolve/internal/jobs"
@@ -1237,4 +1239,37 @@ func TestReplaceNeedsItsStepsAndJournals(t *testing.T) {
 	// With the journals back the same replacement works.
 	j, _ = e.svc.RestoreReplace(ctx, admin, b.ID, l.Slug, true)
 	e.wait(j, jobs.Succeeded)
+}
+
+// PLAN P0.3: adding a person needs its audit entry: without it no role is
+// created (SQS-X040); when only the result entry fails, the person is added
+// and the answer is SQS-X041.
+func TestMemberAddNeedsItsAuditEntry(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, _ := e.createActive("mem_audit")
+	e.idle()
+	exec := func(q string) {
+		t.Helper()
+		if _, err := e.svc.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	role := l.Slug + "__ana"
+	exec(`CREATE TRIGGER audit_down BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`)
+	if _, err := e.svc.AddMember(ctx, admin, l.ID, "ana"); !errors.Is(err, audit.ErrUnavailable) {
+		t.Fatalf("without the entry: %v", err)
+	}
+	if ok, _ := e.svc.PG.RoleExists(ctx, role); ok {
+		t.Fatal("the role was created without its entry")
+	}
+	exec(`DROP TRIGGER audit_down`)
+	exec(`CREATE TRIGGER result_down BEFORE INSERT ON audit_log WHEN NEW.outcome = 'ok' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`)
+	c, err := e.svc.AddMember(ctx, admin, l.ID, "ana")
+	if err == nil || !strings.HasPrefix(err.Error(), "SQS-X041 ") || c == nil {
+		t.Fatalf("with a failed result entry: %v %v", c, err)
+	}
+	if ok, _ := e.svc.PG.RoleExists(ctx, role); !ok {
+		t.Fatal("the role is missing")
+	}
 }

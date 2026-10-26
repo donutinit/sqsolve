@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/donutinit/sqsolve/internal/audit"
@@ -88,10 +89,16 @@ func (a *App) applyIdentity(ctx context.Context, current string) bool {
 			a.Log.Warn("could not store the PostgreSQL system identifier", "err", err)
 		}
 	case identityAccept:
-		if err := a.DB.SetSetting(ctx, pgSystemIDSetting, current, "system"); err != nil {
+		// Stored with its entry or not at all; then the next start accepts
+		// it again.
+		if err := a.DB.Tx(ctx, func(tx *sql.Tx) error {
+			if err := a.DB.SetSettingTx(ctx, tx, pgSystemIDSetting, current, "system"); err != nil {
+				return err
+			}
+			return a.Audit.RecordTx(ctx, tx, audit.System, "postgres.cluster_accepted", "system", "", audit.OK, map[string]any{"from": stored, "to": current})
+		}); err != nil {
 			a.Log.Error("could not store the accepted PostgreSQL system identifier", "err", err)
 		}
-		a.Audit.Record(ctx, audit.System, "postgres.cluster_accepted", "system", "", audit.OK, map[string]any{"from": stored, "to": current})
 		a.Events.Emit(ctx, events.Event{Type: "postgres.cluster_accepted", Severity: events.Warning,
 			Message: fmt.Sprintf("PostgreSQL cluster %s accepted in place of %s (SQSOLVE_PG_ACCEPT_SYSTEM_ID); you can remove the variable", current, stored)})
 	case identityHold:

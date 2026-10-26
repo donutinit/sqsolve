@@ -372,11 +372,23 @@ func (db *DB) GetSetting(ctx context.Context, key string, out any) (bool, error)
 
 // SetSetting stores a JSON setting.
 func (db *DB) SetSetting(ctx context.Context, key string, value any, by string) error {
+	return setSetting(ctx, db, key, value, by)
+}
+
+// SetSettingTx stores a JSON setting inside tx, so it is written together
+// with what tx writes (its audit entry).
+func (db *DB) SetSettingTx(ctx context.Context, tx *sql.Tx, key string, value any, by string) error {
+	return setSetting(ctx, tx, key, value, by)
+}
+
+func setSetting(ctx context.Context, x interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, key string, value any, by string) error {
 	b, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO settings(key, value, updated_at, updated_by) VALUES (?, ?, ?, ?)
+	_, err = x.ExecContext(ctx, `INSERT INTO settings(key, value, updated_at, updated_by) VALUES (?, ?, ?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
 		key, string(b), NowT(), by)
 	return err
