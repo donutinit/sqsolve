@@ -242,7 +242,7 @@ func SuggestSlug(name string) string {
 	}
 	out := strings.Trim(b.String(), "_")
 	if out == "" || out[0] < 'a' || out[0] > 'z' {
-		out = "biblioteca_" + out
+		out = "library_" + out
 	}
 	if len(out) > 40 {
 		out = strings.TrimRight(out[:40], "_")

@@ -55,6 +55,11 @@ from here (`.github/workflows/release.yml`).
   revert or purge with the same parameters gets the queued job, and one with different
   parameters (for example another backup) is refused with `SQS-J005` (409 in the API) instead
   of silently getting the job of the first request. Backups keep "the first request wins".
+- The identifier suggested for a name that does not start with a letter now starts with
+  `library_` (it was the Spanish `biblioteca_`), as the panel already suggested while typing.
+- Documentation: the restore and delete screens and the mobile navigation in `docs/09` now say
+  what the panel does (no reauthentication, ADR 0021; a top bar with a row of sections, no
+  dropdown and no bottom actions).
 
 Upgrade: change the image tag to `1` once (user guide, "Updating"); on TrueNAS it appears three
 times in the stored YAML. Pasting the new file instead needs your paths, `TZ` and user again.

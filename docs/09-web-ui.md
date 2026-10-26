@@ -60,9 +60,12 @@ flowchart LR
 ```
 
 Desktop: fixed sidebar with the 7 sections, each with its icon from `docs/brand/icons` (18 px,
-stroke in the text color, one color port). Mobile (under 768 px): top bar with a dropdown menu
-and primary actions at the bottom. A global status bar shows running jobs and open alerts on
-every page.
+stroke in the text color, one color port), and the account, role and "Sign out" at its foot.
+Mobile (up to 768 px): the sidebar becomes a top bar: the brand and the account with "Sign out"
+on the first line, and the 7 sections on a row below that scrolls sideways; there is no
+dropdown menu and no bar of actions at the bottom: the actions of each page stay in its header.
+Every link and button of the bar is at least 44 px tall. A global status bar shows running jobs
+and open alerts on every page.
 
 ## 3. Screens
 
@@ -180,17 +183,18 @@ send to an editor, and in 1.1 a link to the connection portal.
 3. Replace: consequences screen with real data: active connections now (who and from where),
    backup date and age ("changes from the last 26 hours will be lost"), the backup's Resolve
    version against the current one if it differs, that a pre-restore backup will be made and that
-   the current state will be kept for 7 days to revert. Asks to type the slug and
-   reauthentication. Option "terminate active sessions" unchecked by default; if there are
-   sessions and it is not checked, the job waits up to 10 min for them to drain and then fails
-   without touching anything.
+   the current state will be kept for 7 days to revert. Asks to type the slug; there is no
+   reauthentication (ADR 0021): whoever has the permission confirms, and the request is in the
+   audit log. Option "terminate active sessions" unchecked by default; if there are sessions and
+   it is not checked, the job waits up to 10 min for them to drain and then fails without
+   touching anything.
 4. Progress with visible steps. End with a "Revert" button available during the grace period.
 
 ### 4.4 Delete
 
-Consequences (connections, size, remaining backups and their retention), typed confirmation,
-reauthentication. The library goes to the trash with a verified final backup; it is purged after
-30 days. From the trash: untrash or purge now (with a second confirmation).
+Consequences (connections, size, remaining backups and their retention) and typed confirmation;
+no reauthentication (ADR 0021). The library goes to the trash with a verified final backup; it is
+purged after 30 days. From the trash: untrash or purge now (with a second confirmation).
 
 ### 4.5 Resolve upgrade window
 

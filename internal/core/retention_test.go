@@ -120,7 +120,8 @@ func TestSuggestSlug(t *testing.T) {
 	cases := map[string]string{
 		"Cliente X, temporada 2": "cliente_x_temporada_2",
 		"Música 2026":            "musica_2026",
-		"2026 boda":              "biblioteca_2026_boda",
+		"2026 boda":              "library_2026_boda",
+		"!!!":                    "library",
 		"pg stuff":               "lib_pg_stuff",
 		"a":                      "a_x",
 	}
