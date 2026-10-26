@@ -210,8 +210,9 @@ func TestBackupFreshness(t *testing.T) {
 			VALUES (?, ?, ?, ?, ?, ?, 'resolve', ?, ?)`, id, strings.ToLower(id), "Secret name "+id, state, strings.ToLower(id), strings.ToLower(id), store.T(created), store.T(created))
 	}
 	verified := func(lib string, at time.Time) {
-		exec(`INSERT INTO backups(id, library_id, kind, status, verify_status, started_at) VALUES (?, ?, 'scheduled', 'ok', 'l1_ok', ?)`,
-			lib+store.T(at), lib, store.T(at))
+		// A valid catalog path: a blocked one does not count as verified.
+		exec(`INSERT INTO backups(id, library_id, kind, status, verify_status, file_path, started_at) VALUES (?, ?, 'scheduled', 'ok', 'l1_ok', ?, ?)`,
+			lib+store.T(at), lib, "libraries/"+strings.ToLower(lib)+"/"+lib+".backup", store.T(at))
 	}
 	old := now.AddDate(0, -1, 0)
 	lib("FRESH", "active", old)
@@ -430,7 +431,7 @@ func TestBackupFreshnessAgreesWithHousekeeping(t *testing.T) {
 		VALUES ('BACK', 'back', 'Back', 'active', 'back', 'back', 'resolve', ?, ?)`, store.T(old), store.T(old)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO backups(id, library_id, kind, status, verify_status, started_at) VALUES ('B1', 'BACK', 'scheduled', 'ok', 'l1_ok', ?)`,
+	if _, err := db.ExecContext(ctx, `INSERT INTO backups(id, library_id, kind, status, verify_status, file_path, started_at) VALUES ('B1', 'BACK', 'scheduled', 'ok', 'l1_ok', 'libraries/back/B1.backup', ?)`,
 		store.T(now.Add(48*time.Hour))); err != nil {
 		t.Fatal(err)
 	}
