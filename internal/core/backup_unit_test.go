@@ -622,3 +622,65 @@ func TestCheckRestoreSpace(t *testing.T) {
 		t.Fatalf("no manifest: %v", err)
 	}
 }
+
+// PLAN 1.2.2: a deleted backup is recorded deleted only once the removal of
+// its files is durable; a folder that cannot be synced leaves the row as it
+// was and the deletion fails.
+func TestBackupDeletedOnlyWhenItsRemovalIsDurable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores folder permissions")
+	}
+	e := newBkEnv(t)
+	e.svc.Audit = audit.New(e.svc.DB)
+	l := e.library("client_x", StateActive)
+	e.backup(l, bkOpt{started: time.Now()})
+	old := e.backup(l, bkOpt{started: time.Now().Add(-48 * time.Hour)})
+	dir := filepath.Dir(mustAbs(e.svc, old))
+	os.Chmod(dir, 0o300) // removable, not readable: the sync cannot open it
+	defer os.Chmod(dir, 0o700)
+	err := e.svc.DeleteBackup(e.ctx, bkActor, old.ID)
+	if err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("want the sync error, got %v", err)
+	}
+	if got, _ := e.svc.Backup(e.ctx, old.ID); got.Status != BackupOK {
+		t.Fatalf("recorded %s before the removal was durable", got.Status)
+	}
+	os.Chmod(dir, 0o700)
+	// Deleting again finishes it: the files are gone already.
+	if err := e.svc.DeleteBackup(e.ctx, bkActor, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := e.svc.Backup(e.ctx, old.ID); got.Status != BackupDeleted {
+		t.Fatalf("status %s", got.Status)
+	}
+}
+
+// PLAN 1.2.2: retention removes the row of an old failed backup only once
+// the removal of its leftovers is durable.
+func TestFailedBackupRowGoesOnlyAfterADurableRemoval(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores folder permissions")
+	}
+	e := newBkEnv(t)
+	l := e.library("client_x", StateActive)
+	e.policy(l, 7, 1)
+	e.backup(l, bkOpt{started: time.Now()})
+	failed := e.backup(l, bkOpt{started: time.Now().Add(-40 * 24 * time.Hour), status: BackupFailed})
+	abs := mustAbs(e.svc, failed)
+	dir := filepath.Dir(abs)
+	os.Chmod(dir, 0o300) // removable, not readable: the sync cannot open it
+	defer os.Chmod(dir, 0o700)
+	if _, err := e.svc.applyRetention(e.ctx, l.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Backup(e.ctx, failed.ID); err != nil {
+		t.Fatalf("the row went before its removal was durable: %v", err)
+	}
+	os.Chmod(dir, 0o700)
+	if _, err := e.svc.applyRetention(e.ctx, l.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Backup(e.ctx, failed.ID); !errors.Is(err, ErrBackupNotFound) || onDisk(abs) {
+		t.Fatalf("row %v, file on disk %v", err, onDisk(abs))
+	}
+}

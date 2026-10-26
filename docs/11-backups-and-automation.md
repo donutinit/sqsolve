@@ -167,11 +167,14 @@ Algorithm (`Retain` in `internal/core/retention.go`, a pure function with proper
    ones (by insertion order) until it is met. Backups of the live database count first: a
    backup of a previous state (`source_db` `<slug>__prev_*`, taken before it is dropped) holds
    an older state and only counts when the live database has too few.
-4. The rest become `expired`. Deletion in two phases: first the file, then the manifest, then
-   the row becomes `deleted`; housekeeping removes `deleted` rows after 365 days (the audit log
-   keeps the history), except rows an export workspace or a previous state still uses.
+4. The rest become `expired`. Deletion in two phases: first the file and the manifest are
+   removed and their folder is synced (`fsx.RemoveFiles`), then the row becomes `deleted`. A
+   folder that cannot be synced leaves the row as it was and the deletion fails, so a power cut
+   never brings back files the catalog calls deleted; the next attempt syncs the folder again
+   even if the files are already gone. Housekeeping removes `deleted` rows after 365 days (the
+   audit log keeps the history), except rows an export workspace or a previous state still uses.
 5. `failed` and `interrupted` backups: their leftovers are deleted immediately; the row stays
-   30 days.
+   30 days, and goes only once the removal of its leftovers is durable.
 
 Retention takes no library lock. Instead, an expired backup that a queued or running restore
 (new, replace, recreate), verification or export from a backup is going to read is kept until

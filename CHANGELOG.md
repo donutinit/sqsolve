@@ -47,6 +47,10 @@ from here (`.github/workflows/release.yml`).
   restored database; backups are always kept.
 - Changing a password closes the user's other sessions in the same transaction as the new
   password and its audit entry: if they cannot be closed, the password does not change.
+- Deleting a backup records it deleted only once the removal of its files is durable: a folder
+  that cannot be synced makes the deletion fail and leaves the row, and a retry syncs it again;
+  retention removes the row of an old failed backup the same way. The power-loss model of the
+  file helpers covers the removal.
 
 Upgrade: change the image tag to `1` once (user guide, "Updating"); on TrueNAS it appears three
 times in the stored YAML. Pasting the new file instead needs your paths, `TZ` and user again.

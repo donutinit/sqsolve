@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/donutinit/sqsolve/internal/events"
+	"github.com/donutinit/sqsolve/internal/fsx"
 	"github.com/donutinit/sqsolve/internal/store"
 )
 
@@ -287,11 +288,15 @@ func (s *Service) applyRetention(ctx context.Context, libraryID string) (int, er
 			s.Log.Error("retention: the leftovers of a failed backup were kept", "backup", b.ID, "err", err)
 			continue
 		}
-		for _, p := range []string{abs, abs + ".partial", manifestPath(abs)} {
-			_ = removeIfExists(p)
+		// The row goes only once the removal of its leftovers is durable.
+		if err := fsx.RemoveFiles(abs, abs+".partial", manifestPath(abs)); err != nil {
+			s.Log.Error("retention: could not remove the leftovers of a failed backup", "backup", b.ID, "err", err)
+			continue
 		}
 		if s.now().Sub(b.StartedAt) > 30*24*time.Hour {
-			s.DB.ExecContext(ctx, `DELETE FROM backups WHERE id = ?`, b.ID)
+			if _, err := s.DB.ExecContext(ctx, `DELETE FROM backups WHERE id = ?`, b.ID); err != nil {
+				s.Log.Error("retention: could not remove the row of a failed backup", "backup", b.ID, "err", err)
+			}
 		}
 	}
 	if n > 0 {

@@ -1090,13 +1090,11 @@ func (s *Service) removeBackupFiles(ctx context.Context, b *Backup, reason strin
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(abs); err != nil && !errors.Is(err, os.ErrNotExist) {
+	// The catalog records the backup deleted only once the removal of its
+	// files is durable (PLAN 1.2.2).
+	if err := fsx.RemoveFiles(abs, manifestPath(abs)); err != nil {
 		return err
 	}
-	if err := os.Remove(manifestPath(abs)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	fsx.SyncDir(filepath.Dir(abs))
 	_, err = s.DB.ExecContext(ctx, `UPDATE backups SET status = 'deleted', deleted_at = ?, expired_reason = ? WHERE id = ?`, store.NowT(), reason, b.ID)
 	return err
 }

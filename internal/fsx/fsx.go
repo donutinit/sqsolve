@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -225,6 +226,29 @@ func SyncDir(dir string) error {
 		return err
 	}
 	note("sync", dir, "")
+	return nil
+}
+
+// RemoveFiles removes the files that exist among paths and then syncs the
+// folder of every path, in order, also of a file that was already gone: an
+// earlier call may have removed it without its sync. When it returns nil the
+// removals survive a power loss, so a catalog may record the files as gone;
+// a failed removal or sync is returned and the caller must not.
+func RemoveFiles(paths ...string) error {
+	var dirs []string
+	for _, p := range paths {
+		if err := remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if d := filepath.Dir(p); !slices.Contains(dirs, d) {
+			dirs = append(dirs, d)
+		}
+	}
+	for _, d := range dirs {
+		if err := SyncDir(d); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
 	return nil
 }
 

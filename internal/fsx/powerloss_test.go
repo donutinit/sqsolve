@@ -159,3 +159,85 @@ func TestRecoverPairReportsRemovalErrors(t *testing.T) {
 		t.Fatalf("want the removal error, got %v", err)
 	}
 }
+
+// durableAfter is what survives any power loss once ops are done: the
+// changes of every folder synced after them.
+func durableAfter(start map[string]string, ops []fsOp) map[string]string {
+	durable := maps.Clone(start)
+	var pending []fsOp
+	for _, o := range ops {
+		if o.op != "sync" {
+			pending = append(pending, o)
+			continue
+		}
+		var left []fsOp
+		for _, p := range pending {
+			if filepath.Dir(p.path) == o.path && p.op == "remove" {
+				delete(durable, p.path)
+			} else {
+				left = append(left, p)
+			}
+		}
+		pending = left
+	}
+	return durable
+}
+
+// PLAN 1.2.2: when RemoveFiles returns, its removals survive a power loss,
+// so the catalog can record the backup deleted; every state a cut leaves
+// before that has the files or not, never more than were there.
+func TestRemoveFilesIsDurableWhenItReturns(t *testing.T) {
+	base := t.TempDir()
+	a, b := filepath.Join(base, "x", "f.backup"), filepath.Join(base, "x", "f.manifest.json")
+	start := map[string]string{a: "dump", b: "manifest"}
+	materialize(t, []string{filepath.Join(base, "x")}, start)
+	ops := traced(func() {
+		if err := RemoveFiles(a, b, filepath.Join(base, "x", "gone")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got := durableAfter(start, ops); len(got) != 0 {
+		t.Fatalf("after RemoveFiles returned, a power loss could bring back %s", describe(got))
+	}
+	for _, s := range survivors(start, ops, nil) {
+		for p := range s {
+			if p != a && p != b {
+				t.Fatalf("a power loss left %s", describe(s))
+			}
+		}
+	}
+	if _, err := os.Stat(a); err == nil {
+		t.Fatal("the files are still there")
+	}
+}
+
+// A folder that cannot be synced is an error: the caller must not record the
+// files as deleted.
+func TestRemoveFilesReportsASyncFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores folder permissions")
+	}
+	dir := filepath.Join(t.TempDir(), "x")
+	os.MkdirAll(dir, 0o700)
+	f := filepath.Join(dir, "f.backup")
+	os.WriteFile(f, nil, 0o600)
+	os.Chmod(dir, 0o300) // removable, not readable: the sync cannot open it
+	defer os.Chmod(dir, 0o700)
+	if err := RemoveFiles(f); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("want the sync error, got %v", err)
+	}
+	// Called again once the file is gone, it still syncs the folder, which
+	// the first call could not.
+	if err := RemoveFiles(f); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("a file already gone skipped the sync of its folder: %v", err)
+	}
+	os.Chmod(dir, 0o700)
+	ops := traced(func() {
+		if err := RemoveFiles(f, filepath.Join(t.TempDir(), "missing", "x")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if len(ops) != 1 || ops[0] != (fsOp{"sync", dir, ""}) {
+		t.Fatalf("ops %+v", ops)
+	}
+}
