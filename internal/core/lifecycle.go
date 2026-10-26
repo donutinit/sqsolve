@@ -297,7 +297,7 @@ func (s *Service) runPurge(ctx context.Context, r *jobs.Run) error {
 				return err
 			}
 			for _, b := range bs {
-				if b.Kind == KindPreDelete && b.Verified() {
+				if b.Kind == KindPreDelete && b.Verified() && !s.blocked(b) {
 					return nil
 				}
 			}
@@ -325,8 +325,17 @@ func (s *Service) runPurge(ctx context.Context, r *jobs.Run) error {
 		}
 	}
 	if l.TrashDB != "" {
-		if err := r.Step("drop_database", func() error { return s.PG.DropDatabase(ctx, l.TrashDB) }); err != nil {
-			return errPurge(err, dropped)
+		if err := r.Step("drop_database", func() error {
+			err := s.PG.DropDatabase(ctx, l.TrashDB)
+			if ferr := fault("purge.drop"); ferr != nil {
+				err = ferr
+			}
+			return err
+		}); err != nil {
+			// The drop may have happened on the server before the error (a
+			// lost connection): reconciliation looks whether the database
+			// is still there.
+			return errPurge(err, true)
 		}
 		dropped = true
 	}

@@ -976,6 +976,12 @@ func (s *Service) ensurePolicy(ctx context.Context, libraryID string) error {
 	if err != nil {
 		return err
 	}
+	// In activity mode the expression is not run, and a default policy
+	// stored by 1.2.1 may carry one that was never checked: the library
+	// gets the cadence of its mode, never no policy at all.
+	if p.Adaptive() {
+		p.Cron = ""
+	}
 	return s.SetPolicy(ctx, audit.Actor{}, libraryID, p)
 }
 

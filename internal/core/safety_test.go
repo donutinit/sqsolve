@@ -1461,3 +1461,124 @@ func TestNewLibraryWithoutItsAuditEntryLeavesNothing(t *testing.T) {
 		t.Fatalf("restore as new again: %v", err)
 	}
 }
+
+// Review of 1.2.2: every recovery path of a purge. A purge refused before
+// its journal or cut before it is left as it was; a purge whose drop may
+// have happened, or that was cut after it, is finished by the next start; a
+// role that owns another database stops it with SQS-L046 for a person to
+// decide; a reconciliation that cannot look or write tries again at the
+// next start. The backups are always kept.
+func TestPurgeRecoveryPaths(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	exec := func(q string) {
+		t.Helper()
+		if _, err := e.svc.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	purged := func(l *core.Library, notes string) {
+		t.Helper()
+		got := e.lib(l.ID)
+		if exists, _ := e.svc.PG.RoleExists(ctx, l.OwnerRole); got.State != core.StatePurged || got.TrashDB != "" || exists {
+			t.Fatalf("%s: state %s trash %q\n%s", l.Slug, got.State, got.TrashDB, notes)
+		}
+		if bs, _ := e.svc.Backups(ctx, core.BackupFilter{LibraryID: l.ID, Statuses: []string{core.BackupOK}}); len(bs) == 0 {
+			t.Fatalf("%s: the backups were lost", l.Slug)
+		}
+	}
+	journal := func(l *core.Library) string {
+		return fmt.Sprintf(`{"purge_of":%q,"trash_db":%q}`, l.ID, l.TrashDB)
+	}
+
+	// The journal refused: nothing is dropped.
+	a := e.trashed("pr_journal")
+	exec(`CREATE TRIGGER fault BEFORE UPDATE OF data ON job_steps WHEN NEW.data LIKE '%purge_of%' BEGIN SELECT RAISE(ABORT, 'journal refused'); END`)
+	j, _ := e.svc.Purge(ctx, admin, a.ID, a.Slug)
+	got := e.failsWith(j, "SQS-L047", "the purge stopped before it finished: SQS-J041 the job journal was not written: ")
+	exec(`DROP TRIGGER fault`)
+	if e.pendingFlag(got.ID) != 0 || e.db(a.TrashDB) == nil || e.lib(a.ID).State != core.StateTrashed {
+		t.Fatal("a purge refused before its journal changed something")
+	}
+
+	// The drop may have happened although it reported a failure: pending,
+	// and the next start finishes it.
+	restore := core.SetFault("purge.drop", errors.New("connection lost"))
+	j, _ = e.svc.Purge(ctx, admin, a.ID, a.Slug)
+	got = e.failsWith(j, "SQS-L047", "connection lost")
+	restore()
+	if e.pendingFlag(got.ID) != 1 {
+		t.Fatal("a purge whose drop may have happened is not pending reconciliation")
+	}
+	purged(a, e.start())
+
+	// A role that still owns another database: SQS-L046 after the drop,
+	// for a person to decide; nothing else is dropped.
+	b := e.trashed("pr_owned")
+	if err := e.svc.PG.CreateDatabase(ctx, "pr_owned_extra", b.OwnerRole); err != nil {
+		t.Fatal(err)
+	}
+	j, _ = e.svc.Purge(ctx, admin, b.ID, b.Slug)
+	e.failsWith(j, "SQS-L046", "SQS-L046 role "+b.OwnerRole+" still owns: pr_owned_extra; review them before purging")
+	if exists, _ := e.svc.PG.RoleExists(ctx, b.OwnerRole); e.db("pr_owned_extra") == nil || !exists || e.lib(b.ID).State != core.StateTrashed {
+		t.Fatal("the purge went on past SQS-L046")
+	}
+
+	// Cut after the drop (a process stop): the next start finishes it.
+	c := e.trashed("pr_cut")
+	if err := e.svc.PG.DropDatabase(ctx, c.TrashDB); err != nil {
+		t.Fatal(err)
+	}
+	e.interruptedJob("JPCUT", core.JobLibraryPurge, c.ID, "drop_roles", journal(c))
+	purged(c, e.start())
+	if e.pendingFlag("JPCUT") != 0 {
+		t.Fatal("the cut purge is still pending")
+	}
+
+	// Cut before its journal, and cut after the journal but before the
+	// drop: the library stays in the trash with its database, and can be
+	// purged again.
+	d := e.trashed("pr_early")
+	e.interruptedJob("JPEARLY", core.JobLibraryPurge, d.ID, "check_backup", "{}")
+	f := e.trashed("pr_before")
+	e.interruptedJob("JPBEFORE", core.JobLibraryPurge, f.ID, "journal", journal(f))
+	notes := e.start()
+	for _, l := range []*core.Library{d, f} {
+		if got := e.lib(l.ID); got.State != core.StateTrashed || e.db(l.TrashDB) == nil {
+			t.Fatalf("%s changed: %s\n%s", l.Slug, got.State, notes)
+		}
+	}
+	if !strings.Contains(notes, "pr_before: the purge stopped before dropping "+f.TrashDB+"; the library stays in the trash") {
+		t.Fatalf("notes:\n%s", notes)
+	}
+	if e.pendingFlag("JPEARLY") != 0 || e.pendingFlag("JPBEFORE") != 0 {
+		t.Fatal("a purge cut before its drop is still pending")
+	}
+	j, _ = e.svc.Purge(ctx, admin, f.ID, f.Slug)
+	e.wait(j, jobs.Succeeded)
+	purged(f, "")
+
+	// The next start cannot look (PostgreSQL down) or cannot write (a refused
+	// catalog write): pending until a start can.
+	g := e.trashed("pr_retry")
+	if err := e.svc.PG.DropDatabase(ctx, g.TrashDB); err != nil {
+		t.Fatal(err)
+	}
+	e.interruptedJob("JPRETRY", core.JobLibraryPurge, g.ID, "drop_roles", journal(g))
+	e.c.Stop()
+	notes = e.start()
+	e.c.Restart(t)
+	if !strings.Contains(notes, "pr_retry: could not check whether the purge dropped "+g.TrashDB) || e.pendingFlag("JPRETRY") != 1 {
+		t.Fatalf("with PostgreSQL down: pending %d\n%s", e.pendingFlag("JPRETRY"), notes)
+	}
+	exec(`CREATE TRIGGER fault BEFORE UPDATE OF state ON libraries WHEN NEW.state = 'purged' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`)
+	notes = e.start()
+	exec(`DROP TRIGGER fault`)
+	if !strings.Contains(notes, "pr_retry: could not finish the interrupted purge: ") || e.pendingFlag("JPRETRY") != 1 || e.lib(g.ID).State != core.StateTrashed {
+		t.Fatalf("with a refused write: pending %d\n%s", e.pendingFlag("JPRETRY"), notes)
+	}
+	purged(g, e.start())
+	if e.pendingFlag("JPRETRY") != 0 {
+		t.Fatal("still pending after a start that could finish it")
+	}
+}

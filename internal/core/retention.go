@@ -158,7 +158,7 @@ func (s *Service) RetentionPreview(ctx context.Context, libraryID string, p Poli
 func (s *Service) retentionItems(ctx context.Context, libraryID string) ([]RetentionItem, error) {
 	var dbName string
 	s.DB.QueryRowContext(ctx, `SELECT db_name FROM libraries WHERE id = ?`, libraryID).Scan(&dbName)
-	rows, err := s.DB.QueryContext(ctx, `SELECT id, rowid, started_at, kind, pinned, verify_status, source_db FROM backups
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, rowid, started_at, kind, pinned, verify_status, source_db, file_path FROM backups
 		WHERE library_id = ? AND status = 'ok'`, libraryID)
 	if err != nil {
 		return nil, err
@@ -167,12 +167,14 @@ func (s *Service) retentionItems(ctx context.Context, libraryID string) ([]Reten
 	var items []RetentionItem
 	for rows.Next() {
 		var it RetentionItem
-		var started, verify, source string
-		if err := rows.Scan(&it.ID, &it.Seq, &started, &it.Kind, &it.Pinned, &verify, &source); err != nil {
+		var started, verify, source, path string
+		if err := rows.Scan(&it.ID, &it.Seq, &started, &it.Kind, &it.Pinned, &verify, &source, &path); err != nil {
 			return nil, err
 		}
 		it.Started = store.ParseT(started)
-		it.Verified = (&Backup{VerifyStatus: verify}).Verified()
+		// A blocked backup (SQS-B043) is not one of the verified backups
+		// retention must keep; retention never deletes it either.
+		it.Verified = (&Backup{VerifyStatus: verify}).Verified() && !s.blocked(&Backup{ID: it.ID, FilePath: path})
 		it.Aux = auxSource(dbName, source)
 		items = append(items, it)
 	}

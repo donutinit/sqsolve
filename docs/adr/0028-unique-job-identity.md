@@ -27,8 +27,12 @@ differ is refused.
   before.
 
 **Consequences.** A second recreate with another backup gets `SQS-J005` and must wait for or
-cancel the first one; the same request twice still queues one job. Queuing two destructive jobs
-for one library, which the second option would allow, cannot happen. `TestUniqueJobIdentity`
+cancel the first one; the same request twice still queues one job. For the operations that use
+`Unique` (revert, recreate, the automatic purge of expired trash) two destructive jobs for one
+library cannot be queued, which the second option would allow. Restore by replacing, delete and
+a purge asked by hand do not use it: each re-validates the state of the library when it runs, so
+a second one fails (`SQS-L041`, `SQS-L044`) or, for two replacements, runs on the result of the
+first; making them unique is not part of this decision. `TestUniqueJobIdentity`
 pins the three cases (same parameters, different parameters, `UniqueAny`).
 
 **Alternatives.** The first request wins: keeps a silent surprise on the most delicate operation.

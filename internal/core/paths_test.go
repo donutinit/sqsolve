@@ -442,3 +442,54 @@ func TestForgetInvalidBackup(t *testing.T) {
 		t.Fatal("forgotten without its audit entry")
 	}
 }
+
+// Review of 1.2.2: a backup whose path is blocked (SQS-B043) is not a
+// verified backup for any safety rule: not the latest verified one, not
+// one of the verified backups retention must keep, not the guard against
+// deleting the newest usable one, and not the final backup a purge needs.
+func TestBlockedBackupsDoNotCountAsVerified(t *testing.T) {
+	e := newBkEnv(t)
+	e.svc.Audit = audit.New(e.svc.DB)
+	l := e.library("client_x", StateActive)
+	usable := e.backup(l, bkOpt{started: time.Now().Add(-48 * time.Hour)})
+	e.pathRow(l, "../../elsewhere/client_x.backup") // newer, verified and blocked
+	if got, err := e.svc.LatestVerified(e.ctx, l.ID); err != nil || got == nil || got.ID != usable.ID {
+		t.Fatalf("latest verified %+v %v, want the usable backup", got, err)
+	}
+	if err := e.svc.DeleteBackup(e.ctx, bkActor, usable.ID); err == nil || !strings.HasPrefix(err.Error(), "SQS-B034 ") {
+		t.Fatalf("the newest usable backup could be deleted: %v", err)
+	}
+	keep, _, err := e.svc.RetentionPreview(e.ctx, l.ID, Policy{Enabled: true, Cron: "0 2 * * *", Timezone: "UTC", KeepLast: 1, MinVerified: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := keep[usable.ID]; !ok {
+		t.Fatalf("retention would expire the only usable verified backup: keep %v", keep)
+	}
+
+	// A trashed library whose only final backup is blocked is not purged.
+	tr := e.library("trashed_x", StateTrashed)
+	e.svc.DB.ExecContext(e.ctx, `UPDATE libraries SET trash_db_name = 'trashed_x__trash_202610250000' WHERE id = ?`, tr.ID)
+	final := e.pathRow(tr, "libraries/trashed_x/../../../final.backup")
+	e.svc.DB.ExecContext(e.ctx, `UPDATE backups SET kind = 'pre_delete' WHERE id = ?`, final.ID)
+	s := e.svc
+	s.Jobs = jobs.NewManager(s.DB, s.Events, events.NewBus(), s.Log, 1, 1)
+	s.Sched = scheduler.New(s.DB, s.Jobs, s.Events, s.Log)
+	s.Register()
+	ctx, cancel := context.WithCancel(e.ctx)
+	defer cancel()
+	j, err := s.Jobs.Enqueue(ctx, JobLibraryPurge, tr.ID, nil, audit.System)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Jobs.Start(ctx)
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if j, err = s.Jobs.Get(ctx, j.ID); err == nil && j.State.Finished() {
+			break
+		}
+	}
+	s.Jobs.Shutdown(5 * time.Second)
+	if j.State != jobs.Failed || j.ErrorCode != "SQS-L045" {
+		t.Fatalf("purge with a blocked final backup: %s %s %s", j.State, j.ErrorCode, j.ErrorDetail)
+	}
+}

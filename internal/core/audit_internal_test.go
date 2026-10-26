@@ -239,3 +239,28 @@ func TestDefaultPolicyCronIsCheckedInActivityMode(t *testing.T) {
 		t.Fatal("the expression was saved")
 	}
 }
+
+// Review of 1.2.2: a default policy stored by 1.2.1 in activity mode may
+// carry an expression that was never checked (it had no effect). A new
+// library still gets its policy and its schedule; the expression only
+// counts when someone types it again.
+func TestNewLibraryPolicyIgnoresAnUnusedStoredExpression(t *testing.T) {
+	ctx := context.Background()
+	s, l, _ := auditedCatalog(t)
+	st := s.Settings(ctx)
+	st.DefaultPolicy.Mode, st.DefaultPolicy.CheckMinutes, st.DefaultPolicy.Cron = ModeActivity, 15, "0 3 * *"
+	if err := s.DB.SetSetting(ctx, settingsKey, st, "1.2.1"); err != nil {
+		t.Fatal(err)
+	}
+	s.DB.ExecContext(ctx, `DELETE FROM backup_policies WHERE library_id = ?`, l.ID)
+	if err := s.ensurePolicy(ctx, l.ID); err != nil {
+		t.Fatalf("ensurePolicy: %v", err)
+	}
+	p, err := s.Policy(ctx, l.ID)
+	if err != nil || p.Mode != ModeActivity || p.Cron != ActivityCron(15) {
+		t.Fatalf("policy %+v %v", p, err)
+	}
+	if sc, err := s.Sched.Get(ctx, ScheduleBackup, l.ID); err != nil || sc == nil || sc.Cron != ActivityCron(15) {
+		t.Fatalf("schedule %+v %v", sc, err)
+	}
+}

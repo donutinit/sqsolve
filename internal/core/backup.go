@@ -235,13 +235,31 @@ func (s *Service) latestVerified(ctx context.Context, libraryID string, notAfter
 		args = append(args, store.T(notAfter))
 	}
 	// Same test as auxSource: auxiliary databases sort last.
-	q += ` ORDER BY (? <> '' AND substr(source_db, 1, length(?) + 2) = ? || '__'), started_at DESC LIMIT 1`
+	q += ` ORDER BY (? <> '' AND substr(source_db, 1, length(?) + 2) = ? || '__'), started_at DESC`
 	args = append(args, dbName, dbName, dbName)
-	b, err := scanBackup(s.DB.QueryRowContext(ctx, q, args...))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+	rows, err := s.DB.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
 	}
-	return b, err
+	defer rows.Close()
+	for rows.Next() {
+		b, err := scanBackup(rows)
+		if err != nil {
+			return nil, err
+		}
+		// A blocked backup protects nothing: sqsolve does not read it.
+		if !s.blocked(b) {
+			return b, nil
+		}
+	}
+	return nil, rows.Err()
+}
+
+// blocked reports whether the catalog path of b is not valid (SQS-B043):
+// such a backup is never read, so no safety rule may count it as verified.
+func (s *Service) blocked(b *Backup) bool {
+	_, err := s.AbsPath(b)
+	return errors.Is(err, ErrBackupPath)
 }
 
 // ErrBackupPath is a catalog row whose path is not one sqsolve writes: a

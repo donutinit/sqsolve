@@ -44,7 +44,10 @@ only reads, restores, downloads or deletes a backup whose path is clean (no `..`
 and stays on the volume once its symlinks are resolved (`fsx.Confined`). A row that does not
 meet that is never rewritten or deleted automatically: it is blocked (`SQS-B043`), reported at
 every start and by the catalog check as one critical `backup.path_invalid` event, and an
-administrator reviews it (`docs/runbooks/invalid-backup-path.md`).
+administrator reviews it (`docs/runbooks/invalid-backup-path.md`). A blocked backup does not
+count as verified for any safety rule: the latest verified backup, the verified backups
+retention keeps, the guard on the newest usable backup and the final backup a purge needs all
+skip it.
 
 A manifest is read only when it is a complete version 1 manifest
 (`api/schemas/manifest.v1.json`): `manifest_version` 1, valid IDs, a valid slug, a known kind, a

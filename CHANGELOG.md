@@ -22,7 +22,9 @@ from here (`.github/workflows/release.yml`).
   leaves it alone, and it is not rewritten: every start and every catalog check report such rows
   in one critical `backup.path_invalid` event, and after review `sqsolve catalog forget
   <backup-id>` removes the row without touching any file (`SQS-B044`,
-  `docs/runbooks/invalid-backup-path.md`).
+  `docs/runbooks/invalid-backup-path.md`). A blocked backup does not count as verified for any
+  safety rule: not as the latest verified backup, not toward the verified backups retention
+  keeps, not for the guard on the newest usable one, and not as the final backup a purge needs.
 - The job journal is required. A step is stored before it runs, and when its row cannot be
   stored the step does not run (`SQS-J040`); a journal that changes no row, or fails, is
   `SQS-J041`, and the action it describes is not done. Restoring by replacing now also requires
@@ -44,19 +46,21 @@ from here (`.github/workflows/release.yml`).
   one transaction; a recreate stops with `SQS-R061` before creating the database when it cannot
   rebuild the access. When either fails after its irreversible step (`SQS-L047`, `SQS-R060`), the
   job fails and stays pending reconciliation, and the next start finishes the purge or adopts the
-  restored database; backups are always kept.
+  restored database; backups are always kept. A drop of the trash database that reports a
+  failure may still have happened on the server, so it leaves the purge pending too.
 - Changing a password closes the user's other sessions in the same transaction as the new
   password and its audit entry: if they cannot be closed, the password does not change.
 - Deleting a backup records it deleted only once the removal of its files is durable: a folder
   that cannot be synced makes the deletion fail and leaves the row, and a retry syncs it again;
   retention removes the row of an old failed backup the same way. The power-loss model of the
   file helpers covers the removal.
-- A unique job is its type, its library and its parameters (ADR 0028): a second recreate,
-  revert or purge with the same parameters gets the queued job, and one with different
-  parameters (for example another backup) is refused with `SQS-J005` (409 in the API) instead
-  of silently getting the job of the first request. Backups keep "the first request wins".
-- `sqsolve-init` checks the mode each secret and each folder that holds secrets has after it sets
-  it: a volume whose ACL keeps a wider mode (TrueNAS datasets with inherited NFSv4 entries, which
+- A unique job is its type, its library and its parameters (ADR 0028): a second recreate or
+  revert, or a second automatic purge of expired trash, with the same parameters gets the queued
+  job, and one with different parameters (for example another backup) is refused with
+  `SQS-J005` (409 in the API) instead of silently getting the job of the first request. Backups
+  keep "the first request wins".
+- `sqsolve-init` checks the mode an existing secret, a TLS key or a folder that holds secrets has
+  after it sets it: a volume whose ACL keeps a wider mode (TrueNAS datasets with inherited NFSv4 entries, which
   can also give other users access to the secrets) stops it with `SQS-C085 ... it stays 0700`
   instead of printing `done` and leaving `sqsolve` to fail with `SQS-C010`. Found when updating
   the test installation from 1.1; `docs/12-deployment.md` ("Permissions and ACLs") says how to
@@ -68,7 +72,8 @@ from here (`.github/workflows/release.yml`).
   `GET /api/v1/libraries/{id}/backup-policy` answers 404 `SQS-L002` for an unknown library. The
   recovery form of the setup wizard now shows why a recovery was refused (a wrong code or key
   sent you back to the form without a word); a schedule expression typed for the default policy
-  is checked also in activity mode; an unknown maintenance action is `SQS-C041`.
+  is checked also in activity mode (a default policy saved by 1.2.1 with an expression that had
+  no effect still gives new libraries their policy and schedule); an unknown maintenance action is `SQS-C041`.
 - Tests: statement coverage of `internal/` rises from 70.6 % to 87.1 % (`docs/16-testing.md`),
   with handler tests for every API route and most panel forms, and fault tests for recovery,
   system jobs, PostgreSQL failures and audit failures.
