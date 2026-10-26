@@ -231,6 +231,13 @@ Safety rules of the swap (audit findings C1, M, M2 and M3, ADR 0024):
   `__restore` database this job created.
 - The lock is never taken without its journal: if the journal cannot be written, the job fails
   with `SQS-R057` before locking anything (the same applies to revert).
+- Every step of a job is stored before it runs, and a journal must land on the row of its step
+  (PLAN P0.2): a step row that cannot be stored stops the job with `SQS-J040` before the step
+  does anything, and a journal that changes no row or fails is `SQS-J041`. The journal of the
+  copy being restored is required before the copy is created (`SQS-R059`), and so is the one
+  written between the two renames: without it the original goes back under its name and the
+  job fails with `SQS-R059`. Only the note that both renames are done is not required, because
+  the journal of the second rename already describes that state to reconciliation.
 - Before the first rename the catalog already points `prev_db_name` at the name the original
   is about to take, so a swap that stops halfway never leaves the original untracked. If the
   second rename fails the original goes back under its name and the catalog gets its earlier

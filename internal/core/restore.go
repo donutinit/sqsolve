@@ -489,7 +489,14 @@ func (s *Service) swap(ctx context.Context, r *jobs.Run, l *Library, j *swapJour
 		return false, err
 	}
 	j.Phase = "rename_restored"
-	r.Journal(*j)
+	if err := r.Journal(*j); err != nil {
+		err = fmt.Errorf("SQS-R059 the job journal could not be written, so the backup was not restored: %w", err)
+		if err2 := s.PG.RenameDatabase(c, j.Prev, j.Live); err2 != nil {
+			return true, fmt.Errorf("%w; the original could not be put back: %v", err, err2)
+		}
+		s.unrecordPrev(c, l.ID, *j)
+		return false, err
+	}
 	if err := s.renameDB(ctx, j.Restored, j.Live); err != nil {
 		if err2 := s.PG.RenameDatabase(c, j.Prev, j.Live); err2 != nil {
 			return true, fmt.Errorf("%w; the original could not be put back: %v", err, err2)
@@ -497,8 +504,13 @@ func (s *Service) swap(ctx context.Context, r *jobs.Run, l *Library, j *swapJour
 		s.unrecordPrev(c, l.ID, *j)
 		return false, err
 	}
+	// Both renames are done: the journal of the second one already describes
+	// this state to reconciliation, so a failure to note it is only logged.
 	j.Phase = "swapped"
-	return false, r.Journal(*j)
+	if err := r.Journal(*j); err != nil {
+		r.Warnf("The swap is done, but its journal could not be updated: %v", err)
+	}
+	return false, nil
 }
 
 // swapStuck handles a swap whose second rename and put-back both failed: no
@@ -588,7 +600,9 @@ func (s *Service) runRestoreReplace(ctx context.Context, r *jobs.Run) error {
 	}
 	r.Progress(30)
 	if err := r.Step("restore", func() error {
-		r.Journal(swapJournal{Live: l.DBName, Restored: restoreDB, Phase: "restoring", State: string(stateBefore)})
+		if err := r.Journal(swapJournal{Live: l.DBName, Restored: restoreDB, Phase: "restoring", State: string(stateBefore)}); err != nil {
+			return fmt.Errorf("SQS-R059 the job journal could not be written, so the backup was not restored: %w", err)
+		}
 		if err := s.createDatabase(ctx, restoreDB, l.OwnerRole); err != nil {
 			return err
 		}

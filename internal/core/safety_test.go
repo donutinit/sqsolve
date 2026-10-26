@@ -1171,3 +1171,70 @@ func TestLockNeedsItsJournal(t *testing.T) {
 	e.failsWith(tj, "SQS-L053", "the job journal could not be written, so nothing was locked")
 	usable("delete")
 }
+
+// PLAN P0.2: a replacement whose step row or journal cannot be written stops
+// before PostgreSQL changes, or puts the original back when the journal of
+// the second rename is refused; the library stays usable and unchanged.
+func TestReplaceNeedsItsStepsAndJournals(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, pass := e.createActive("rjn_lib")
+	b := e.firstBackup(l)
+	e.idle()
+	before := e.lib(l.ID)
+	unchanged := func(what string) {
+		t.Helper()
+		e.idle()
+		got := e.lib(l.ID)
+		if got.State != core.StateActive || got.PrevDB != before.PrevDB || e.db(l.DBName) == nil || !e.db(l.DBName).AllowConn {
+			t.Fatalf("%s changed the library: %+v", what, got)
+		}
+		if err := e.reach(l.OwnerRole, pass, l.DBName); err != nil {
+			t.Fatalf("%s: workstation cannot connect: %v", what, err)
+		}
+		dbs, err := e.svc.PG.Databases(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range dbs {
+			if strings.HasPrefix(d.Name, l.Slug+"__") {
+				t.Fatalf("%s left %s on the server", what, d.Name)
+			}
+		}
+	}
+	trigger := func(sql string) func() {
+		t.Helper()
+		if _, err := e.svc.DB.ExecContext(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+		return func() {
+			if _, err := e.svc.DB.ExecContext(ctx, `DROP TRIGGER fault`); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// The row of the restore step is refused: nothing is created.
+	drop := trigger(`CREATE TRIGGER fault BEFORE INSERT ON job_steps WHEN NEW.name = 'restore' BEGIN SELECT RAISE(ABORT, 'step refused'); END`)
+	j, err := e.svc.RestoreReplace(ctx, admin, b.ID, l.Slug, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.failsWith(j, "SQS-J040", "the job step could not be recorded, so it was not run: ")
+	unchanged("a refused step row")
+	drop()
+	// The journal of the copy being restored is refused: nothing is created.
+	drop = trigger(`CREATE TRIGGER fault BEFORE UPDATE OF data ON job_steps WHEN NEW.data LIKE '%"phase":"restoring"%' BEGIN SELECT RAISE(ABORT, 'journal refused'); END`)
+	j, _ = e.svc.RestoreReplace(ctx, admin, b.ID, l.Slug, true)
+	e.failsWith(j, "SQS-R059", "the job journal could not be written, so the backup was not restored: ")
+	unchanged("a refused restoring journal")
+	drop()
+	// The journal of the second rename is refused: the original is put back.
+	drop = trigger(`CREATE TRIGGER fault BEFORE UPDATE OF data ON job_steps WHEN NEW.data LIKE '%"phase":"rename_restored"%' BEGIN SELECT RAISE(ABORT, 'journal refused'); END`)
+	j, _ = e.svc.RestoreReplace(ctx, admin, b.ID, l.Slug, true)
+	e.failsWith(j, "SQS-R059", "the job journal could not be written, so the backup was not restored: ")
+	unchanged("a refused rename journal")
+	drop()
+	// With the journals back the same replacement works.
+	j, _ = e.svc.RestoreReplace(ctx, admin, b.ID, l.Slug, true)
+	e.wait(j, jobs.Succeeded)
+}

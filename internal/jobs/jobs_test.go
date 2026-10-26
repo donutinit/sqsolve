@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -160,5 +161,61 @@ func TestCancelAndInterrupt(t *testing.T) {
 	u2, _ := m.Enqueue(ctx, "t.noop", "L", nil, audit.System, Unique())
 	if u1.ID != u2.ID {
 		t.Fatal("unique not respected")
+	}
+}
+
+// PLAN P0.2: a step runs only once its row is stored, and a journal must
+// land on the row of its step.
+func TestStepAndJournalAreRequired(t *testing.T) {
+	m, db := newManager(t)
+	var ran atomic.Bool
+	results := make(chan [2]error, 1)
+	m.Register(Spec{Type: "t.step", Run: func(ctx context.Context, r *Run) error {
+		return r.Step("guarded", func() error { ran.Store(true); return nil })
+	}})
+	m.Register(Spec{Type: "t.journal", Run: func(ctx context.Context, r *Run) error {
+		// Before any step there is no row to carry the journal.
+		before := r.Journal(map[string]string{"phase": "early"})
+		var inside error
+		r.Step("one", func() error {
+			if _, err := db.ExecContext(ctx, `DELETE FROM job_steps WHERE job_id = ?`, r.Job.ID); err != nil {
+				return err
+			}
+			inside = r.Journal(map[string]string{"phase": "lost"})
+			return nil
+		})
+		results <- [2]error{before, inside}
+		return nil
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER refuse_step BEFORE INSERT ON job_steps WHEN NEW.name = 'guarded' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	m.Start(ctx)
+	j, _ := m.Enqueue(ctx, "t.step", "", nil, audit.System)
+	j = waitState(t, m, j.ID, Failed)
+	if ran.Load() {
+		t.Fatal("the step ran although its row could not be stored")
+	}
+	if j.ErrorCode != "SQS-J040" || !strings.HasPrefix(j.ErrorDetail, "SQS-J040 the job step could not be recorded, so it was not run: ") || !strings.Contains(j.ErrorDetail, "disk I/O error") {
+		t.Fatalf("%s: %s", j.ErrorCode, j.ErrorDetail)
+	}
+	m.Enqueue(ctx, "t.journal", "", nil, audit.System)
+	got := <-results
+	for i, err := range got {
+		if err == nil || err.Error() != "SQS-J041 the job journal was not written: its step is not recorded" {
+			t.Errorf("journal %d: %v", i, err)
+		}
+	}
+	// A failing update is returned too.
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER refuse_journal BEFORE UPDATE OF data ON job_steps BEGIN SELECT RAISE(ABORT, 'journal refused'); END`); err != nil {
+		t.Fatal(err)
+	}
+	r := &Run{Job: &Job{ID: "JX"}, m: m, ctx: ctx, step: 1}
+	db.ExecContext(ctx, `INSERT INTO jobs(id, type, state, priority, scheduled_for, created_at, created_by_type) VALUES ('JX', 't.journal', 'running', 50, ?, ?, 'system')`, store.NowT(), store.NowT())
+	db.ExecContext(ctx, `INSERT INTO job_steps(job_id, seq, name, state, started_at) VALUES ('JX', 1, 'x', 'running', ?)`, store.NowT())
+	if err := r.Journal(map[string]string{"a": "b"}); !errors.Is(err, ErrJournal) || !strings.HasPrefix(err.Error(), "SQS-J041 the job journal was not written: ") || !strings.Contains(err.Error(), "journal refused") {
+		t.Fatalf("refused update: %v", err)
 	}
 }

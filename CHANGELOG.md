@@ -23,6 +23,11 @@ from here (`.github/workflows/release.yml`).
   in one critical `backup.path_invalid` event, and after review `sqsolve catalog forget
   <backup-id>` removes the row without touching any file (`SQS-B044`,
   `docs/runbooks/invalid-backup-path.md`).
+- The job journal is required. A step is stored before it runs, and when its row cannot be
+  stored the step does not run (`SQS-J040`); a journal that changes no row, or fails, is
+  `SQS-J041`, and the action it describes is not done. Restoring by replacing now also requires
+  the journal of the copy being restored and the one written between the two renames
+  (`SQS-R059`): without the second one the original database goes back under its name.
 
 Upgrade: change the image tag to `1` once (user guide, "Updating"); on TrueNAS it appears three
 times in the stored YAML. Pasting the new file instead needs your paths, `TZ` and user again.

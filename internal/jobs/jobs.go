@@ -1046,7 +1046,9 @@ type Run struct {
 // Params decodes the job parameters.
 func (r *Run) Params(out any) error { return json.Unmarshal(r.Job.Params, out) }
 
-// Step records and runs one named step.
+// Step records and runs one named step. The step row is stored before fn
+// runs, so the journal of the step has a place: when it cannot be stored, fn
+// does not run (PLAN P0.2).
 func (r *Run) Step(name string, fn func() error) error {
 	r.mu.Lock()
 	r.step++
@@ -1054,7 +1056,9 @@ func (r *Run) Step(name string, fn func() error) error {
 	r.mu.Unlock()
 	db := r.m.db
 	ctx := context.WithoutCancel(r.ctx)
-	db.ExecContext(ctx, `INSERT INTO job_steps(job_id, seq, name, state, started_at) VALUES (?, ?, ?, 'running', ?)`, r.Job.ID, seq, name, store.NowT())
+	if _, err := db.ExecContext(ctx, `INSERT INTO job_steps(job_id, seq, name, state, started_at) VALUES (?, ?, ?, 'running', ?)`, r.Job.ID, seq, name, store.NowT()); err != nil {
+		return fmt.Errorf("SQS-J040 the job step could not be recorded, so it was not run: %w", err)
+	}
 	db.ExecContext(ctx, `UPDATE jobs SET current_step = ? WHERE id = ?`, name, r.Job.ID)
 	r.Job.CurrentStep = name
 	r.m.bus.Publish("job:"+r.Job.ID, Update{JobID: r.Job.ID, State: Running, Progress: r.Job.Progress, Step: name})
@@ -1073,14 +1077,29 @@ func (r *Run) Step(name string, fn func() error) error {
 	return err
 }
 
+// ErrJournal is a journal that could not be written: the caller must not do
+// the action the journal describes.
+var ErrJournal = errors.New("SQS-J041 the job journal was not written")
+
 // Journal stores data on the current step before an irreversible action, so
-// reconciliation knows what was about to happen.
+// reconciliation knows what was about to happen. It must change exactly the
+// row of the step; otherwise the caller does not do the action.
 func (r *Run) Journal(data any) error {
 	r.mu.Lock()
 	seq := r.step
 	r.mu.Unlock()
-	_, err := r.m.db.ExecContext(context.WithoutCancel(r.ctx), `UPDATE job_steps SET data = ? WHERE job_id = ? AND seq = ?`, store.JSON(data), r.Job.ID, seq)
-	return err
+	res, err := r.m.db.ExecContext(context.WithoutCancel(r.ctx), `UPDATE job_steps SET data = ? WHERE job_id = ? AND seq = ?`, store.JSON(data), r.Job.ID, seq)
+	var n int64
+	if err == nil {
+		n, err = res.RowsAffected()
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrJournal, err)
+	}
+	if n != 1 {
+		return fmt.Errorf("%w: its step is not recorded", ErrJournal)
+	}
+	return nil
 }
 
 // Progress sets the percentage.
