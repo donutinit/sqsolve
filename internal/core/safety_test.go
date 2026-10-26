@@ -1420,3 +1420,44 @@ func TestRecreateFaultsAreNeverSuccess(t *testing.T) {
 	e.failsWith(j, "SQS-R061", "lookup refused")
 	restore()
 }
+
+// PLAN P0.3: creating a library, or restoring a backup as a new one, with
+// the audit log down answers SQS-X040 and leaves nothing behind, so the same
+// request works once the log is back (it got SQS-L004 for a leftover
+// provisioning row).
+func TestNewLibraryWithoutItsAuditEntryLeavesNothing(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	src, _ := e.createActive("src_lib")
+	b := e.firstBackup(src)
+	e.idle()
+	exec := func(q string) {
+		t.Helper()
+		if _, err := e.svc.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`CREATE TRIGGER audit_down BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`)
+	if _, _, err := e.svc.CreateLibrary(ctx, admin, core.CreateInput{DisplayName: "Wedding", Slug: "wedding"}); !errors.Is(err, audit.ErrUnavailable) {
+		t.Fatalf("create: %v", err)
+	}
+	if _, _, err := e.svc.RestoreAsNew(ctx, admin, b.ID, "copy_lib", "Copy"); !errors.Is(err, audit.ErrUnavailable) {
+		t.Fatalf("restore as new: %v", err)
+	}
+	var n int
+	e.svc.DB.QueryRowContext(ctx, `SELECT count(*) FROM libraries WHERE slug IN ('wedding', 'copy_lib')`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("%d library rows left without their job", n)
+	}
+	e.svc.DB.QueryRowContext(ctx, `SELECT count(*) FROM backup_policies WHERE library_id NOT IN (SELECT id FROM libraries)`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("%d policies left without their library", n)
+	}
+	exec(`DROP TRIGGER audit_down`)
+	if _, _, err := e.svc.CreateLibrary(ctx, admin, core.CreateInput{DisplayName: "Wedding", Slug: "wedding"}); err != nil {
+		t.Fatalf("create again: %v", err)
+	}
+	if _, _, err := e.svc.RestoreAsNew(ctx, admin, b.ID, "copy_lib", "Copy"); err != nil {
+		t.Fatalf("restore as new again: %v", err)
+	}
+}

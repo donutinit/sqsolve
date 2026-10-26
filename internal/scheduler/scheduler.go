@@ -61,6 +61,11 @@ func Validate(cron, tz string) (*time.Location, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: time zone %q", ErrInvalidCron, tz)
 	}
+	// A valid expression can still name a date that never comes (31
+	// February): refused here, before anything is stored.
+	if _, err := gronx.NextTickAfter(cron, time.Now().In(loc), false); err != nil {
+		return nil, fmt.Errorf("%w: %q never runs", ErrInvalidCron, cron)
+	}
 	return loc, nil
 }
 

@@ -4,6 +4,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -140,5 +141,18 @@ func TestGateSkipsRunWithoutJob(t *testing.T) {
 	s.Tick(ctx)
 	if js, _ := jm.List(ctx, jobs.Filter{}); len(js) != 1 {
 		t.Fatalf("open gate did not enqueue: %d", len(js))
+	}
+}
+
+// An expression whose date never comes (31 February) is refused when it is
+// stored, with SQS-J020, instead of failing later without a code after the
+// backup policy was already saved.
+func TestValidateRefusesADateThatNeverComes(t *testing.T) {
+	_, err := Validate("0 0 31 2 *", "UTC")
+	if !errors.Is(err, ErrInvalidCron) || err.Error() != `SQS-J020 invalid schedule expression: "0 0 31 2 *" never runs` {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := Validate("0 0 29 2 *", "UTC"); err != nil {
+		t.Fatalf("29 February comes every four years: %v", err)
 	}
 }

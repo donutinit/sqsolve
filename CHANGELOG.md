@@ -55,6 +55,11 @@ from here (`.github/workflows/release.yml`).
   revert or purge with the same parameters gets the queued job, and one with different
   parameters (for example another backup) is refused with `SQS-J005` (409 in the API) instead
   of silently getting the job of the first request. Backups keep "the first request wins".
+- Found while raising coverage: creating a library or restoring a backup as a new one with the
+  audit log down left a `provisioning` row, so the same request then failed with `SQS-L004`;
+  nothing is left now. A schedule whose date never comes (31 February) is refused with
+  `SQS-J020` when the policy is saved, instead of failing without a code after storing it.
+  `GET /api/v1/libraries/{id}/backup-policy` answers 404 `SQS-L002` for an unknown library.
 - The identifier suggested for a name that does not start with a letter now starts with
   `library_` (it was the Spanish `biblioteca_`), as the panel already suggested while typing.
 - Panel: notices are one block of text next to their shape again, so a long list (for

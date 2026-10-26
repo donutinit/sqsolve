@@ -303,3 +303,10 @@ func TestAPIBackupPolicy(t *testing.T) {
 		t.Fatalf("stored cron policy: %+v", p)
 	}
 }
+
+// The backup policy of a library that does not exist is 404 SQS-L002, as
+// every other library route answers, not the default policy.
+func TestAPIBackupPolicyOfAnUnknownLibrary(t *testing.T) {
+	e := apiServer(t)
+	wantProblem(t, "unknown library", e.call(t, "GET", "/api/v1/libraries/NOPE/backup-policy", e.admin, "", false), 404, "SQS-L002 library not found")
+}

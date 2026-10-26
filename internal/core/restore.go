@@ -239,7 +239,7 @@ func (s *Service) RestoreAsNew(ctx context.Context, by audit.Actor, backupID, sl
 	j, err := s.Jobs.Enqueue(ctx, JobRestoreNew, id, RestoreParams{BackupID: backupID, Slug: slug, DisplayName: name}, by, jobs.Priority(100),
 		jobs.Audited("restore.new", "library", id, map[string]any{"backup_id": backupID, "slug": slug}))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, s.forgetProvisioning(ctx, id, err)
 	}
 	l, err := s.Library(ctx, id)
 	return l, j, err

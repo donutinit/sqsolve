@@ -318,10 +318,24 @@ func (s *Service) CreateLibrary(ctx context.Context, by audit.Actor, in CreateIn
 	j, err := s.Jobs.Enqueue(ctx, JobLibraryCreate, id, map[string]string{"library_id": id}, by,
 		jobs.Audited("library.create", "library", id, map[string]any{"slug": in.Slug, "name": name, "strategy": in.Strategy}))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, s.forgetProvisioning(ctx, id, err)
 	}
 	l, err := s.Library(ctx, id)
 	return l, j, err
+}
+
+// forgetProvisioning removes the row of a new library whose job could not be
+// queued (for example without its audit entry), so the same request can be
+// made again; nothing else exists for it yet. cause is returned.
+func (s *Service) forgetProvisioning(ctx context.Context, id string, cause error) error {
+	c := context.WithoutCancel(ctx)
+	if _, err := s.DB.ExecContext(c, `DELETE FROM backup_policies WHERE library_id = ?`, id); err != nil {
+		s.Log.Error("could not remove the policy of a library that was not queued", "library", id, "err", err)
+	}
+	if _, err := s.DB.ExecContext(c, `DELETE FROM libraries WHERE id = ? AND state = 'provisioning'`, id); err != nil {
+		s.Log.Error("could not remove a library that was not queued", "library", id, "err", err)
+	}
+	return cause
 }
 
 func (s *Service) runLibraryCreate(ctx context.Context, r *jobs.Run) error {

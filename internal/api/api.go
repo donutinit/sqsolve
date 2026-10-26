@@ -502,6 +502,10 @@ func (a *API) sessions(w http.ResponseWriter, r *http.Request, p *auth.Principal
 }
 
 func (a *API) policyGet(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	if _, err := a.A.Svc.Library(r.Context(), r.PathValue("id")); err != nil {
+		problem(w, r, statusFor(err), err)
+		return
+	}
 	pol, err := a.A.Svc.Policy(r.Context(), r.PathValue("id"))
 	if err != nil {
 		problem(w, r, statusFor(err), err)
