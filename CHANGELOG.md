@@ -51,6 +51,10 @@ from here (`.github/workflows/release.yml`).
   that cannot be synced makes the deletion fail and leaves the row, and a retry syncs it again;
   retention removes the row of an old failed backup the same way. The power-loss model of the
   file helpers covers the removal.
+- A unique job is its type, its library and its parameters (ADR 0028): a second recreate,
+  revert or purge with the same parameters gets the queued job, and one with different
+  parameters (for example another backup) is refused with `SQS-J005` (409 in the API) instead
+  of silently getting the job of the first request. Backups keep "the first request wins".
 
 Upgrade: change the image tag to `1` once (user guide, "Updating"); on TrueNAS it appears three
 times in the stored YAML. Pasting the new file instead needs your paths, `TZ` and user again.

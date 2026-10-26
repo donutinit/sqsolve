@@ -569,7 +569,7 @@ func (s *Service) activate(ctx context.Context, l *Library, fp pg.Fingerprint) e
 	s.stableMu.Unlock()
 	s.Events.Emit(ctx, events.Event{Type: events.LibraryActivated, LibraryID: l.ID,
 		Message: fmt.Sprintf("Resolve initialized %q; the library is active", l.DisplayName), Data: map[string]any{"tables": fp.Tables}})
-	_, err = s.Jobs.Enqueue(ctx, JobBackupCreate, l.ID, BackupParams{Kind: KindManual}, audit.System, jobs.Unique())
+	_, err = s.Jobs.Enqueue(ctx, JobBackupCreate, l.ID, BackupParams{Kind: KindManual}, audit.System, jobs.UniqueAny())
 	return err
 }
 

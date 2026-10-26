@@ -315,7 +315,7 @@ func (s *Scheduler) fire(ctx context.Context, sc *Schedule, now time.Time) {
 			lib = sc.TargetID
 		}
 		actor := audit.Actor{Type: "schedule", ID: sc.ID, Name: "schedule"}
-		j, err := s.jobs.Enqueue(ctx, k.JobType, lib, map[string]string{"target": sc.TargetID, "kind": "scheduled"}, actor, jobs.FromSchedule(sc.ID), jobs.Unique())
+		j, err := s.jobs.Enqueue(ctx, k.JobType, lib, map[string]string{"target": sc.TargetID, "kind": "scheduled"}, actor, jobs.FromSchedule(sc.ID), jobs.UniqueAny())
 		if err != nil {
 			s.log.Error("could not enqueue", "schedule", sc.ID, "err", err)
 			return

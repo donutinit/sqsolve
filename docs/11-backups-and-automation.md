@@ -414,7 +414,9 @@ A file in `_import/` (copied there or uploaded) goes through these steps:
 
 A library is `missing` when its database is not on the server (another server, a volume not
 mounted). "Recreate from the last backup" asks for the identifier like the other destructive
-actions, and a second request while one is queued or running returns the same job. The job
+actions. A second request with the same backup while one is queued or running returns the same
+job; one with another backup is refused with `SQS-J005`, which names the job that holds the
+library (ADR 0028). The job
 re-validates that the library is still `missing` (`SQS-R040`) and that no database has its name
 (`SQS-R052`, left untouched); it drops on failure only the database it created, and if that drop
 fails the job error says so after the cause (check that database before recreating again). It

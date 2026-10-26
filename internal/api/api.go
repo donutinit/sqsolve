@@ -73,7 +73,7 @@ func statusFor(err error) int {
 	switch {
 	case errors.Is(err, core.ErrLibraryNotFound), errors.Is(err, core.ErrBackupNotFound), errors.Is(err, jobs.ErrNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, jobs.ErrNotCancellable), errors.Is(err, core.ErrBackupPath):
+	case errors.Is(err, jobs.ErrNotCancellable), errors.Is(err, core.ErrBackupPath), errors.Is(err, jobs.ErrConflict):
 		return http.StatusConflict
 	case errors.Is(err, audit.ErrUnavailable):
 		return http.StatusServiceUnavailable

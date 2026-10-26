@@ -352,7 +352,7 @@ func (s *Service) runRestoreNew(ctx context.Context, r *jobs.Run) error {
 	s.Events.Emit(ctx, events.Event{Type: events.RestoreSucceeded, LibraryID: l.ID, JobID: r.Job.ID,
 		Message: fmt.Sprintf("Restored the backup from %s into the new library %q", b.StartedAt.In(s.Cfg.Location).Format("2006-01-02 15:04"), l.DisplayName)})
 	r.SetResult(map[string]string{"library_id": l.ID})
-	s.Jobs.Enqueue(ctx, JobBackupCreate, l.ID, BackupParams{Kind: KindManual}, audit.System, jobs.Unique())
+	s.Jobs.Enqueue(ctx, JobBackupCreate, l.ID, BackupParams{Kind: KindManual}, audit.System, jobs.UniqueAny())
 	return nil
 }
 

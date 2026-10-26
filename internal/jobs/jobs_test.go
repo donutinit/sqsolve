@@ -260,3 +260,45 @@ func TestUnsettledFailureStaysPending(t *testing.T) {
 		t.Fatal("a type without reconciliation was left pending")
 	}
 }
+
+// ADR 0028: the same request returns the queued job, one with different
+// parameters is refused with SQS-J005 (no job, no audit entry), and
+// UniqueAny keeps the first request whatever its parameters.
+func TestUniqueJobIdentity(t *testing.T) {
+	m, db := newManager(t)
+	log := audit.New(db)
+	m.SetAudit(log)
+	m.Register(Spec{Type: "t.u", Run: func(ctx context.Context, r *Run) error { return nil }})
+	ctx := context.Background()
+	type params struct {
+		BackupID string `json:"backup_id"`
+		Kind     string `json:"kind"`
+	}
+	first, err := m.Enqueue(ctx, "t.u", "L1", params{BackupID: "B1", Kind: "k"}, audit.System, Unique(), Audited("t.u", "library", "L1", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same parameters, written in another order: the queued job.
+	same, err := m.Enqueue(ctx, "t.u", "L1", map[string]string{"kind": "k", "backup_id": "B1"}, audit.System, Unique(), Audited("t.u", "library", "L1", nil))
+	if err != nil || same.ID != first.ID {
+		t.Fatalf("same request: %v %v", same, err)
+	}
+	_, err = m.Enqueue(ctx, "t.u", "L1", params{BackupID: "B2", Kind: "k"}, audit.System, Unique(), Audited("t.u", "library", "L1", nil))
+	if !errors.Is(err, ErrConflict) || err.Error() != "SQS-J005 another job of this type is already queued or running for this library with different parameters; wait for it or cancel it (job "+first.ID+")" {
+		t.Fatalf("different parameters: %v", err)
+	}
+	// Another library is another job.
+	if other, err := m.Enqueue(ctx, "t.u", "L2", params{BackupID: "B2"}, audit.System, Unique()); err != nil || other.ID == first.ID {
+		t.Fatalf("another library: %v %v", other, err)
+	}
+	// UniqueAny: the first request wins.
+	if anyJob, err := m.Enqueue(ctx, "t.u", "L1", params{BackupID: "B3"}, audit.System, UniqueAny()); err != nil || anyJob.ID != first.ID {
+		t.Fatalf("UniqueAny: %v %v", anyJob, err)
+	}
+	if list, _ := m.List(ctx, Filter{LibraryID: "L1"}); len(list) != 1 {
+		t.Fatalf("%d jobs queued for L1", len(list))
+	}
+	if entries, _ := log.List(ctx, 0, 10, ""); len(entries) != 1 || entries[0].Details["job_id"] != first.ID {
+		t.Fatalf("audit entries %+v", entries)
+	}
+}

@@ -198,3 +198,28 @@ func TestCatalogChangesAreAudited(t *testing.T) {
 		t.Fatalf("entries %s, want %s", s, want)
 	}
 }
+
+// ADR 0028: a second recreate with the same backup gets the queued job; one
+// with another backup is refused with SQS-J005 instead of silently getting
+// the job of the first backup.
+func TestRecreateWithAnotherBackupIsRefused(t *testing.T) {
+	ctx := context.Background()
+	s, l, _ := auditedCatalog(t)
+	by := audit.Actor{Type: "user", ID: "u1", Name: "diego"}
+	s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'missing' WHERE id = ?`, l.ID)
+	first, err := s.Recreate(ctx, by, l.ID, "B1", l.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.Recreate(ctx, by, l.ID, "B1", l.Slug)
+	if err != nil || again.ID != first.ID {
+		t.Fatalf("same backup: %v %v", again, err)
+	}
+	_, err = s.Recreate(ctx, by, l.ID, "B2", l.Slug)
+	if !errors.Is(err, jobs.ErrConflict) || err.Error() != "SQS-J005 another job of this type is already queued or running for this library with different parameters; wait for it or cancel it (job "+first.ID+")" {
+		t.Fatalf("another backup: %v", err)
+	}
+	if list, _ := s.Jobs.List(ctx, jobs.Filter{LibraryID: l.ID}); len(list) != 1 {
+		t.Fatalf("%d jobs queued", len(list))
+	}
+}

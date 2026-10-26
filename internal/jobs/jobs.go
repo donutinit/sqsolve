@@ -274,6 +274,7 @@ type enqueueOpts struct {
 	scheduleID string
 	priority   int
 	unique     bool
+	uniqueAny  bool
 	attempt    int
 	audit      *jobAudit
 	details    map[string]any
@@ -288,10 +289,34 @@ func FromSchedule(id string) Option { return func(o *enqueueOpts) { o.scheduleID
 // Priority overrides the default priority.
 func Priority(p int) Option { return func(o *enqueueOpts) { o.priority = p } }
 
-// Unique returns the existing queued or running job of the same type and
-// library instead of creating another. A row left "running" that this
+// Unique makes the type, the library and the parameters the identity of the
+// job (ADR 0028): a queued or running job of the same type and library is
+// returned when its canonical parameters are the same, and the request is
+// refused with ErrConflict when they differ. A row left "running" that this
 // process is not running (its final update failed) does not count.
 func Unique() Option { return func(o *enqueueOpts) { o.unique = true } }
+
+// UniqueAny is Unique where any job of the type serves (a backup of the
+// library): the queued or running one is returned whatever its parameters.
+func UniqueAny() Option { return func(o *enqueueOpts) { o.unique, o.uniqueAny = true, true } }
+
+// ErrConflict refuses a Unique request whose parameters differ from those of
+// the job that already holds the type and library.
+var ErrConflict = errors.New("SQS-J005 another job of this type is already queued or running for this library with different parameters; wait for it or cancel it")
+
+// canonical is the JSON of params with its object keys sorted, so the same
+// parameters compare equal however they were written.
+func canonical(params []byte) string {
+	var v any
+	if err := json.Unmarshal(params, &v); err != nil {
+		return string(params)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return string(params)
+	}
+	return string(b)
+}
 
 func attempt(n int) Option { return func(o *enqueueOpts) { o.attempt = n } }
 
@@ -349,9 +374,16 @@ func (m *Manager) Enqueue(ctx context.Context, typ, libraryID string, params any
 	// entry.
 	err = m.db.Tx(ctx, func(tx *sql.Tx) error {
 		if o.unique {
-			var err error
-			if existing, err = m.pending(ctx, tx, typ, libraryID); err != nil || existing != "" {
+			held, params, err := m.pending(ctx, tx, typ, libraryID)
+			switch {
+			case err != nil:
 				return err
+			case held == "":
+			case o.uniqueAny || canonical([]byte(params)) == canonical(p):
+				existing = held
+				return nil
+			default:
+				return fmt.Errorf("%w (job %s)", ErrConflict, held)
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO jobs(id, type, library_id, params, state, priority, scheduled_for, created_at, created_by_type, created_by_id, created_by_name, schedule_id, attempt, audit)
@@ -379,23 +411,24 @@ func (m *Manager) Enqueue(ctx context.Context, typ, libraryID string, params any
 }
 
 // pending returns the oldest queued job of the type and library, or a
-// running one this process is actually running; "" when there is none.
-func (m *Manager) pending(ctx context.Context, tx *sql.Tx, typ, libraryID string) (string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, state FROM jobs WHERE type = ? AND library_id = ? AND state IN ('queued', 'running') ORDER BY created_at`, typ, libraryID)
+// running one this process is actually running, with its parameters; ""
+// when there is none.
+func (m *Manager) pending(ctx context.Context, tx *sql.Tx, typ, libraryID string) (id, params string, err error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, state, params FROM jobs WHERE type = ? AND library_id = ? AND state IN ('queued', 'running') ORDER BY created_at`, typ, libraryID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, state string
-		if err := rows.Scan(&id, &state); err != nil {
-			return "", err
+		var state string
+		if err := rows.Scan(&id, &state, &params); err != nil {
+			return "", "", err
 		}
 		if State(state) == Queued || m.isRunning(id) {
-			return id, nil
+			return id, params, nil
 		}
 	}
-	return "", rows.Err()
+	return "", "", rows.Err()
 }
 
 func (m *Manager) isRunning(id string) bool {
