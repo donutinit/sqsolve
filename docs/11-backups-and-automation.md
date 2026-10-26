@@ -287,6 +287,12 @@ sessions", Resolve 21.1.1 reconnects on its own to the restored database and kee
 project it had in memory. That is why the guide asks to close the project before replacing and
 reopen it afterwards; a technical safeguard is left for 1.1.
 
+Seen on screen on 2026-10-26 (acceptance 1.2.2, Resolve 21.1.1 on Linux): Resolve shows no
+dialog, its next save writes its pending changes into the restored database (or fails on a
+foreign key and reloads the project), and without that reload the old contents stay on screen
+until the project is reopened. A revert behaves the same. The replace and revert pages now always
+ask to close the project in Resolve on every workstation first.
+
 ### 7.3 Recovery after a cut during the swap
 
 On startup, for each interrupted `restore.replace` or `restore.revert` (the journal is written

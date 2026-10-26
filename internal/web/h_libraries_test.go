@@ -225,8 +225,9 @@ func TestLibraryDangerZoneQueuesAuditedJobs(t *testing.T) {
 	if page := boss.page(base(trashed) + "/purge"); !strings.Contains(page, `data-confirm-match="zeus"`) {
 		t.Error("the purge page does not ask for the identifier")
 	}
-	if page := boss.page(base(withPrev) + "/revert"); !strings.Contains(page, `data-confirm-match="hera"`) {
-		t.Error("the revert page does not ask for the identifier")
+	if page := boss.page(base(withPrev) + "/revert"); !strings.Contains(page, `data-confirm-match="hera"`) ||
+		!strings.Contains(page, "Close the project in Resolve on every workstation first.") {
+		t.Error("the revert page does not ask for the identifier and to close the project in Resolve")
 	}
 	if st, loc, _ := boss.do("GET", base(active)+"/revert", nil); st != http.StatusSeeOther || loc != base(active) || flashOf(boss) != "SQS-R030 there is no previous state to recover" {
 		t.Fatalf("revert page without a previous state: %d %s %q", st, loc, flashOf(boss))

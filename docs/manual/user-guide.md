@@ -243,8 +243,11 @@ From a backup's page, "Restore":
   separate database, compares it with the manifest, waits for Resolve to close (or terminates the
   sessions if you tick it) and swaps the databases. The previous version is kept for 7 days to
   **revert** from the Danger zone tab. Asks you to type the identifier. Important: ask anyone
-  with a project open to close it first and reopen it afterwards; Resolve reconnects on its own
-  after the swap and, if it saves, writes over what was restored (PoC-09).
+  with a project open to close it first and reopen it afterwards. Resolve shows nothing when its
+  sessions are closed: it reconnects on its own after the swap, its next save writes the changes
+  it has pending into the restored library, and the open project can keep showing the previous
+  state until it is reopened (PoC-09, `docs/acceptance/1.2.2.md`). The same applies to a revert,
+  which always closes the open sessions.
 
 Right after the swap sqsolve also backs up the previous version itself, so whatever was saved
 while the restore ran is in a backup too; a previous version is never deleted (when it expires,

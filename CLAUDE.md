@@ -5,9 +5,9 @@ Read this in full before touching the repo. The global rules in `~/.claude/CLAUD
 
 ## Project status
 
-Version 1.2.1 (2026-10-22); the history is in `CHANGELOG.md`, the architecture in `docs/` and the
+Version 1.2.2 (2026-10-26); the history is in `CHANGELOG.md`, the architecture in `docs/` and the
 progress in `docs/21-tasks.md` §12. Resolve was tested with 1.0 on Linux (`docs/acceptance/1.0.md`,
-`docs/poc/`). Whatever depends on a PoC (the "Blocks" column of `docs/02-proofs-of-concept.md`) or
+`docs/poc/`), and replace and revert again with 1.2.2 (`docs/acceptance/1.2.2.md`). Whatever depends on a PoC (the "Blocks" column of `docs/02-proofs-of-concept.md`) or
 on Resolve behavior that those records do not cover is written according to the plan's hypothesis
 and is **not validated with real Resolve**: do not extend it or take it for granted until a PoC or
 an acceptance test confirms it.

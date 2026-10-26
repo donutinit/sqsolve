@@ -28,7 +28,7 @@ versions, steps, results and the decision taken.
 | PoC-06 | TLS and SCRAM from Resolve | High | Default values of `pg_hba.conf`. **Done on 2026-10-19** (`docs/poc/poc-06-tls.md`): Resolve 21.1.1 Linux encrypts on its own and connects with mandatory `hostssl` |
 | PoC-07 | Collaboration and network traffic | High | Documentation for editors |
 | PoC-08 | Network: source IP in Docker, port, VPN | High | Network rules per library, remote access guide. **Done on 2026-10-19** (`docs/poc/poc-08-network.md`): real IP on the LAN; through the TrueNAS Tailscale app the container IP arrives |
-| PoC-09 | Restricted states and forced disconnect | Critical | Restore by swap, maintenance mode. **Done on 2026-10-19** (`docs/poc/poc-09-forced-disconnect.md`): Resolve reconnects on its own after the swap; the project must be closed first |
+| PoC-09 | Restricted states and forced disconnect | Critical | Restore by swap, maintenance mode. **Done on 2026-10-19** (`docs/poc/poc-09-forced-disconnect.md`): Resolve reconnects on its own after the swap; the project must be closed first. Seen on screen in the 1.2.2 acceptance (2026-10-26), for a revert too |
 | PoC-10 | Locks and `pg_dump` duration under real use | Medium | Scheduling recommendations |
 
 Suggested order: PoC-01, PoC-02 and PoC-06 in one session; then PoC-04 and PoC-09; then the

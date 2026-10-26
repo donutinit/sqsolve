@@ -10,7 +10,7 @@ Probability (P) and impact (I): H high, M medium, L low. Reviewed at the close o
 | T-02 | Resolve requires superuser or being the database owner | M | M | Strategy E1 and plan B of PoC-01 (owner = library role, renames with superuser over the socket) | PoC-01 |
 | T-03 | Resolve 20.3.x fails with PostgreSQL 18 | M | M | Alternative profile with PostgreSQL 17 for whoever needs it; document | PoC-02 |
 | T-04 | The `.resolvedbkey` format is closed or changes | H | L | Experimental module, disabled by default; the manual instructions always exist | PoC-05 |
-| T-05 | Resolve does not reconnect well after the database swap | L | H | PoC-09; warning to close Resolve before replacing; "as new" mode by default | PoC-09 |
+| T-05 | Resolve does not reconnect well after the database swap | L | H | PoC-09 and the 1.2.2 acceptance; the replace and revert pages always ask to close the project in Resolve first; "as new" mode by default | PoC-09 |
 | T-06 | Libraries restored from the same backup get mixed up in Resolve (repeated internal identifiers) | L | M | PoC-04 step 3; if it happens, warn and suggest disconnecting the original when opening the copy; E2 is discarded | PoC-04 |
 | T-07 | `pg_dump` blocks Resolve during schema changes | L | M | `--lock-wait-timeout`; scheduling outside working hours; measurement in PoC-10 | `log_lock_waits` |
 | T-08 | Docker hides the source IP and network rules are useless | M | M | PoC-08; document `network_mode: host` for whoever needs per-network rules | PoC-08 |

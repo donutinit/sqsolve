@@ -1,67 +1,34 @@
 # Remaining plan
 
-Date: 2026-10-25, with 1.2.1 published.
+Date: 2026-10-26, with 1.2.2 published.
 
 This file contains unfinished or unvalidated work only. Completed work belongs in
 `CHANGELOG.md`, `docs/21-tasks.md`, the accepted ADRs and the acceptance records. Remove an
 item from this file when its acceptance criteria are met.
 
-## 1. Ship the 1.2.2 stabilization release
+## 1. Follow-ups from 1.2.2
 
-Security and recovery correctness take priority over new features after the 2026-10-25 repository
-audit. Keep each fix small enough to review independently, but release them together because they
-enforce the same promise: an operation is either durable and audited, or it reports failure and
-can be reconciled.
+Found while closing 1.2.2 and left out of it because none breaks a promise of the release. Each
+one needs a test of its own when it is fixed.
 
-### 1.1 Release blockers
-
-| Order | Change | Implementation | Acceptance |
-|---|---|---|---|
-| P0.1 | Confine backup paths | Validate the complete v1 manifest in `ReadManifest`; require `file` to be a base name with the expected suffix; resolve symlinks and use `fsx.Within` in catalog rebuild and every catalog path lookup; make `AbsPath` return an error; never download, restore or delete a record whose path is invalid | Tests cover `../`, absolute paths, symlinks, unsupported manifest versions and malformed IDs. Existing invalid catalog rows are reported and disabled without deleting any file. The documented `api/schemas/manifest.v1.json` exists and matches the Go type |
-| P0.2 | Make the job journal mandatory | In `jobs.Run.Step`, persist the step before calling it and propagate insertion errors. In `Journal`, require exactly one affected row. Keep using the existing reconciliation journals instead of adding another recovery layer | A refused `job_steps` insert and a zero-row journal update both stop the operation before PostgreSQL or files change. Reconciliation tests still pass after a forced process stop |
-| P0.3 | Finish ADR 0026 | Inventory every state change and disclosure. Use `RecordTx` for SQLite changes, `Audit.Do` for PostgreSQL and files, `jobs.Audited` for jobs and `Audit.Require` for disclosures. Remove ignored audit results | With an injected `audit_log` failure, each protected action returns `SQS-X040` and does not happen. A result-entry failure after an external change returns `SQS-X041`. Settings, backup pinning, TOTP, unlock, notification channels, member credentials and job cancellation are covered |
-| P0.4 | Stop false-success destructive jobs | Propagate required PostgreSQL and SQLite errors in purge and recreate. Check role lookup, credential storage, grants, library state and schedule updates. If an error happens after an irreversible step, retain the journal and return a recoverable failure instead of emitting success | Fault tests at every ignored call leave the job failed or interrupted, never succeeded. Startup reconciliation produces one catalog state that matches PostgreSQL and keeps backups |
-
-### 1.2 Consistency and regression work
-
-1. Move deletion of other sessions into the password-change transaction. An injected session
-   deletion failure must roll back the new password and its audit entry.
-2. Propagate `fsx.SyncDir` errors when deleting backup files and update the catalog only after the
-   directory entry is durable. Extend the existing power-loss model.
-3. Decide the identity of a unique job. If requests with different parameters must remain distinct,
-   include canonical parameters in `jobs.Unique`; otherwise document and test that the first
-   request wins. This changes job semantics, so record the decision in a Proposed ADR before code.
-4. Raise `internal/` coverage to 80 %, concentrating on `internal/api`, `internal/web`,
-   recovery fault paths and audit failures. Do not add tests of getters only to move the number.
-5. Bring interactive controls to a 44 px target at every breakpoint, including small buttons,
-   account links, sign-out and tabs. Preserve the current visual size with spacing where needed.
-6. Replace the Spanish slug fallback with an English one and reconcile the restore and mobile
-   navigation documentation with ADR 0021 and the implementation.
-7. Fix notices with inline markup. `.flash` is a flex container, so each text run and inline
-   element of a notice becomes its own column and long values overflow the card (seen on
-   `/backups/{id}/restore` with 11 open connections listed). Render the notice as one text block
-   next to its shape and wrap long values.
-
-### 1.3 Release and deployment
-
-1. Implement P0.1 through P0.4 in that order. After each one, run `make check` and the integration
-   tests of the touched packages. Before the release, run `make test-integration`, `make fuzz`,
-   `make scenarios`, the image smoke test and binary `govulncheck`.
-2. Do not automatically rewrite or delete existing catalog rows during upgrade. On startup, report
-   invalid backup paths as a critical event and block operations on those rows until an
-   administrator reviews them.
-3. Build 1.2.2 through the existing release workflow so the image, SBOM, provenance, signature and
-   Compose attachment are produced by CI. Add no dependency; the required validation and
-   confinement primitives already exist in the repository and standard library.
-4. Deploy first to mininas with a current control-plane backup and at least one verified backup per
-   library. Exercise catalog rebuild, backup download and deletion, password session revocation,
-   purge, recreate, process interruption and restart recovery.
-5. Repeat the restore and reconnect checks with real Resolve before promoting the image. Record the
-   result in `docs/acceptance/1.2.2.md`; do not generalize it to platforms or Resolve versions that
-   were not tested.
-6. Publish 1.2.2 only when every release blocker and regression test passes. Roll back the binary
-   and image if needed, but keep the control-plane backup because no rollback may discard catalog
-   or audit entries created by the newer version.
+1. `GET /api/v1/jobs/{id}/logs` answers 200 with `null` items for an unknown job, and empty event
+   and log lists are `null` instead of `[]`.
+2. The detail of `SQS-E005` shows the PostgreSQL socket path and the `sqsolve_admin` role to any
+   authenticated user.
+3. Replacing a library, moving it to the trash and a purge by hand do not use `jobs.Unique`
+   (ADR 0028 and the changelog were narrowed to what does).
+4. `reconcilePurge` with no trash database and a previous-state database on the server reports
+   `SQS-L046` at every start; the purge journal does not record `PrevDB`.
+5. `sqsolve-init` checks the mode of existing secret files and folders, but not of the secret
+   files it has just created.
+6. `pgidentity` emits the "cluster accepted" event even when its transaction fails.
+7. `SyncHBA` after a settings or member change has no audit entry of its own (it predates
+   1.2.2).
+8. The redaction in `pg.SetRolePassword` drops the wrapped error chain.
+9. Retention: `pre_restore` backups are protected and also take places among the last N, so a
+   few restores push out the regular backups, including the one just restored
+   (`docs/acceptance/1.2.2.md`). Decide whether protected backups should count toward
+   `keep_last`.
 
 ## 2. Validation still required
 
@@ -80,9 +47,8 @@ can be reconciled.
 
 | Requirement | Remaining evidence |
 |---|---|
-| RNF-USA-03 WCAG 2.2 AA | Complete the 44 px work in section 1.2 and run a formal accessibility audit |
+| RNF-USA-03 WCAG 2.2 AA | Run a formal accessibility audit (the 44 px targets are done in 1.2.2) |
 | RNF-USA-05 p95 under 300 ms | Measure with 50 libraries and 5000 backups |
-| RNF-MAN-01 test coverage 80 % | Raise the recorded 70.5 %, focusing on API, web, recovery and audit paths |
 | RNF-MAN-03 reproducible build | Compare two clean builds; `-trimpath` and pinned digests alone are not evidence |
 | RNF-MAN-04 build without Internet | Decide whether `go mod vendor` is still required, then implement or amend the requirement through an ADR |
 | RNF-MAN-05 OpenAPI contract | Add and validate `api/openapi.yaml` |
@@ -94,8 +60,9 @@ can be reconciled.
    `check`, and support recovery from the remote. The `restic` binary is already approved in
    `docs/06-stack.md`.
 2. **Lock after a replacement.** PoC-09 showed that Resolve reconnects after a swap and can save
-   over the restored state. Rotate the password during replacement or keep the library in
-   maintenance until an administrator releases it.
+   over the restored state, and the 1.2.2 acceptance saw it on screen, for a revert too: its next
+   save writes its pending changes into the restored library. Rotate the password during
+   replacement or keep the library in maintenance until an administrator releases it.
 3. **Migration from another server (RF-ACT-06, CU-30).** List PostgreSQL 15 libraries, dump them
    with the matching client version, import with L2 verification and create their roles.
 4. **Complete the Resolve validation in section 2.1.** Per-person credentials must be validated

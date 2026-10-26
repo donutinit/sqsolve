@@ -24,6 +24,7 @@
       <li>Only then are connections blocked and the databases swapped.</li>
       <li>The current state is kept for {{.Data.Settings.PrevDays}} days so it can be reverted.</li>
     </ol>
+    <p><strong>Close the project in Resolve on every workstation first.</strong> Resolve reconnects on its own after the swap, so a project left open can save its pending changes into the restored library and keep showing the previous state until it is reopened.</p>
     {{with .Data.Sessions}}<div class="flash warn" role="status">There are {{len .}} open connections: {{range $i, $s := .}}{{if $i}}, {{end}}<span class="mono">{{$s.User}}@{{$s.ClientAddr}}</span>{{end}}. Ask people to close Resolve.</div>{{end}}
     <form method="post" action="/backups/{{$b.ID}}/restore" class="form">
       {{template "csrf" .CSRF}}

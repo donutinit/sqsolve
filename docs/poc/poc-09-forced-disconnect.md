@@ -29,6 +29,24 @@ No dialog was seen because the workstation was not in view.
   and now also in the README and `docs/11` §7.2. A technical safeguard (for example, a new
   password on replace) is left for 1.1.
 
+## On screen (acceptance 1.2.2, 2026-10-26)
+
+Diego repeated it by hand with Resolve Studio 21.1.1 build 10 on Fedora Linux 44, a project open
+in the test library `riatidina` on mininas (sqsolve `sha-2ca757d`), three replacements and one
+revert; details in `docs/acceptance/1.2.2.md`. Resolve showed no dialog when its sessions were
+closed. Its log shows what happens at its next save: the query fails with `terminating
+connection due to administrator command`, Resolve reconnects within milliseconds and saves the
+project it has in memory into the database now under the name:
+
+- after one replacement that save wrote three timeline items and a clip duration that were in
+  neither the backup nor the database just before the replacement;
+- after another one it failed with a foreign key error (`Sm2TiItem_Sm2TiTrack`) and Resolve
+  reloaded the project on its own, which is when the restored contents appeared on screen;
+- after the revert it saved only view state (playhead positions) and did not reload: the old
+  contents stayed on screen until the project was closed and opened again.
+
 ## Status
 
-VERIFIED through the scripting API. Pending observation on screen during acceptance (AC-08).
+VERIFIED through the scripting API and on screen. The risk above is real, so the replace and
+revert pages ask to close the project in Resolve on every workstation first; the technical
+safeguard is item 2 of `PLAN.md` §3.

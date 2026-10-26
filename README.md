@@ -78,16 +78,19 @@ few hundred lines of its own JavaScript and no third-party assets.
 
 ## Status
 
-**1.2.1** ([changes](CHANGELOG.md)). Version 1.0 was tested against PostgreSQL 18 and DaVinci
+**1.2.2** ([changes](CHANGELOG.md)). Version 1.0 was tested against PostgreSQL 18 and DaVinci
 Resolve Studio 21.1.1 on Linux: creating libraries from Resolve, TLS, verified backups, restore as
 a copy and in place with Resolve open, and full recovery of the installation from the backups and
-the kit ([acceptance record](docs/acceptance/1.0.md), [proofs of concept](docs/poc)). Later
-versions pass the automated tests (unit and integration tests against PostgreSQL 18, failure
-scenarios, the image smoke test); what they changed that depends on Resolve, such as maintenance
-through `NOLOGIN`, has not been tested with Resolve yet. Not yet tested:
-Resolve on macOS and Windows, collaboration between two workstations, exchanging files with
-Resolve's own Backup and Restore, and per-person credentials. If you depend on any of those, try
-them with a test library before putting client projects on it.
+the kit ([acceptance record](docs/acceptance/1.0.md), [proofs of concept](docs/poc)). Version
+1.2.2 was deployed on the test installation, and its replace and revert were checked by hand with
+Resolve 21.1.1 on Linux: they work, and a project left open must be closed first
+([acceptance record](docs/acceptance/1.2.2.md)). Every version passes the automated tests (unit
+and integration tests against PostgreSQL 18, failure scenarios, the image smoke test); other
+changes after 1.0 that depend on Resolve, such as maintenance through `NOLOGIN`, have not been
+tested with Resolve yet. Not yet tested: Resolve on macOS and Windows, collaboration between two
+workstations, exchanging files with Resolve's own Backup and Restore, and per-person
+credentials. If you depend on any of those, try them with a test library before putting client
+projects on it.
 
 ## Documentation
 

@@ -5,6 +5,12 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+## [1.2.2] 2026-10-26
+
+Stabilization after the repository audit of 2026-10-25 (backup paths, job journal, audit log,
+destructive jobs, durability, unique jobs, accessibility), checked on the test installation and
+with Resolve (`docs/acceptance/1.2.2.md`).
+
 - Reference compose, tuned for TrueNAS: the image tag is `1`, which every 1.x release moves, so
   TrueNAS offers "Update available" for every release, minor versions included; the image
   workflow publishes that tag (ADR 0027). `x-portals` and `x-notes` give the TrueNAS app a "Web
@@ -88,9 +94,22 @@ from here (`.github/workflows/release.yml`).
 - Documentation: the restore and delete screens and the mobile navigation in `docs/09` now say
   what the panel does (no reauthentication, ADR 0021; a top bar with a row of sections, no
   dropdown and no bottom actions).
+- The replace and revert pages always ask to close the project in Resolve on every workstation
+  first. Checked with Resolve 21.1.1 on Linux: Resolve shows nothing when its sessions are
+  closed, reconnects on its own, its next save writes its pending changes into the restored
+  library, and the open project can keep showing the previous state until it is reopened.
 
-Upgrade: change the image tag to `1` once (user guide, "Updating"); on TrueNAS it appears three
-times in the stored YAML. Pasting the new file instead needs your paths, `TZ` and user again.
+Upgrade: take a control-plane backup, then change the image tag to `1` once (user guide,
+"Updating"); on TrueNAS it appears three times in the stored YAML. Pasting the new file instead
+needs your paths, `TZ` and user again. There is no SQLite migration. If `sqsolve-init` stops with
+`SQS-C085` (or `sqsolve` with `SQS-C010`), the volume has an ACL wider than the file modes: strip
+it as `docs/12-deployment.md` ("Permissions and ACLs") says. A critical `backup.path_invalid`
+event at the first start lists catalog rows whose path is refused:
+`docs/runbooks/invalid-backup-path.md`.
+
+Rollback: image `1.2.1`; there is no schema change. Roll back only when Activity shows no
+"reconciliation pending" warning, and keep the control-plane backup: a rollback must not discard
+catalog or audit entries written by 1.2.2.
 
 ## [1.2.1] 2026-10-22
 

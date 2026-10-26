@@ -6,6 +6,7 @@
   <p>The library has no database under its name. Its previous state <code>{{$l.PrevDB}}</code> is put back under the name <code>{{$l.Slug}}</code> and the library becomes active.</p>
   {{else}}
   <p>The library goes back to the state it had before the last restore. The current state is backed up first and kept so that this can be undone too.</p>
+  <p><strong>Close the project in Resolve on every workstation first.</strong> Open sessions are closed and Resolve reconnects on its own, so a project left open can save its pending changes into the reverted library and keep showing the current state until it is reopened.</p>
   {{end}}
   {{with .Data.Sessions}}<div class="flash error" role="alert">There are {{len .}} open connections; they will be closed. Ask people to close Resolve first.</div>{{end}}
   <form method="post" action="/libraries/{{$l.ID}}/revert" class="form">

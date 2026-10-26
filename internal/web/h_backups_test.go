@@ -222,6 +222,11 @@ func TestRestoreFormRefusals(t *testing.T) {
 		t.Fatalf("operator replace: %d", st)
 	}
 	boss, tok := jobsLogin(t, srv, "boss", jobsAdminPass)
+	// Resolve reconnects after the swap and saves what it has open
+	// (acceptance 1.2.2), so the replace form always says to close it first.
+	if page := boss.page("/backups/" + good + "/restore?mode=replace"); !strings.Contains(page, "Close the project in Resolve on every workstation first.") {
+		t.Error("the replace form does not ask to close the project in Resolve")
+	}
 	for _, c := range []struct {
 		backup string
 		form   url.Values
