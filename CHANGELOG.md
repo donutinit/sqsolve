@@ -55,6 +55,12 @@ from here (`.github/workflows/release.yml`).
   revert or purge with the same parameters gets the queued job, and one with different
   parameters (for example another backup) is refused with `SQS-J005` (409 in the API) instead
   of silently getting the job of the first request. Backups keep "the first request wins".
+- `sqsolve-init` checks the mode each secret and each folder that holds secrets has after it sets
+  it: a volume whose ACL keeps a wider mode (TrueNAS datasets with inherited NFSv4 entries, which
+  can also give other users access to the secrets) stops it with `SQS-C085 ... it stays 0700`
+  instead of printing `done` and leaving `sqsolve` to fail with `SQS-C010`. Found when updating
+  the test installation from 1.1; `docs/12-deployment.md` ("Permissions and ACLs") says how to
+  strip the ACL.
 - Found while raising coverage: creating a library or restoring a backup as a new one with the
   audit log down left a `provisioning` row, so the same request then failed with `SQS-L004`;
   nothing is left now. A schedule whose date never comes (31 February) is refused with

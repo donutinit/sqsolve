@@ -165,6 +165,24 @@ and keeps the old files next to them as `.replaced-<time>` (`SQS-C083` in the lo
 | Podman | Compatible with `podman compose` in principle; documented as "community" until tested |
 | ARM64 | Same multi-architecture images |
 
+### Permissions and ACLs
+
+The secrets of sqsolve (master key, `sqsolve_admin` password, TLS keys) are protected by their
+mode: 0400 or 0600, and 0440 for the PostgreSQL superuser password shared with the `postgres`
+container. A volume with an ACL can grant other users access that the mode does not show: on
+TrueNAS, a dataset created with the SMB preset, or one whose permissions were edited as an ACL,
+carries inherited NFSv4 entries (for example `group:builtin_users` with full access) on every
+new file, and `chmod` leaves them in place. `sqsolve-init` checks the mode each secret has after
+setting it and stops with `SQS-C085 ... it stays 0700; an ACL on the volume probably grants
+more`. An installation whose secrets were written by an older `sqsolve-init` shows instead, at
+the start of `sqsolve`, `SQS-C010 permissions too open on a secrets file: ... has mode 700`.
+
+To fix it on TrueNAS, for each of the three datasets: Datasets, the dataset, Permissions, Edit,
+"Strip ACL", with "Apply permissions recursively", then start or update the app again:
+`sqsolve-init` sets the right modes once nothing overrides them. New datasets: use the Generic
+preset, which uses POSIX permissions. Elsewhere, remove the ACL of the three folders
+(`setfacl -R -b <folder>` for POSIX ACLs).
+
 ## 7. Network and names
 
 - The server needs a fixed IP (DHCP reservation or static). The advertised address can be a

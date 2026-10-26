@@ -161,3 +161,27 @@ func TestInitWarnsWhenAVolumeRootKeepsItsMode(t *testing.T) {
 		}
 	}
 }
+
+// A volume whose ACL keeps a wider mode accepts chmod and leaves it as it
+// was (TrueNAS datasets with inherited NFSv4 entries showed master.key at
+// 0700 after init printed "done", and sqsolve then refused to start with
+// SQS-C010). init checks the mode it gets and stops with SQS-C085.
+func TestInitFailsWhenAnACLKeepsAWiderMode(t *testing.T) {
+	cfg := testConfig(t)
+	if err := Init(cfg, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	path := masterKeyPath(cfg)
+	chmod = func(p string, m os.FileMode) error {
+		if p == path {
+			return os.Chmod(p, 0o700)
+		}
+		return os.Chmod(p, m)
+	}
+	defer func() { chmod = os.Chmod }()
+	err := Init(cfg, io.Discard)
+	want := fmt.Sprintf("SQS-C085 could not set the mode of %s to 0400: it stays 0700; an ACL on the volume probably grants more (docs/12-deployment.md, \"Permissions and ACLs\")", path)
+	if err == nil || err.Error() != want {
+		t.Fatalf("want %q, got %v", want, err)
+	}
+}

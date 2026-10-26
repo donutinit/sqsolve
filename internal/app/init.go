@@ -79,7 +79,14 @@ func Init(c *config.Config, out io.Writer) error {
 	// setMode fails when the mode cannot be set: a secret, or a folder that
 	// holds secrets, left with a wider mode is not a success.
 	setMode := func(path string, mode os.FileMode) error {
-		if err := chmod(path, mode); err != nil {
+		err := chmod(path, mode)
+		// A volume with an ACL (TrueNAS datasets with inherited NFSv4
+		// entries) accepts chmod and keeps a wider mode: what counts is
+		// the mode the file has afterwards.
+		if st, serr := os.Stat(path); err == nil && serr == nil && st.Mode().Perm() != mode.Perm() {
+			err = fmt.Errorf("it stays %04o; an ACL on the volume probably grants more (docs/12-deployment.md, \"Permissions and ACLs\")", st.Mode().Perm())
+		}
+		if err != nil {
 			return fmt.Errorf("SQS-C085 could not set the mode of %s to %04o: %w", path, mode.Perm(), err)
 		}
 		return nil
