@@ -9,7 +9,7 @@
 # reference must stay identical to the one in deploy/compose.yaml: CI checks it
 # (make pg-image-check).
 
-FROM --platform=$BUILDPLATFORM golang:1.27-trixie@sha256:604106102d33b1084e37ca08adf98ac0813624ae8595bd0d7f3965ecebded09c AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-trixie@sha256:c65ecfe613b539ac74c62a4c3b2c27e8f8a6076384c8f27e8a3c0f3be17cc385 AS build
 ARG TARGETOS TARGETARCH VERSION=dev COMMIT=unknown
 WORKDIR /src
 COPY go.mod go.sum ./
