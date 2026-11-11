@@ -39,10 +39,10 @@ func TestHBAOrderAndContent(t *testing.T) {
 		t.Fatalf("last line must reject everything:\n%s", out)
 	}
 	for _, want := range []string{
-		"host\tcliente_x\tcliente_x,cliente_x__ana\t192.168.1.7/32\tscram-sha-256",
-		"host\tcliente_x\tcliente_x,cliente_x__ana\t10.0.0.0/8\tscram-sha-256",
-		"host\tpostgres\tcliente_x,cliente_x__ana\t10.0.0.0/8\tscram-sha-256",
-		"host\tzeta\tzeta\tall\tscram-sha-256",
+		"host\t\"cliente_x\"\t\"cliente_x\",\"cliente_x__ana\"\t192.168.1.7/32\tscram-sha-256",
+		"host\t\"cliente_x\"\t\"cliente_x\",\"cliente_x__ana\"\t10.0.0.0/8\tscram-sha-256",
+		"host\tpostgres\t\"cliente_x\",\"cliente_x__ana\"\t10.0.0.0/8\tscram-sha-256",
+		"host\t\"zeta\"\t\"zeta\"\tall\tscram-sha-256",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
@@ -51,14 +51,45 @@ func TestHBAOrderAndContent(t *testing.T) {
 	if strings.Contains(out, "+") {
 		t.Error("group syntax must not be used")
 	}
-	if strings.Index(out, "cliente_x") > strings.Index(out, "\tzeta\t") {
+	if strings.Index(out, "cliente_x") > strings.Index(out, "\t\"zeta\"\t") {
 		t.Error("libraries must be sorted")
 	}
 }
 
+// A library may be called like a keyword of pg_hba.conf: "all" stands for
+// every database and every role, "replication" for replication connections,
+// "sameuser", "samerole" and "samegroup" for a database chosen by the role.
+// Its names are written between double quotes, where PostgreSQL reads them as
+// plain names, so its line admits its own roles to its own database only.
+func TestHBAQuotesNamesThatAreKeywords(t *testing.T) {
+	for _, name := range []string{"all", "replication", "sameuser", "samerole", "samegroup"} {
+		out, err := HBA(HBAOptions{MaintenanceDB: true, Libraries: []HBALibrary{{DB: name, Roles: []string{name, name + "__ana"}}}})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		q := `"` + name + `"`
+		for _, want := range []string{
+			"host\t" + q + "\t" + q + `,"` + name + `__ana"` + "\tall\tscram-sha-256\n",
+			"host\tpostgres\t" + q + `,"` + name + `__ana"` + "\tall\tscram-sha-256\n",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s: missing %q in:\n%s", name, want, out)
+			}
+		}
+		for _, l := range strings.Split(out, "\n") {
+			f := strings.Split(l, "\t")
+			if len(f) == 5 && f[4] == "scram-sha-256" && (f[1] == name || strings.Contains(","+f[2]+",", ","+name+",")) {
+				t.Errorf("%s: a library line carries the bare keyword: %q", name, l)
+			}
+		}
+	}
+}
+
 func TestHBARejectsAdminAndBadInput(t *testing.T) {
-	if _, err := HBA(HBAOptions{Libraries: []HBALibrary{{DB: "a_b", Roles: []string{"sqsolve_admin"}}}}); err == nil {
-		t.Fatal("admin role accepted")
+	for _, role := range []string{"sqsolve_admin", "postgres"} {
+		if _, err := HBA(HBAOptions{Libraries: []HBALibrary{{DB: "a_b", Roles: []string{"a_b", role}}}}); err == nil || err.Error() != "SQS-P040 administrative role in a library rule" {
+			t.Fatalf("%s in a library rule: %v", role, err)
+		}
 	}
 	if _, err := HBA(HBAOptions{Libraries: []HBALibrary{{DB: "a b", Roles: []string{"x"}}}}); err == nil {
 		t.Fatal("bad db accepted")
@@ -70,7 +101,7 @@ func TestHBARejectsAdminAndBadInput(t *testing.T) {
 
 func TestHBATLS(t *testing.T) {
 	out, _ := HBA(HBAOptions{RequireTLS: true, Libraries: []HBALibrary{{DB: "abc", Roles: []string{"abc"}}}})
-	if !strings.Contains(out, "hostssl\tabc\tabc\tall") {
+	if !strings.Contains(out, "hostssl\t\"abc\"\t\"abc\"\tall") {
 		t.Fatal(out)
 	}
 }

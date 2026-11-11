@@ -89,7 +89,7 @@ every permission).
 | `POST /libraries/{id}/connection/reveal` | `library.reveal` | administrator | `admin` | The same plus `password` (also `?credential=`); audited, emits `library.credential_revealed` |
 | `GET /libraries/{id}/sessions` | `view` | viewer | any | Active sessions: `pid`, `user`, `client_addr`, `application`, `started_at`, `state`, `ssl`, `tls_version` |
 | `GET /libraries/{id}/backup-policy` | `view` | viewer | any | Policy: `enabled`, `mode` (`cron` or `activity`), `check_minutes` (5, 10, 15, 30, 60), `cron`, `timezone`, `keep_last`, `keep_daily`, `keep_weekly`, `keep_monthly`, `min_verified`; `last_check_at` and `last_check_same` read-only (ADR 0022) |
-| `PUT /libraries/{id}/backup-policy` | `policy.edit` | administrator | `admin` | The same object; returns it |
+| `PUT /libraries/{id}/backup-policy` | `policy.edit` | administrator | `admin` | The same object; returns it as stored (an empty `mode` is `cron`; in activity mode `cron` is the check cadence) |
 | `GET /libraries/{id}/backups` | `view` | viewer | any | The library's catalog; `status`, `limit`, `cursor` |
 | `POST /libraries/{id}/backups` | `backup.create` | operator | `backup` | Back up now; `202` with the job |
 | `GET /libraries/{id}/projects` | `view` | viewer | any | Projects with folder and date, and the `schema` state (experimental, `22`) |
@@ -264,6 +264,7 @@ sqsolve init                           # prepares volumes and secrets (sqsolve-i
 sqsolve healthcheck                    # GET /healthz, for the Docker healthcheck
 sqsolve doctor [--json]                # checks volumes, secrets, PostgreSQL and the catalog (13 §7)
 sqsolve version
+sqsolve help                           # this list
 sqsolve admin list
 sqsolve admin create <user> [--role admin|operator|viewer]
 sqsolve admin reset-password <user>

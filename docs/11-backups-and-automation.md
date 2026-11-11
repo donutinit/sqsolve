@@ -167,7 +167,9 @@ min_verified   = 1    # never end up with fewer than N backups with a correct L1
 
 Algorithm (`Retain` in `internal/core/retention.go`, a pure function with property tests):
 
-1. Candidates: `ok` backups of the library.
+1. Candidates: `ok` backups of the library. A blocked backup (`SQS-B043`, §3) is not one: it
+   takes none of the places of the policy, so a readable backup never expires in its stead, and
+   it is never expired.
 2. Keep: pinned ones; those of kind `pre_restore`, `pre_delete` and `pre_upgrade` under 30 days
    old; those that satisfy some `keep_*` rule. `keep_last` counts the most recent **by
    insertion order** in the catalog (the SQLite row order), which a clock that jumps cannot
@@ -412,7 +414,9 @@ Before restoring, the manifest is compared with the server:
 
 ### 7.6 Import
 
-A file in `_import/` (copied there or uploaded) goes through these steps:
+A file in `_import/` (copied there or uploaded) goes through these steps. A name that is not in
+the folder stops the job with `SQS-B055`, and one that leads out of it through a symlink with
+`SQS-B051`, before anything is read:
 
 1. **read**: its size and modification time must stay the same for 3 seconds (a file still
    being copied grows: `SQS-B071`); then `pg_restore --list` reads its index.
@@ -536,7 +540,10 @@ purge again also finishes it. The journal records the trash database but not the
 state: a purge of a library without a trash database, interrupted while its previous-state
 database is still on the server, finds that database owned by the library's role at every start
 and reports `SQS-L046` each time, with a `library.reconcile_pending` warning
-(`docs/19-risks.md` §5 K-04).
+(`docs/19-risks.md` §5 K-04). The purge of expired items (§12) drops an expired previous state on
+its own in the same pass that queues the purge of its library; when both are due at once the
+purge can find the previous state already forgotten and fail with `SQS-L047`, and the next pass
+or the next start finishes it (`docs/19-risks.md` §5 K-11).
 
 ## 8. Failures and interruptions
 
@@ -664,8 +671,10 @@ stateDiagram-v2
 ## 12. Default maintenance jobs
 
 The schedules are fixed (they cannot be edited in the panel) and run in the time zone of `TZ`
-(UTC by default). Administrators can run retention, the weekly verification, optimization, the
-control plane backup and the catalog check by hand from Settings, Maintenance.
+(UTC by default). When `TZ` changes, the next start moves them to the new zone; a run that was
+already due is still made, or reported as missed, before the schedule goes on in the new zone.
+Administrators can run retention, the weekly verification, optimization, the control plane
+backup and the catalog check by hand from Settings, Maintenance.
 
 | Job | Schedule |
 |---|---|

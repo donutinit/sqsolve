@@ -208,8 +208,8 @@ func TestTOTPFlowAndTokens(t *testing.T) {
 	if !mfa {
 		t.Fatal("mfa not required")
 	}
-	if _, err := s.Session(ctx, raw, "", false); !errors.Is(err, ErrMFAPending) {
-		t.Fatal("pending session accepted")
+	if _, err := s.Session(ctx, raw, "", false); !errors.Is(err, ErrMFAPending) || err.Error() != "SQS-A005 second factor required" {
+		t.Fatalf("pending session accepted: %v", err)
 	}
 	// The code used at enrolment cannot be replayed; a recovery code works once.
 	if err := s.VerifySecondFactor(ctx, p, code); err == nil {
@@ -553,5 +553,33 @@ func TestPasswordChangeEndsOtherSessionsInItsTransaction(t *testing.T) {
 	}
 	if _, err := s.Session(ctx, other, "1.1.1.2", false); err == nil {
 		t.Fatal("the other session survived the new password")
+	}
+}
+
+// A failed login says the same for a wrong password, a user that does not
+// exist and a disabled account, so the answer does not tell which names
+// exist.
+func TestFailedLoginDoesNotTellWhy(t *testing.T) {
+	s := newService(t)
+	ctx := context.Background()
+	if _, err := s.CreateUser(ctx, audit.System, "ana", "", "reference monitor 709", RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	off, err := s.CreateUser(ctx, audit.System, "luis", "", "tungsten light 3200K", RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateUser(ctx, audit.System, off.ID, "", RoleOperator, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ why, user, pass, ip string }{
+		{"wrong password", "ana", "wrong", "10.0.0.1"},
+		{"unknown user", "nobody", "reference monitor 709", "10.0.0.2"},
+		{"disabled account", "luis", "tungsten light 3200K", "10.0.0.3"},
+	} {
+		raw, p, _, err := s.Login(ctx, c.user, c.pass, c.ip, "")
+		if !errors.Is(err, ErrBadCredentials) || err.Error() != "SQS-A002 incorrect username or password" || raw != "" || p != nil {
+			t.Errorf("%s: %q %v %v", c.why, raw, p, err)
+		}
 	}
 }

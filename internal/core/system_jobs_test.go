@@ -130,26 +130,40 @@ func (e *jobsEnv) failsWithoutMarker(typ string) {
 // only the newest 30 copies are kept. An unmarked backups volume gets
 // nothing.
 func TestControlPlaneBackupKeepsTheNewestCopies(t *testing.T) {
-	e := newJobsEnv(t, time.Date(2026, 10, 2, 4, 15, 0, 0, time.UTC))
+	e := newJobsEnv(t, time.Now())
 	ctx := e.ctx
 	sys := filepath.Join(e.svc.Cfg.BackupDir, "_system")
 	if err := os.MkdirAll(sys, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for d := 1; d <= 30; d++ {
-		os.WriteFile(filepath.Join(sys, fmt.Sprintf("sqsolve-state-202609%02dT041500Z.db", d)), []byte("old copy"), 0o600)
-	}
-	os.WriteFile(filepath.Join(sys, "sqsolve-state-20260831T041500Z.db"), []byte("oldest copy"), 0o600)
 	e.library("cp_lib", StateActive)
 	if err := e.svc.Audit.Record(ctx, bkActor, "test.entry", "system", "", audit.OK, nil); err != nil {
 		t.Fatal(err)
 	}
+	// The audit log stamps its entries with the real clock, so the job runs on
+	// the second day of the month that entry was written in, whatever month
+	// the test runs in: the copy is of that day and the export covers that
+	// month and the one before.
+	var ts string
+	if err := e.svc.DB.QueryRowContext(ctx, `SELECT ts FROM audit_log WHERE action = 'test.entry'`).Scan(&ts); err != nil {
+		t.Fatal(err)
+	}
+	written := store.ParseT(ts)
+	day := time.Date(written.Year(), written.Month(), 2, 4, 15, 0, 0, time.UTC)
+	e.offset.Store(int64(day.Sub(e.base)))
+	stateFile := func(t time.Time) string {
+		return filepath.Join(sys, "sqsolve-state-"+t.Format("20060102T150405Z")+".db")
+	}
+	for d := 1; d <= 30; d++ {
+		os.WriteFile(stateFile(day.AddDate(0, 0, -d)), []byte("old copy"), 0o600)
+	}
+	os.WriteFile(stateFile(day.AddDate(0, 0, -31)), []byte("oldest copy"), 0o600)
 	j := e.run(JobControlBackup, "", nil, jobs.Succeeded)
-	name := "sqsolve-state-20261002T041500Z.db"
+	name := filepath.Base(stateFile(day))
 	if !strings.Contains(e.logs(j), "Control plane copy at "+name) {
 		t.Fatalf("logs: %s", e.logs(j))
 	}
-	cp, err := sql.Open("sqlite", "file:"+filepath.Join(sys, name)+"?mode=ro")
+	cp, err := sql.Open("sqlite", "file:"+stateFile(day)+"?mode=ro")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,22 +173,54 @@ func TestControlPlaneBackupKeepsTheNewestCopies(t *testing.T) {
 		t.Fatalf("the copy does not hold the catalog: %q %v", slug, err)
 	}
 	copies, _ := filepath.Glob(filepath.Join(sys, "sqsolve-state-*.db"))
-	if len(copies) != 30 || onDisk(filepath.Join(sys, "sqsolve-state-20260831T041500Z.db")) || onDisk(filepath.Join(sys, "sqsolve-state-20260901T041500Z.db")) {
+	if len(copies) != 30 || onDisk(stateFile(day.AddDate(0, 0, -31))) || onDisk(stateFile(day.AddDate(0, 0, -30))) {
 		t.Fatalf("%d copies kept: %v", len(copies), copies)
 	}
-	for _, month := range []string{"202609", "202610"} {
-		b, err := os.ReadFile(filepath.Join(sys, "audit-"+month+".jsonl"))
+	for _, month := range []time.Time{day.AddDate(0, -1, 0), day} {
+		b, err := os.ReadFile(filepath.Join(sys, "audit-"+month.Format("200601")+".jsonl"))
 		if err != nil {
-			t.Fatalf("no audit export for %s: %v", month, err)
+			t.Fatalf("no audit export for %s: %v", month.Format("2006-01"), err)
 		}
-		if month == "202610" && !strings.Contains(string(b), "test.entry") {
+		if month.Equal(day) && !strings.Contains(string(b), "test.entry") {
 			t.Fatalf("the export of the month misses its entries:\n%s", b)
 		}
 	}
-	e.offset.Store(int64(24 * time.Hour))
+	e.offset.Add(int64(24 * time.Hour))
 	e.failsWithoutMarker(JobControlBackup)
-	if onDisk(filepath.Join(sys, "sqsolve-state-20261003T041500Z.db")) {
+	if onDisk(stateFile(day.AddDate(0, 0, 1))) {
 		t.Fatal("a copy was written to an unmarked volume")
+	}
+}
+
+// An import names a file of the import folder. A name that is not there says
+// so, and one that leads out of the folder through a symlink is refused;
+// neither reads a file or adds a backup.
+func TestImportRefusesMissingAndOutsideFiles(t *testing.T) {
+	e := newJobsEnv(t, time.Now())
+	l := e.library("imp_lib", StateActive)
+	j := e.run(JobBackupImport, l.ID, ImportParams{Path: "ghost.backup"}, jobs.Failed)
+	if j.ErrorCode != "SQS-B055" || j.ErrorDetail != "SQS-B055 there is no file named ghost.backup in the import folder" {
+		t.Fatalf("missing file: %s %q", j.ErrorCode, j.ErrorDetail)
+	}
+	if err := os.MkdirAll(e.svc.ImportDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "elsewhere.backup")
+	if err := os.WriteFile(outside, []byte("not a file of the import folder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(e.svc.ImportDir(), "link.backup")); err != nil {
+		t.Fatal(err)
+	}
+	j = e.run(JobBackupImport, l.ID, ImportParams{Path: "link.backup", DeleteSource: true}, jobs.Failed)
+	if j.ErrorCode != "SQS-B051" || j.ErrorDetail != "SQS-B051 the file is outside the import folder" {
+		t.Fatalf("symlink out of the folder: %s %q", j.ErrorCode, j.ErrorDetail)
+	}
+	if !onDisk(outside) {
+		t.Fatal("the file outside the import folder was removed")
+	}
+	if bs, err := e.svc.Backups(e.ctx, BackupFilter{LibraryID: l.ID}); err != nil || len(bs) != 0 {
+		t.Fatalf("backups after two refused imports: %+v %v", bs, err)
 	}
 }
 
@@ -425,7 +471,9 @@ func TestVerifyAllQueuesTheNewestVerifiedBackups(t *testing.T) {
 }
 
 // The system schedules are created once, enabled, in the installation's time
-// zone; a schedule the administrator changed is kept at the next start.
+// zone; a schedule the administrator changed is kept at the next start. When
+// TZ changes they move to the new zone at the next start, each with its own
+// expression and state.
 func TestEnsureSystemSchedules(t *testing.T) {
 	e := newJobsEnv(t, time.Now())
 	ctx := e.ctx
@@ -450,6 +498,35 @@ func TestEnsureSystemSchedules(t *testing.T) {
 	all, _ := e.svc.Sched.List(ctx)
 	if len(all) != len(systemSchedules) {
 		t.Fatalf("%d schedules after two starts", len(all))
+	}
+	mx, err := time.LoadLocation("America/Mexico_City")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.svc.Cfg.Location = mx
+	if err := e.svc.EnsureSystemSchedules(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for kind, d := range systemSchedules {
+		sc, err := e.svc.Sched.Get(ctx, kind, "")
+		if err != nil || sc == nil || sc.Timezone != "America/Mexico_City" {
+			t.Fatalf("%s did not follow TZ: %+v %v", kind, sc, err)
+		}
+		if kind == "system.vacuum" {
+			if sc.Cron != "0 1 * * 6" || sc.Enabled {
+				t.Fatalf("the changed schedule was reset with the zone: %+v", sc)
+			}
+			continue
+		}
+		if sc.Cron != d.cron || !sc.Enabled {
+			t.Fatalf("%s: %+v", kind, sc)
+		}
+	}
+	if sc, _ := e.svc.Sched.Get(ctx, "system.retention", ""); sc.NextRunAt == nil || sc.NextRunAt.In(mx).Format("15:04") != "04:00" {
+		t.Fatalf("retention does not run at 04:00 of the new zone: %+v", sc)
+	}
+	if all, _ = e.svc.Sched.List(ctx); len(all) != len(systemSchedules) {
+		t.Fatalf("%d schedules after a change of TZ", len(all))
 	}
 }
 

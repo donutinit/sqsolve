@@ -232,8 +232,18 @@ func (s *Service) RestoreAsNew(ctx context.Context, by audit.Actor, backupID, sl
 	}
 	if src != nil {
 		if p, err := s.Policy(ctx, src.ID); err == nil {
-			s.DB.ExecContext(ctx, `INSERT INTO backup_policies(library_id, enabled, schedule_cron, timezone, keep_last, keep_daily, keep_weekly, keep_monthly, min_verified, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, p.Enabled, p.Cron, p.Timezone, p.KeepLast, p.KeepDaily, p.KeepWeekly, p.KeepMonthly, p.MinVerified, now)
+			// The mode goes with the expression: in activity mode the stored
+			// expression is the check cadence, and copied alone it would be
+			// a cron schedule that backs up at every check.
+			mode, check := p.Mode, p.CheckMinutes
+			if mode == "" {
+				mode = ModeCron
+			}
+			if check == 0 {
+				check = 15
+			}
+			s.DB.ExecContext(ctx, `INSERT INTO backup_policies(library_id, enabled, schedule_cron, timezone, keep_last, keep_daily, keep_weekly, keep_monthly, min_verified, mode, check_minutes, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, p.Enabled, p.Cron, p.Timezone, p.KeepLast, p.KeepDaily, p.KeepWeekly, p.KeepMonthly, p.MinVerified, mode, check, now)
 		}
 	}
 	j, err := s.Jobs.Enqueue(ctx, JobRestoreNew, id, RestoreParams{BackupID: backupID, Slug: slug, DisplayName: name}, by, jobs.Priority(100),
@@ -956,6 +966,12 @@ func (s *Service) runImport(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	src := filepath.Join(s.ImportDir(), p.Path)
+	// A name that is not there (a typing mistake in the API, a file removed
+	// since the job was queued) is said as such, not as a path that leaves
+	// the folder.
+	if _, err := os.Lstat(src); errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("SQS-B055 there is no file named %s in the import folder", p.Path)
+	}
 	if ok, err := fsx.Within(s.ImportDir(), src); err != nil || !ok {
 		return errors.New("SQS-B051 the file is outside the import folder")
 	}

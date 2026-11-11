@@ -95,6 +95,42 @@ func TestLegacyChecksumIsUpgraded(t *testing.T) {
 	}
 }
 
+// A migration is known by its number and its statements, never by the name
+// of its file. The files of migrations 1 to 4 had Spanish names until 1.2.2:
+// a database that recorded those names opens with the renamed files and
+// nothing is applied again.
+func TestRenamedMigrationFilesOpenAnInstalledDatabase(t *testing.T) {
+	ctx := context.Background()
+	all, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []string{"0001_initial.sql", "0002_account_lockout.sql", "0003_activity_based_backups.sql", "0004_export_from_backup.sql"} {
+		if all[i].name != want {
+			t.Errorf("migration %d is %s, want %s", i+1, all[i].name, want)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "sqsolve.db")
+	db, err := Open(ctx, path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for v, name := range map[int]string{1: "0001_inicial.sql", 2: "0002_bloqueo_de_cuenta.sql", 3: "0003_respaldo_adaptativo.sql", 4: "0004_exportar_desde_respaldo.sql"} {
+		if _, err := db.ExecContext(ctx, `UPDATE schema_migrations SET name = ? WHERE version = ?`, name, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	if db, err = Open(ctx, path, ""); err != nil {
+		t.Fatalf("a database that recorded the old file names must open: %v", err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != len(all) {
+		t.Fatalf("%d migrations recorded, want %d: %v", n, len(all), err)
+	}
+}
+
 func TestErrNotFoundIsEnglish(t *testing.T) {
 	if ErrNotFound.Error() != "not found" {
 		t.Fatalf("%q", ErrNotFound.Error())

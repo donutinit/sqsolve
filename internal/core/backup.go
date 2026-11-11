@@ -924,6 +924,9 @@ func (s *Service) checkL1(ctx context.Context, id string, notice bool) error {
 		return verdict("the manifest is missing")
 	case errors.Is(err, errManifestUnreadable):
 		return verdict("the manifest is unreadable")
+	case errors.Is(err, ErrManifestInvalid):
+		// JSON, but not a manifest a restore can read (docs 11 §5.1).
+		return verdict(err.Error())
 	case err != nil:
 		return notRun(fmt.Errorf("could not read the manifest: %w", err))
 	}

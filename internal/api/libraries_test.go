@@ -290,17 +290,23 @@ func TestAPIBackupPolicy(t *testing.T) {
 	if r.status != 200 {
 		t.Fatalf("activity policy: %d %s", r.status, r.body)
 	}
-	if p := get(); p.Mode != core.ModeActivity || p.CheckMinutes != 30 || p.Cron != "*/30 * * * *" || p.KeepLast != 5 || p.KeepDaily != 7 || p.KeepWeekly != 0 || p.MinVerified != 2 {
-		t.Fatalf("stored activity policy: %+v", p)
+	// The answer is the policy as stored (the check cadence as the
+	// schedule), the same object the next GET returns, not the body sent.
+	var answered core.Policy
+	decodeInto(t, r, &answered)
+	if p := get(); p.Mode != core.ModeActivity || p.CheckMinutes != 30 || p.Cron != "*/30 * * * *" || p.KeepLast != 5 || p.KeepDaily != 7 || p.KeepWeekly != 0 || p.MinVerified != 2 || answered != p {
+		t.Fatalf("stored activity policy: %+v, answered %+v", p, answered)
 	}
 	if !e.hasEntry(t, "L1", "library.policy", audit.OK) {
 		t.Errorf("no library.policy entry: %+v", e.entries(t, "L1"))
 	}
-	if r := e.call(t, "PUT", path, e.admin, `{"enabled":false,"cron":"30 2 * * 1","timezone":"UTC","keep_last":1,"min_verified":1}`, false); r.status != 200 {
+	r = e.call(t, "PUT", path, e.admin, `{"enabled":false,"cron":"30 2 * * 1","timezone":"UTC","keep_last":1,"min_verified":1}`, false)
+	if r.status != 200 {
 		t.Fatalf("cron policy: %d %s", r.status, r.body)
 	}
-	if p := get(); p.Mode != core.ModeCron || p.Cron != "30 2 * * 1" || p.Enabled || p.KeepLast != 1 || p.KeepDaily != 0 {
-		t.Fatalf("stored cron policy: %+v", p)
+	decodeInto(t, r, &answered)
+	if p := get(); p.Mode != core.ModeCron || p.Cron != "30 2 * * 1" || p.Enabled || p.KeepLast != 1 || p.KeepDaily != 0 || answered != p {
+		t.Fatalf("stored cron policy: %+v, answered %+v", p, answered)
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/donutinit/sqsolve/internal/app"
 	"github.com/donutinit/sqsolve/internal/auth"
@@ -372,7 +373,13 @@ func humanError(err error) string {
 		return "SQS-C060 The request body is too large"
 	}
 	if len(msg) > 600 {
-		msg = msg[:600] + "..."
+		// Cut at a character boundary: half a character would be shown as
+		// a replacement mark.
+		cut := 600
+		for cut > 0 && !utf8.RuneStart(msg[cut]) {
+			cut--
+		}
+		msg = msg[:cut] + "..."
 	}
 	return msg
 }

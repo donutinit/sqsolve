@@ -28,8 +28,28 @@ func fakeBin(t *testing.T, name, body string) *Runner {
 
 func TestNotAllowed(t *testing.T) {
 	r := NewRunner("")
-	if _, err := r.Run(context.Background(), Cmd{Name: "sh", Args: []string{"-c", "true"}}); err == nil {
-		t.Fatal("sh must not be allowed")
+	if _, err := r.Run(context.Background(), Cmd{Name: "sh", Args: []string{"-c", "true"}}); err == nil || err.Error() != "SQS-X001 program not allowed: sh" {
+		t.Fatalf("sh must not be allowed: %v", err)
+	}
+}
+
+// A password or user with a line break would write a second line into the
+// password file: refused before anything is written or run.
+func TestCredentialWithLineBreaksIsRefused(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	r := fakeBin(t, "pg_dump", `touch "`+marker+`"`)
+	for _, c := range []*Credential{
+		{User: "u", Password: secrets.New("a\nb")},
+		{User: "u", Password: secrets.New("a\rb")},
+		{User: "u\nx", Password: secrets.New("ab")},
+	} {
+		_, err := r.Run(context.Background(), Cmd{Name: "pg_dump", Credential: c})
+		if err == nil || err.Error() != "SQS-X003 credential with line breaks" {
+			t.Fatalf("credential %q: %v", c.User, err)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the program ran with a refused credential")
 	}
 }
 

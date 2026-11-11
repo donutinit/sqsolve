@@ -105,7 +105,10 @@ var systemSchedules = map[string]struct{ job, cron, title string }{
 	"system.housekeeping":   {JobHousekeeping, "45 4 * * *", "housekeeping"},
 }
 
-// EnsureSystemSchedules creates the default system schedules once.
+// EnsureSystemSchedules creates the default system schedules once, in the
+// time zone of TZ, and moves there the ones stored under another zone (TZ
+// changed since they were created). The expression of an existing schedule
+// and whether it is enabled are kept.
 func (s *Service) EnsureSystemSchedules(ctx context.Context) error {
 	tz := s.Cfg.Location.String()
 	for kind, d := range systemSchedules {
@@ -113,10 +116,13 @@ func (s *Service) EnsureSystemSchedules(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if existing != nil {
-			continue
+		switch {
+		case existing == nil:
+			err = s.Sched.Upsert(ctx, kind, "", d.cron, tz, true, 24*time.Hour)
+		case existing.Timezone != tz:
+			err = s.Sched.SetTimezone(ctx, kind, "", tz)
 		}
-		if err := s.Sched.Upsert(ctx, kind, "", d.cron, tz, true, 24*time.Hour); err != nil {
+		if err != nil {
 			return err
 		}
 	}

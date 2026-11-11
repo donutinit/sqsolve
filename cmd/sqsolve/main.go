@@ -46,6 +46,7 @@ Usage:
   sqsolve healthcheck                   check for Docker
   sqsolve doctor [--json]               checks volumes, secrets, PostgreSQL and the catalog
   sqsolve version
+  sqsolve help
   sqsolve admin list
   sqsolve admin create <user> [--role admin|operator|viewer]
   sqsolve admin reset-password <user>
@@ -55,7 +56,7 @@ Usage:
   sqsolve backup create <identifier> [--wait]
   sqsolve backup list <identifier>
   sqsolve restore <backup-id> --new <identifier> [--name <name>] [--wait]
-  sqsolve restore <backup-id> --replace --confirm <identifier> [--wait]
+  sqsolve restore <backup-id> --replace --confirm <identifier> [--terminate] [--wait]
   sqsolve catalog rebuild [--wait]
   sqsolve catalog forget <backup-id>     removes a blocked row (invalid path) after review
   sqsolve audit verify

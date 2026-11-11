@@ -52,7 +52,9 @@ The package tree is in `05-architecture.md` §4.
 - `internal/audit`: valid chain, tampering detected at any position; an entry written in the
   transaction of its change, or before a change outside SQLite, and nothing done without it.
 - `internal/pgconf`: `pg_hba.conf` generated for combinations of libraries, credentials and CIDRs;
-  the reject lines for administrative roles always come first.
+  the reject lines for administrative roles always come first; the names of a library called
+  like a keyword of the file (`all`, `replication`, `sameuser`, `samerole`, `samegroup`) are
+  quoted.
 - `internal/fsx`: atomic write (simulating failures between steps); key and certificate pairs
   under a model of what a power cut keeps (`powerloss_test.go`).
 - `internal/app`: control plane recovery stopped at every step and finished by the next start.

@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -93,5 +94,34 @@ func TestPrivateSecretsRefuseGroupRead(t *testing.T) {
 	defer os.Chmod(masterKeyPath(cfg), 0o400)
 	if ch := checkMap(Doctor(ctx, a))["Secret master.key"]; ch.Status != "fail" || !strings.Contains(ch.Detail, "SQS-C010") {
 		t.Fatalf("doctor: %+v", ch)
+	}
+}
+
+// Opening the application names the file that is missing and its code: the
+// instance identity when sqsolve init never ran, and the PostgreSQL superuser
+// password when that file is gone.
+func TestOpenNamesTheMissingFile(t *testing.T) {
+	ctx := context.Background()
+	cfg := testConfig(t)
+	refused := func(why, prefix string) {
+		t.Helper()
+		a, err := Open(ctx, cfg, quietLog())
+		if err == nil {
+			a.Close()
+		}
+		if err == nil || !strings.HasPrefix(err.Error(), prefix) || !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s: want %q..., got %v", why, prefix, err)
+		}
+	}
+	refused("before sqsolve init", "SQS-C052 "+instanceIDPath(cfg)+" is missing: run sqsolve init (the sqsolve-init service of the compose file): ")
+	if err := Init(cfg, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(cfg.SuperuserPasswordFile()); err != nil {
+		t.Fatal(err)
+	}
+	refused("without the superuser password", "SQS-C014 superuser password: ")
+	if _, err := os.Stat(cfg.DBPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a refused start created the catalog database")
 	}
 }

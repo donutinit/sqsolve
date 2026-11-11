@@ -131,11 +131,20 @@ func (s *Service) Settings(ctx context.Context) Settings {
 	return cur
 }
 
+// ValidateAdvertisedHost checks the address the workstations use to reach
+// the server: an IP or a name, without a port, a scheme or a path.
+func ValidateAdvertisedHost(host string) error {
+	if strings.ContainsAny(host, " /\\:\"'<>") {
+		return errors.New("SQS-C030 invalid advertised address: type only the IP or the name, without a port")
+	}
+	return nil
+}
+
 // SaveSettings validates and stores settings.
 func (s *Service) SaveSettings(ctx context.Context, by audit.Actor, st Settings) error {
 	st.AdvertisedHost = strings.TrimSpace(st.AdvertisedHost)
-	if strings.ContainsAny(st.AdvertisedHost, " /\\:\"'<>") {
-		return errors.New("SQS-C030 invalid advertised address: type only the IP or the name, without a port")
+	if err := ValidateAdvertisedHost(st.AdvertisedHost); err != nil {
+		return err
 	}
 	if err := st.DefaultPolicy.Validate(); err != nil {
 		return err

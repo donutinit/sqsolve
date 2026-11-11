@@ -93,8 +93,8 @@ services (optional egress), containers and host (volumes).
   transaction, so two administrators demoting or disabling each other at the same time cannot
   leave none.
 - Recovery: `docker compose exec sqsolve sqsolve admin reset-password <user>` or
-  `sqsolve admin create --role admin`. Whoever reaches the container console already controls
-  the host.
+  `sqsolve admin create <user>` (the `admin` role by default). Whoever reaches the container
+  console already controls the host.
 
 ## 5. Authorization
 

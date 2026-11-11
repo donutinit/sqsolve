@@ -183,7 +183,8 @@ func TestEmitMissingAndUnknown(t *testing.T) {
 	}
 
 	g.add(&row{table: "Sm2MpMedia", id: "w1", class: "Sm2MpWeird", vals: map[string]any{}})
-	if _, err := e.document("", "Sm2MpMedia", "w1"); !errors.Is(err, ErrUnsupported) {
+	if _, err := e.document("", "Sm2MpMedia", "w1"); !errors.Is(err, ErrUnsupported) ||
+		err.Error() != `SQS-E004 the experimental export does not reproduce this feature: class "Sm2MpWeird" of table Sm2MpMedia` {
 		t.Errorf("unknown class: %v", err)
 	}
 	if _, err := e.document("", "Sm2MpMedia", "absent"); !errors.Is(err, ErrNotFound) {

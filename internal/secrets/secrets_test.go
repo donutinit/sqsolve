@@ -56,8 +56,8 @@ func TestBoxRoundTripAndAAD(t *testing.T) {
 	if err != nil || got.Reveal() != "abc" {
 		t.Fatalf("open: %v %q", err, got.Reveal())
 	}
-	if _, err := b.Open(sealed, "library_credentials.password_enc.01Y"); !errors.Is(err, ErrDecrypt) {
-		t.Fatal("aad not enforced")
+	if _, err := b.Open(sealed, "library_credentials.password_enc.01Y"); !errors.Is(err, ErrDecrypt) || err.Error() != "SQS-C012 could not decrypt the secret" {
+		t.Fatalf("aad not enforced: %v", err)
 	}
 	other, _ := NewBox(RandomBytes(32))
 	if _, err := other.Open(sealed, "library_credentials.password_enc.01X"); !errors.Is(err, ErrDecrypt) {

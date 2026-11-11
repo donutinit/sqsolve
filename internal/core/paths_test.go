@@ -443,6 +443,38 @@ func TestForgetInvalidBackup(t *testing.T) {
 	}
 }
 
+// A blocked backup (SQS-B043) is left alone by retention: it is not one of
+// its candidates, so it takes none of the places of the policy (a readable
+// backup is not expired in its stead) and is not among the backups the next
+// pass would delete.
+func TestBlockedBackupsTakeNoRetentionPlace(t *testing.T) {
+	e := newBkEnv(t)
+	e.svc.Audit = audit.New(e.svc.DB)
+	l := e.library("client_x", StateActive)
+	older := e.backup(l, bkOpt{started: time.Now().Add(-72 * time.Hour)})
+	newer := e.backup(l, bkOpt{started: time.Now().Add(-48 * time.Hour)})
+	blocked := e.pathRow(l, "../../elsewhere/client_x.backup") // the newest row of the library
+	keep, expire, err := e.svc.RetentionPreview(e.ctx, l.ID, Policy{Enabled: true, Cron: "0 2 * * *", Timezone: "UTC", KeepLast: 2, MinVerified: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keep) != 2 || keep[older.ID] == "" || keep[newer.ID] == "" || len(expire) != 0 {
+		t.Fatalf("keep %v, expire %v: want the two readable backups kept and nothing expired", keep, expire)
+	}
+	e.policy(l, 2, 1)
+	if n, err := e.svc.applyRetention(e.ctx, l.ID); err != nil || n != 0 {
+		t.Fatalf("applyRetention: %d %v", n, err)
+	}
+	for _, b := range []*Backup{older, newer, blocked} {
+		if got, err := e.svc.Backup(e.ctx, b.ID); err != nil || got.Status != BackupOK {
+			t.Fatalf("backup %s after retention: %+v %v", b.ID, got, err)
+		}
+	}
+	if abs, err := e.svc.AbsPath(older); err != nil || !onDisk(abs) {
+		t.Fatalf("the readable backup a blocked row would have displaced is gone: %v", err)
+	}
+}
+
 // Review of 1.2.2: a backup whose path is blocked (SQS-B043) is not a
 // verified backup for any safety rule: not the latest verified one, not
 // one of the verified backups retention must keep, not the guard against

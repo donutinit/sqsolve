@@ -11,6 +11,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -89,5 +92,51 @@ func TestStopGracefullyInterruptsJobsThenNotifies(t *testing.T) {
 	defer mu.Unlock()
 	if len(got) != 1 || got[0].Type != events.JobInterrupted || got[0].JobID != j.ID {
 		t.Fatalf("notifications after the stop: %+v", got)
+	}
+}
+
+// `sqsolve help` lists every command: the usage text names each flag the
+// commands read (found in main.go) and the help command itself.
+func TestUsageNamesEveryFlag(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := regexp.MustCompile(`(?:hasFlag|flagValue)\(args, "(--[a-z-]+)"\)|fs\.(?:String|Bool)\("([a-z-]+)"`).FindAllStringSubmatch(string(src), -1)
+	if len(read) < 8 {
+		t.Fatalf("only %d flags found in main.go: the pattern no longer matches how flags are read", len(read))
+	}
+	for _, m := range read {
+		flag := m[1]
+		if flag == "" {
+			flag = "--" + m[2]
+		}
+		if !strings.Contains(usage, flag) {
+			t.Errorf("the usage text does not mention %s", flag)
+		}
+	}
+	if !strings.Contains(usage, "sqsolve help") {
+		t.Error("the usage text does not mention sqsolve help")
+	}
+}
+
+// The service refuses to start as a user other than the one the volumes were
+// prepared for, before it opens anything: it says both pairs and what to
+// change in the compose file.
+func TestServeRefusesAnotherUser(t *testing.T) {
+	uid, gid := os.Getuid(), os.Getgid()
+	app := filepath.Join(t.TempDir(), "app")
+	t.Setenv("SQSOLVE_APP_DIR", app)
+	t.Setenv("SQSOLVE_UID", strconv.Itoa(uid+1))
+	t.Setenv("SQSOLVE_GID", strconv.Itoa(gid))
+	err := serve()
+	want := "SQS-C053 the service runs as " + strconv.Itoa(uid) + ":" + strconv.Itoa(gid) + " but SQSOLVE_UID and SQSOLVE_GID say " +
+		strconv.Itoa(uid+1) + ":" + strconv.Itoa(gid) + ". In the compose file, the user: line of the sqsolve service must equal " +
+		"SQSOLVE_UID:SQSOLVE_GID; then run sqsolve-init again so it fixes the owners"
+	if err == nil || err.Error() != want {
+		t.Fatalf("want %q, got %v", want, err)
+	}
+	if _, err := os.Stat(app); !os.IsNotExist(err) {
+		t.Fatal("a refused start created the application folder")
 	}
 }

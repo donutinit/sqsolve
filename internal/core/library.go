@@ -327,8 +327,20 @@ func (s *Service) CreateLibrary(ctx context.Context, by audit.Actor, in CreateIn
 // forgetProvisioning removes the row of a new library whose job could not be
 // queued (for example without its audit entry), so the same request can be
 // made again; nothing else exists for it yet. cause is returned.
+//
+// Enqueue can also fail once its transaction is committed (the request was
+// cancelled before the job was read back): the job is queued then and needs
+// its row, so a library that has a job is kept.
 func (s *Service) forgetProvisioning(ctx context.Context, id string, cause error) error {
 	c := context.WithoutCancel(ctx)
+	var queued int
+	if err := s.DB.QueryRowContext(c, `SELECT count(*) FROM jobs WHERE library_id = ?`, id).Scan(&queued); err != nil {
+		s.Log.Error("could not tell whether the job of a new library was queued; its row was kept", "library", id, "err", err)
+		return cause
+	}
+	if queued > 0 {
+		return cause
+	}
 	if _, err := s.DB.ExecContext(c, `DELETE FROM backup_policies WHERE library_id = ?`, id); err != nil {
 		s.Log.Error("could not remove the policy of a library that was not queued", "library", id, "err", err)
 	}

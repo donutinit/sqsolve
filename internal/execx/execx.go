@@ -90,8 +90,7 @@ type Cmd struct {
 	Args       []string
 	Env        []string // extra KEY=VALUE pairs
 	Credential *Credential
-	Stdout     *bytes.Buffer // optional; capped at MaxOutput
-	MaxOutput  int
+	MaxOutput  int // cap of the captured stdout and stderr, each; 64 KiB when zero
 }
 
 // Result of a finished command.
@@ -183,11 +182,7 @@ func (r *Runner) Run(ctx context.Context, c Cmd) (Result, error) {
 	stderr := &capped{max: max}
 	stdout := &capped{max: max}
 	cmd.Stderr = stderr
-	if c.Stdout != nil {
-		cmd.Stdout = c.Stdout
-	} else {
-		cmd.Stdout = stdout
-	}
+	cmd.Stdout = stdout
 	start := time.Now()
 	err = cmd.Start()
 	if err == nil {

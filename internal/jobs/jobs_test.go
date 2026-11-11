@@ -74,6 +74,9 @@ func TestRunStepsLogsResult(t *testing.T) {
 	m.Register(Spec{Type: "t.fail", Run: func(ctx context.Context, r *Run) error {
 		return r.Step("broken", func() error { return errors.New("SQS-B012 no space") })
 	}})
+	m.Register(Spec{Type: "t.uncoded", Run: func(ctx context.Context, r *Run) error {
+		return errors.New("connection reset by peer")
+	}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m.Start(ctx)
@@ -97,6 +100,13 @@ func TestRunStepsLogsResult(t *testing.T) {
 	f = waitState(t, m, f.ID, Failed)
 	if f.ErrorCode != "SQS-B012" {
 		t.Fatalf("code %q", f.ErrorCode)
+	}
+	// An error that carries no code of its own is filed under SQS-X900, with
+	// its text as the detail.
+	u, _ := m.Enqueue(ctx, "t.uncoded", "", nil, audit.System)
+	u = waitState(t, m, u.ID, Failed)
+	if u.ErrorCode != "SQS-X900" || u.ErrorDetail != "connection reset by peer" {
+		t.Fatalf("uncoded failure: %q %q", u.ErrorCode, u.ErrorDetail)
 	}
 }
 
@@ -136,6 +146,12 @@ func TestCancelAndInterrupt(t *testing.T) {
 		return ctx.Err()
 	}})
 	m.Register(Spec{Type: "t.noop", Run: func(ctx context.Context, r *Run) error { return nil }})
+	hold, running := make(chan struct{}), make(chan struct{})
+	m.Register(Spec{Type: "t.swap", Run: func(ctx context.Context, r *Run) error {
+		close(running)
+		<-hold
+		return ctx.Err()
+	}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m.Start(ctx)
@@ -145,6 +161,19 @@ func TestCancelAndInterrupt(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitState(t, m, j.ID, Cancelled)
+
+	// A running job of a type that cannot be cancelled is refused with its
+	// code and goes on; a job nobody knows is not found.
+	sw, _ := m.Enqueue(ctx, "t.swap", "", nil, audit.System)
+	<-running
+	if err := m.Cancel(ctx, sw.ID); !errors.Is(err, ErrNotCancellable) || err.Error() != "SQS-J003 this job cannot be cancelled right now" {
+		t.Fatalf("cancel of a job that cannot be cancelled: %v", err)
+	}
+	if err := m.Cancel(ctx, "NOSUCHJOB"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cancel of an unknown job: %v", err)
+	}
+	close(hold)
+	waitState(t, m, sw.ID, Succeeded)
 
 	// A job left "running" by a dead process becomes interrupted.
 	db.ExecContext(ctx, `INSERT INTO jobs(id, type, state, scheduled_for, created_at, created_by_type) VALUES ('X1', 't.noop', 'running', ?, ?, 'system')`, store.NowT(), store.NowT())

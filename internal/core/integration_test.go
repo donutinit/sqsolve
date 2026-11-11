@@ -408,7 +408,7 @@ func TestInitWindowExpiresAndHBA(t *testing.T) {
 	}
 	e.wait(j, jobs.Succeeded)
 	hba, _ := os.ReadFile(filepath.Join(e.c.ConfDir, "pg_hba.conf"))
-	if !strings.Contains(string(hba), "host\tvence\tvence\tall\tscram-sha-256") {
+	if !strings.Contains(string(hba), "host\t\"vence\"\t\"vence\"\tall\tscram-sha-256") {
 		t.Fatalf("hba:\n%s", hba)
 	}
 	e.svc.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
@@ -442,6 +442,45 @@ func TestInitWindowExpiresAndHBA(t *testing.T) {
 		t.Fatal(err)
 	}
 	conn.Close(ctx)
+}
+
+// "all" is a valid library identifier and a keyword of pg_hba.conf, where it
+// stands for every database and every role. The line of a library with that
+// name admits its own role and nobody else: the roles of another library stay
+// behind that library's network rules.
+func TestLibraryNamedLikeAnHBAKeywordOpensNothingElse(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	guarded, guardedPass := e.createActive("guarded")
+	if err := e.svc.SetNetworkRules(ctx, admin, guarded.ID, []string{"10.9.9.0/24"}); err != nil {
+		t.Fatal(err)
+	}
+	refused := func(when string) {
+		t.Helper()
+		for _, db := range []string{guarded.DBName, "postgres"} {
+			if conn, err := e.c.ConnectTCP(ctx, guarded.OwnerRole, guardedPass, db); err == nil {
+				conn.Close(ctx)
+				t.Fatalf("%s: %s reached %s from 127.0.0.1 with only 10.9.9.0/24 allowed", when, guarded.OwnerRole, db)
+			}
+		}
+	}
+	refused("before")
+	l, j, err := e.svc.CreateLibrary(ctx, admin, core.CreateInput{DisplayName: "All", Slug: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(j, jobs.Succeeded)
+	refused("with a library called all")
+	hba, _ := os.ReadFile(filepath.Join(e.c.ConfDir, "pg_hba.conf"))
+	if !strings.Contains(string(hba), "host\t\"all\"\t\"all\"\tall\tscram-sha-256\n") {
+		t.Fatalf("hba:\n%s", hba)
+	}
+	// Its own role still enters, as any library waiting for Resolve does.
+	pass, err := e.svc.RevealPassword(ctx, admin, l.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.connect(l.OwnerRole, pass, "postgres").Close(ctx)
 }
 
 func TestMemberCredential(t *testing.T) {

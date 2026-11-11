@@ -188,8 +188,10 @@ sqsolve does not measure media volumes.
 ### 3.8 Settings
 
 Tabs: **General** (installation name and the address workstations use; default policy for new
-libraries: cron and retention; time limits: initialization window, days in the trash and days
-the previous state is kept, each between 1 and 3650, hours without a backup before the warning,
+libraries: cron and retention, where the cron expression has no effect while the default mode is
+activity-based, `docs/19-risks.md` §5 K-10; time limits: initialization window, days in the
+trash and days the previous state is kept, each between 1 and 3650, hours without a backup
+before the warning,
 maximum upload; security: library users in the `postgres` database, TLS only, second factor
 required for administrators; Experimental: "Export of projects (.drp) and grades (.drx) from the
 panel", off by default, ADR 0019; and the upload of your own panel certificate), **Users**

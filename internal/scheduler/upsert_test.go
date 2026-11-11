@@ -84,6 +84,66 @@ func TestUpsertUpdatesInPlace(t *testing.T) {
 	}
 }
 
+// SetTimezone moves a schedule to another zone and keeps its expression,
+// whether it is enabled and its window. The next run is computed again in the
+// new zone, except when a run is already due: that one stays for the next
+// tick. An unknown zone or kind changes nothing, and a schedule that does not
+// exist is not created.
+func TestSetTimezoneKeepsTheScheduleAndADueRun(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, _ := newScheduler(t)
+	s.RegisterKind("backup", Kind{JobType: "backup.create", Jitter: true, Title: "backup"})
+	s.RegisterKind("verify", Kind{JobType: "backup.verify", Title: "verification"})
+	now := time.Date(2026, 10, 20, 11, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return now }
+	if err := s.Upsert(ctx, "verify", "", "0 4 * * *", "UTC", false, 3*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Upsert(ctx, "backup", "LIB1", "0 4 * * *", "UTC", true, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := s.Get(ctx, "verify", "")
+	mx, _ := time.LoadLocation("America/Mexico_City")
+	for _, target := range []string{"", "LIB1"} {
+		kind := map[string]string{"": "verify", "LIB1": "backup"}[target]
+		if err := s.SetTimezone(ctx, kind, target, "America/Mexico_City"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _ := s.Get(ctx, "verify", "")
+	// 11:00 UTC is 05:00 in Mexico City: the next 04:00 there is tomorrow's.
+	want := time.Date(2026, 10, 21, 4, 0, 0, 0, mx)
+	if got.ID != first.ID || got.Cron != "0 4 * * *" || got.Timezone != "America/Mexico_City" || got.Enabled || got.MisfireWindow != 3*time.Hour || !got.NextRunAt.Equal(want) {
+		t.Fatalf("moved %+v, next %s, want %s", got, got.NextRunAt, want)
+	}
+	if b, _ := s.Get(ctx, "backup", "LIB1"); b.Timezone != "America/Mexico_City" || !b.Enabled || !b.NextRunAt.Equal(want.Add(JitterFor("LIB1"))) {
+		t.Fatalf("moved with jitter %+v, next %s", b, b.NextRunAt)
+	}
+	// Two days later the run of the 21st is due and was not made yet.
+	now = now.Add(48 * time.Hour)
+	if err := s.SetTimezone(ctx, "verify", "", "Europe/Madrid"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = s.Get(ctx, "verify", ""); got.Timezone != "Europe/Madrid" || !got.NextRunAt.Equal(want) {
+		t.Fatalf("a due run was moved: %+v, next %s", got, got.NextRunAt)
+	}
+	if err := s.SetTimezone(ctx, "verify", "", "Mars/Base"); err == nil || err.Error() != `SQS-J020 invalid schedule expression: time zone "Mars/Base"` {
+		t.Fatalf("bad time zone: %v", err)
+	}
+	if err := s.SetTimezone(ctx, "nope", "", "UTC"); err == nil || err.Error() != "SQS-J021 unknown schedule kind: nope" {
+		t.Fatalf("unknown kind: %v", err)
+	}
+	if got, _ = s.Get(ctx, "verify", ""); got.Timezone != "Europe/Madrid" {
+		t.Fatalf("a refused change was stored: %+v", got)
+	}
+	if err := s.SetTimezone(ctx, "verify", "LIB9", "UTC"); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := s.List(ctx); len(all) != 2 {
+		t.Fatalf("%d schedules, want 2", len(all))
+	}
+}
+
 // Previews list the next runs in order; an invalid expression gives
 // SQS-J020 and a date that comes rarely is still found.
 func TestUpcomingPreview(t *testing.T) {

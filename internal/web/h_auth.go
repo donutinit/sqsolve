@@ -98,6 +98,13 @@ func (s *Server) setupSubmit(w http.ResponseWriter, r *http.Request) {
 		back("The passwords do not match.")
 		return
 	}
+	// Checked before the administrator exists: refused afterwards, the
+	// setup would have created the account and spent the installation code
+	// while storing none of the settings.
+	if err := core.ValidateAdvertisedHost(strings.TrimSpace(r.FormValue("host"))); err != nil {
+		back(humanError(err))
+		return
+	}
 	// The code is held while the administrator is created and spent with
 	// it: concurrent setups with the same code create one administrator.
 	var u *auth.User

@@ -50,6 +50,7 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-B051` | the file is outside the import folder |
 | `SQS-B052` | could not save the upload: ... |
 | `SQS-B054` | there is already a file named ... in the import folder; import it from the list or rename it |
+| `SQS-B055` | there is no file named ... in the import folder |
 | `SQS-B060` | the window stops: ... was not backed up and verified: ... |
 | `SQS-B070` | the verification could not run: |
 | `SQS-B071` | ... is still being written (it went from ... to ...); import it when the copy has finished |

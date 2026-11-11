@@ -68,6 +68,16 @@ func TestRetryPolicy(t *testing.T) {
 	if _, err := m.Retry(ctx, c.ID, op); err == nil || !strings.HasPrefix(err.Error(), "SQS-J031 the stored parameters of job "+c.ID+" are not valid: ") {
 		t.Fatalf("retry with broken params: %v", err)
 	}
+	// Only a job that ended without success is retried: not one still
+	// queued, nor one that succeeded.
+	q, _ := m.Enqueue(ctx, "t.backup", "LIB3", nil, audit.System)
+	done, _ := m.Enqueue(ctx, "t.backup", "LIB4", nil, audit.System)
+	failJob(t, db, done.ID, Succeeded)
+	for _, id := range []string{q.ID, done.ID} {
+		if _, err := m.Retry(ctx, id, op); err == nil || err.Error() != "SQS-J004 only failed, cancelled or interrupted jobs can be retried" {
+			t.Fatalf("retry of a job that did not fail: %v", err)
+		}
+	}
 	// The permission comes from the type; unknown types need an empty action.
 	if m.Action("t.replace") != "restore.replace" || m.Action("t.backup") != "backup.create" || m.Action("nope") != "" {
 		t.Fatal("actions per type")

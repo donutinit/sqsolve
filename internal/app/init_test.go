@@ -185,3 +185,33 @@ func TestInitFailsWhenAnACLKeepsAWiderMode(t *testing.T) {
 		t.Fatalf("want %q, got %v", want, err)
 	}
 }
+
+// A folder sqsolve needs and cannot create stops init with its code and the
+// path: one of the application volume (a file sits where the folder goes) and
+// the backups volume of a new installation (its parent cannot be written).
+func TestInitNamesTheFolderItCannotCreate(t *testing.T) {
+	cfg := established(t)
+	tls := filepath.Join(cfg.AppDir, "tls")
+	if err := os.RemoveAll(tls); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tls, []byte("not a folder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := initOut(t, cfg); err == nil || !strings.HasPrefix(err.Error(), "SQS-C050 could not create "+tls+": ") {
+		t.Fatalf("a file where the tls folder goes: %v", err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a folder without write permission")
+	}
+	fresh := testConfig(t)
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o700) })
+	fresh.BackupDir = filepath.Join(parent, "backups")
+	if _, err := initOut(t, fresh); err == nil || !strings.HasPrefix(err.Error(), "SQS-C051 backups volume: ") || !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("a backups folder that cannot be created: %v", err)
+	}
+}

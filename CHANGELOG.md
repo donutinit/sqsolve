@@ -5,6 +5,65 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+- Security: a library whose identifier is a keyword of `pg_hba.conf` no longer changes what the
+  file means. `all`, `sameuser`, `samerole`, `samegroup` and `replication` are valid identifiers,
+  and until now they were written bare: from the moment a library called `all` was created, its
+  line admitted every library role to every database from that library's addresses, so the
+  network rules of the other libraries and the closed maintenance database stopped applying
+  (passwords and database privileges still did); one called `replication` or `sameuser` got a
+  line that did not match its own connections. The database and the roles of every library line
+  are now written between double quotes, where PostgreSQL reads them as plain names. The file is
+  rewritten and reloaded at the first start of this version.
+- The fixed maintenance schedules follow `TZ`. They were stored with the time zone of the first
+  start and kept it: after a change of `TZ`, retention, the weekly verification, optimization,
+  the control plane backup, the catalog check, the purge and housekeeping went on running at
+  their hours of the old zone. The next start now moves them to the new zone, each with its own
+  expression and state; a run that was already due is still made, or reported as missed, first.
+- Console: `sqsolve help` shows `--terminate` for `restore --replace` and lists itself; the flag
+  worked but the usage text did not name it. `docs/08-security.md` wrote the recovery command as
+  `sqsolve admin create --role admin`, which takes `--role` as the user name; it is
+  `sqsolve admin create <user>`.
+- The files of catalog migrations 1 to 4 have English names (`0001_initial.sql`,
+  `0002_account_lockout.sql`, `0003_activity_based_backups.sql`, `0004_export_from_backup.sql`);
+  their statements are the same. A migration is known by its number and its statements, so an
+  installed database, which recorded the old names, opens as before and applies nothing again.
+- Tests: `TestControlPlaneBackupKeepsTheNewestCopies` pinned the job clock to October 2026 while
+  the audit log stamps its entries with the real clock, so `make check` failed from 2026-11-01
+  on. The test now runs the job in the month its audit entry was written in.
+- A manifest that is JSON but not a valid version 1 manifest (`SQS-B042`) is a verdict of the
+  level 1 check, as `docs/11-backups-and-automation.md` §5.1 says: the backup is marked failed.
+  Since 1.2.2 the check answered that it could not run (`SQS-B070`), so the backup stayed
+  verified and kept counting as the latest verified backup and among the verified backups that
+  retention keeps, while no restore could read it.
+- A library restored as new keeps the schedule mode of the library its backup came from. The
+  copy of the policy left the mode out, so the backup of a library with activity-based backups
+  gave a new library with a cron schedule at the check cadence: a backup every 5 to 60 minutes,
+  with changes or without.
+- The row of a new library is forgotten only when its job was not queued. When the request was
+  cancelled right after the job was stored, the row was removed and the queued job failed with
+  `SQS-L002`.
+- Reconciliation no longer notes that it deleted the leftovers of an interrupted backup whose
+  catalog path is not valid (`SQS-B043`); it only says that its files were not touched.
+- Setup checks the address the workstations use before it creates the administrator. An address
+  with a port, or the IPv6 address the panel was opened with, was refused (`SQS-C030`) only when
+  the settings were saved: the account already existed and the installation code was spent, so
+  the setup ended on the login page with none of its settings stored.
+- Retention leaves a blocked backup (`SQS-B043`) out of its candidates. It was already left out
+  of the verified backups retention keeps, but it still took one of the places of the policy
+  (latest, daily, weekly, monthly): a readable backup could expire in its stead, and a blocked
+  one that fell among the expired made every pass log a deletion that never happens. The count
+  of the Schedule tab no longer includes blocked backups.
+- Importing a file that is not in the import folder says so (`SQS-B055`). The job answered
+  `SQS-B051`, "the file is outside the import folder", for a name that did not exist; that code
+  is left for a name that leads out of the folder.
+- API: `PUT /libraries/{id}/backup-policy` answers with the policy as stored, the object the
+  next `GET` returns. It echoed the body: an empty `mode` instead of `cron`, and in activity mode
+  the `cron` that was sent instead of the check cadence.
+- A long error shown as a notice in the panel is shortened at a character boundary; a name with
+  accents that fell on the cut left half a character.
+- Tests: the error codes that no test named are now checked with their message (`SQS-A002`,
+  `SQS-A005`, `SQS-B051`, `SQS-C012`, `SQS-C014`, `SQS-C050` to `SQS-C053`, `SQS-E004`,
+  `SQS-J003`, `SQS-J004`, `SQS-P040`, `SQS-P041`, `SQS-X001`, `SQS-X003`, `SQS-X900`).
 - Documentation: every document describes 1.2.2 as it is, checked against the code, with what
   is not implemented or not validated with Resolve said plainly. The task breakdown
   (`docs/21-tasks.md`), `PLAN.md` and the audit report `REPORT.md` are removed: the known issues

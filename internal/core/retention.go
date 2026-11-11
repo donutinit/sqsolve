@@ -153,8 +153,9 @@ func (s *Service) RetentionPreview(ctx context.Context, libraryID string, p Poli
 	return keep, expire, nil
 }
 
-// retentionItems reads the ok backups of a library. The SQLite rowid of the
-// catalog row is its insertion order.
+// retentionItems reads the ok backups of a library that retention decides
+// on: the blocked ones are not among them. The SQLite rowid of the catalog
+// row is its insertion order.
 func (s *Service) retentionItems(ctx context.Context, libraryID string) ([]RetentionItem, error) {
 	var dbName string
 	s.DB.QueryRowContext(ctx, `SELECT db_name FROM libraries WHERE id = ?`, libraryID).Scan(&dbName)
@@ -171,10 +172,15 @@ func (s *Service) retentionItems(ctx context.Context, libraryID string) ([]Reten
 		if err := rows.Scan(&it.ID, &it.Seq, &started, &it.Kind, &it.Pinned, &verify, &source, &path); err != nil {
 			return nil, err
 		}
+		// A blocked backup (SQS-B043) is left alone: it is not a candidate.
+		// It is not one of the verified backups retention must keep, it
+		// takes none of the places of the policy (a readable backup would
+		// expire in its stead) and it is never expired.
+		if s.blocked(&Backup{ID: it.ID, FilePath: path}) {
+			continue
+		}
 		it.Started = store.ParseT(started)
-		// A blocked backup (SQS-B043) is not one of the verified backups
-		// retention must keep; retention never deletes it either.
-		it.Verified = (&Backup{VerifyStatus: verify}).Verified() && !s.blocked(&Backup{ID: it.ID, FilePath: path})
+		it.Verified = (&Backup{VerifyStatus: verify}).Verified()
 		it.Aux = auxSource(dbName, source)
 		items = append(items, it)
 	}

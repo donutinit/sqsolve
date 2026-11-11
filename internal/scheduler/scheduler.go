@@ -153,6 +153,41 @@ func (s *Scheduler) Upsert(ctx context.Context, kind, target, cron, tz string, e
 	return err
 }
 
+// SetTimezone moves the schedule of (kind, target) to another time zone and
+// keeps its expression, whether it is enabled and its misfire window. The next
+// run is computed again in the new zone, unless a run is already due: that one
+// is left for the next tick, which fires it or reports it as missed and goes
+// on in the new zone. A schedule that does not exist is not created.
+func (s *Scheduler) SetTimezone(ctx context.Context, kind, target, tz string) error {
+	k, ok := s.kinds[kind]
+	if !ok {
+		return fmt.Errorf("SQS-J021 unknown schedule kind: %s", kind)
+	}
+	sc, err := s.Get(ctx, kind, target)
+	if err != nil || sc == nil {
+		return err
+	}
+	loc, err := Validate(sc.Cron, tz)
+	if err != nil {
+		return err
+	}
+	now := s.Now()
+	if sc.NextRunAt != nil && !sc.NextRunAt.After(now) {
+		_, err = s.db.ExecContext(ctx, `UPDATE schedules SET timezone = ? WHERE id = ?`, tz, sc.ID)
+		return err
+	}
+	var jitter time.Duration
+	if k.Jitter {
+		jitter = JitterFor(target)
+	}
+	next, err := Next(sc.Cron, loc, now, jitter)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE schedules SET timezone = ?, next_run_at = ? WHERE id = ?`, tz, store.T(next), sc.ID)
+	return err
+}
+
 // Delete removes the schedule of (kind, target).
 func (s *Scheduler) Delete(ctx context.Context, kind, target string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM schedules WHERE kind = ? AND target_id = ?`, kind, target)

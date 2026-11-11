@@ -80,15 +80,18 @@ func (s *Service) Reconcile(ctx context.Context, interrupted []*jobs.Job) []stri
 	// 2. Backups that were running.
 	rows, _ := s.Backups(ctx, BackupFilter{Statuses: []string{BackupRunning}})
 	for _, b := range rows {
-		if abs, err := s.AbsPath(b); err != nil {
-			note("backup %s interrupted; its files were not touched: %v", b.ID, err)
-		} else {
+		abs, err := s.AbsPath(b)
+		if err == nil {
 			removeIfExists(abs + ".partial")
 			removeIfExists(abs)
 			removeIfExists(manifestPath(abs))
 		}
 		s.DB.ExecContext(ctx, `UPDATE backups SET status = 'interrupted', finished_at = ?, error = 'The process stopped during the backup' WHERE id = ?`, store.NowT(), b.ID)
-		note("backup %s interrupted; its leftovers were deleted", b.ID)
+		if err != nil {
+			note("backup %s interrupted; its files were not touched: %v", b.ID, err)
+		} else {
+			note("backup %s interrupted; its leftovers were deleted", b.ID)
+		}
 	}
 	filepath.WalkDir(filepath.Join(s.Cfg.BackupDir, "libraries"), func(p string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".partial") {

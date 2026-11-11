@@ -524,7 +524,14 @@ func (a *API) policyPut(w http.ResponseWriter, r *http.Request, p *auth.Principa
 		problem(w, r, statusFor(err), err)
 		return
 	}
-	writeJSON(w, 200, pol)
+	// The policy as stored, which is what the next GET returns: an empty
+	// mode is cron, and in activity mode the schedule is the check cadence.
+	stored, err := a.A.Svc.Policy(r.Context(), r.PathValue("id"))
+	if err != nil {
+		problem(w, r, statusFor(err), err)
+		return
+	}
+	writeJSON(w, 200, stored)
 }
 
 func (a *API) listBackups(w http.ResponseWriter, r *http.Request, libraryID string) {
