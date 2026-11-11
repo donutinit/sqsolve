@@ -6,7 +6,7 @@
 |---|---|---|
 | `README.md` | Everyone | What it is, quick installation, links |
 | `docs/manual/user-guide.md` | Administrators and editors | Requirements, installation with the compose file, first start, libraries and Resolve workstations, backups, restore, access per library, panel users, notifications and API, export, console, updating, moving to another server, troubleshooting |
-| `docs/manual/errors.md` | Everyone | Every `SQS-` code with its message, generated with `make errors` (230 codes in 1.2.2) |
+| `docs/manual/errors.md` | Everyone | Every `SQS-` code with its message, generated with `make errors` (231 codes in 1.2.3) |
 | `docs/runbooks/*.md` | Administrators | Restore a backup and revert, recover an installation on another server, upgrade sqsolve, a backup with an invalid path |
 | `docs/` technical | Developers, agents | Architecture, requirements, contracts, ADRs (`docs/adr`), PoC records (`docs/poc`), acceptance records (`docs/acceptance`), interface checklist (`docs/ui`), visual identity (`docs/brand`); index in `docs/README.md` |
 | `api/schemas/manifest.v1.json` | Integrators | JSON schema of the backup manifest. The API is described in `10-api.md`; there is no `api/openapi.yaml` |

@@ -58,7 +58,7 @@ What runs, in `.github/workflows` and `.github/dependabot.yml`:
     workstations over TCP and provokes failures: a workstation writing during the backup,
     restoring with Resolve open, sqsolve killed mid-job (no `pg_dump` survives and no `.partial`
     remains), PostgreSQL down and back, a backups folder without permission, trash and purge
-    (66 checks at 1.2.2).
+    (68 checks at 1.2.3).
   - `smoke`, with users 1000 and 568 (the one used by TrueNAS apps): builds the image, runs
     `govulncheck -mode=binary` (pinned version) on `/usr/local/bin/sqsolve` extracted from it
     (once, with user 1000), brings up `deploy/compose.yaml` as is with temporary paths and runs

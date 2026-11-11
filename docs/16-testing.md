@@ -5,7 +5,7 @@
 What runs and where. "In CI" means it gates every pull request and every published image
 (`docs/17` §4); "not in place" means there is no such test, whatever the other columns say.
 
-| Level | What it covers | Tool | Where it runs | Status (1.2.2) |
+| Level | What it covers | Tool | Where it runs | Status (1.2.3) |
 |---|---|---|---|---|
 | Unit | Pure functions and services with test doubles | `go test` | Every change, CI | In CI, with `-race`, on Go 1.26 and 1.27 |
 | Properties and fuzzing | Identifier validators, cron parser, retention, encryption, CIDRs, display names | `testing.F` | CI (short fuzz), nightly (long fuzz) | In CI: the seeds with the tests and every target for 10 s (`make fuzz`); nightly 5 min each (`fuzz.yml`). Import paths have table tests, not a fuzz target |
@@ -92,7 +92,8 @@ schema or real data.
 The scenarios check the invariants that apply to each: the active library exists and opens; no
 `ok` backup was lost; no orphaned `.partial`, `__restore_*` or `sqsolve_verify_*` remain after the
 next start; the catalog matches the files. `make scenarios` had 66 checks at 1.2.2, all passing
-(`docs/acceptance/1.2.2.md`).
+(`docs/acceptance/1.2.2.md`), and has 68 since 1.2.3: the creation and the activation of the
+second library are checked too.
 
 | Scenario | How it is triggered |
 |---|---|

@@ -1,7 +1,7 @@
 # 04. Requirements
 
 Priority: **M** mandatory for 1.0, **S** desirable in 1.x, **C** later. The status column says
-what sqsolve 1.2.2 does:
+what sqsolve 1.2.3 does:
 
 - **Met**: implemented.
 - **Partial**: implemented in part; the note says what is missing.
@@ -19,7 +19,7 @@ those records do not cover.
 
 ### 1.1 Installation and initial setup (RF-INS)
 
-| ID | Requirement | Priority | Status (1.2.2) |
+| ID | Requirement | Priority | Status (1.2.3) |
 |---|---|---|---|
 | RF-INS-01 | Installation with a single Docker Compose file that brings up PostgreSQL and sqsolve | M | Met |
 | RF-INS-02 | On first start all secrets are generated (superuser, control role, master key, TLS certificates) without intervention | M | Met |
@@ -29,7 +29,7 @@ those records do not cover.
 
 ### 1.2 Libraries (RF-BIB)
 
-| ID | Requirement | Priority | Status (1.2.2) |
+| ID | Requirement | Priority | Status (1.2.3) |
 |---|---|---|---|
 | RF-BIB-01 | Create a library with display name, identifier (slug) and notes | M | Met |
 | RF-BIB-02 | Create a library from a local template (copy of a library freshly initialized by Resolve) | S | Not implemented |
@@ -46,7 +46,7 @@ those records do not cover.
 
 ### 1.3 Credentials and access (RF-ACC)
 
-| ID | Requirement | Priority | Status (1.2.2) |
+| ID | Requirement | Priority | Status (1.2.3) |
 |---|---|---|---|
 | RF-ACC-01 | Each library has an owner role with a strong random password | M | Met |
 | RF-ACC-02 | Revealing the password requires recent reauthentication and is recorded in the audit log | M | Changed by ADR 0021: no reauthentication; only whoever has the permission reveals it, and every reveal is in the audit log |
@@ -59,7 +59,7 @@ those records do not cover.
 
 ### 1.4 Backups (RF-RES)
 
-| ID | Requirement | Priority | Status (1.2.2) |
+| ID | Requirement | Priority | Status (1.2.3) |
 |---|---|---|---|
 | RF-RES-01 | Manual backup of a library | M | Met |
 | RF-RES-02 | Independent schedule per library (presets and cron expression, time zone) | M | Met |
@@ -80,7 +80,7 @@ those records do not cover.
 
 ### 1.5 Jobs and automation (RF-TAR)
 
-| ID | Requirement | Priority | Status (1.2.2) |
+| ID | Requirement | Priority | Status (1.2.3) |
 |---|---|---|---|
 | RF-TAR-01 | Every long operation is a persistent job with state, progress and log | M | Met |
 | RF-TAR-02 | Jobs view: queued, running, succeeded, failed, interrupted, cancelled | M | Met |
@@ -93,7 +93,7 @@ those records do not cover.
 
 ### 1.6 Notifications (RF-NOT)
 
-| ID | Requirement | Priority | Status (1.2.2) |
+| ID | Requirement | Priority | Status (1.2.3) |
 |---|---|---|---|
 | RF-NOT-01 | Channels: generic webhook | M | Met |
 | RF-NOT-02 | Channels: SMTP email and ntfy | S | Met; not tested against real SMTP and ntfy servers |
@@ -102,7 +102,7 @@ those records do not cover.
 
 ### 1.7 Panel users (RF-USR)
 
-| ID | Requirement | Priority | Status (1.2.2) |
+| ID | Requirement | Priority | Status (1.2.3) |
 |---|---|---|---|
 | RF-USR-01 | Local accounts with Administrator, Operator and Viewer roles | M | Met |
 | RF-USR-02 | Optional TOTP second factor per account, configurable as mandatory for administrators | M | Met |
@@ -114,7 +114,7 @@ those records do not cover.
 
 ### 1.8 Observation and audit (RF-OBS)
 
-| ID | Requirement | Priority | Status (1.2.2) |
+| ID | Requirement | Priority | Status (1.2.3) |
 |---|---|---|---|
 | RF-OBS-01 | Health dashboard: PostgreSQL, space on each volume, certificates, latest jobs | M | Met |
 | RF-OBS-02 | Searchable and filterable event log | M | Partial: filters by minimum severity and type in the panel, and by library in the API; no text search |
@@ -125,7 +125,7 @@ those records do not cover.
 
 ### 1.9 Upgrades and compatibility (RF-ACT)
 
-| ID | Requirement | Priority | Status (1.2.2) |
+| ID | Requirement | Priority | Status (1.2.3) |
 |---|---|---|---|
 | RF-ACT-01 | Automatic SQLite schema migrations with a prior copy | M | Met |
 | RF-ACT-02 | At startup, check the PostgreSQL version and the data directory version and refuse to continue if they do not match | M | Partial: a server whose major version differs from the bundled `pg_dump` is shown as critical on the dashboard and fails `sqsolve doctor`, but sqsolve keeps running |
@@ -138,7 +138,7 @@ those records do not cover.
 
 ### 2.1 Reliability and integrity (RNF-FIA)
 
-| ID | Requirement | Status (1.2.2) |
+| ID | Requirement | Status (1.2.3) |
 |---|---|---|
 | RNF-FIA-01 | No sqsolve operation writes to a library's active database, except `GRANT`, connection-related `ALTER DATABASE` and the swap renames | Met |
 | RNF-FIA-02 | A power cut at any moment leaves the system in a state from which it recovers on its own at startup, without loss of libraries or of complete backups | Partial: tested with processes killed mid-job (`make scenarios`) and a power-loss model in the Go tests; no power cut during a backup on real hardware is recorded |
@@ -149,7 +149,7 @@ those records do not cover.
 
 ### 2.2 Security (RNF-SEG)
 
-| ID | Requirement | Status (1.2.2) |
+| ID | Requirement | Status (1.2.3) |
 |---|---|---|
 | RNF-SEG-01 | No administrative PostgreSQL role accepts network connections; local socket only | Met |
 | RNF-SEG-02 | PostgreSQL passwords with `scram-sha-256` exclusively | Met |
@@ -163,7 +163,7 @@ those records do not cover.
 
 ### 2.3 Operation (RNF-OPE)
 
-| ID | Requirement | Status (1.2.2) |
+| ID | Requirement | Status (1.2.3) |
 |---|---|---|
 | RNF-OPE-01 | Images for `linux/amd64` and `linux/arm64` | Met |
 | RNF-OPE-02 | sqsolve container start in under 5 s with PostgreSQL already available | Not measured |
@@ -174,7 +174,7 @@ those records do not cover.
 
 ### 2.4 Usability (RNF-USA)
 
-| ID | Requirement | Status (1.2.2) |
+| ID | Requirement | Status (1.2.3) |
 |---|---|---|
 | RNF-USA-01 | Interface in Spanish and English from 1.0 | Changed in 1.1.0: English is the only supported language |
 | RNF-USA-02 | Responsive design from 360 px wide | Not evidenced: no check at 360 px is recorded (tables turn into cards under 768 px) |
@@ -184,7 +184,7 @@ those records do not cover.
 
 ### 2.5 Maintainability (RNF-MAN)
 
-| ID | Requirement | Status (1.2.2) |
+| ID | Requirement | Status (1.2.3) |
 |---|---|---|
 | RNF-MAN-01 | Test coverage of `internal/` at or above 80 % of lines, 100 % in identifier validators, retention and swap | Met for the 80 % (87.1 % of statements, `16-testing.md` §1); the 100 % for validators, retention and swap is not recorded: To be confirmed |
 | RNF-MAN-02 | Direct Go dependencies limited to those in `06-stack.md` | Met |
@@ -194,7 +194,7 @@ those records do not cover.
 
 ### 2.6 Compatibility (RNF-COM)
 
-| ID | Requirement | Status (1.2.2) |
+| ID | Requirement | Status (1.2.3) |
 |---|---|---|
 | RNF-COM-01 | Resolve 21.1.x supported; 20.3.2 supported if PoC-02 passes | Partial: validated with Resolve Studio 21.1.1 on Linux only; macOS, Windows and 20.3.2 (PoC-02) not validated |
 | RNF-COM-02 | PostgreSQL 18 bundled; external server mode with 16 or later (2.0) | Partial: PostgreSQL 18 bundled (18.6); there is no external server mode |

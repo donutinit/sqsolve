@@ -263,12 +263,25 @@ func TestPanelCertificatePair(t *testing.T) {
 	}
 	pairOK()
 
-	// Missing key.
+	// Missing key: regenerated, the certificate left without it kept aside.
+	// That file is removed here: the names carry the time to the second, so
+	// the next step would write over it or add a second one depending on
+	// whether both steps fall in the same second.
+	aside := func() []string {
+		m, _ := filepath.Glob(panelCertPath(cfg) + ".replaced-*")
+		return m
+	}
 	os.Remove(panelKeyPath(cfg))
 	if err := a.LoadPanelCert(); err != nil {
 		t.Fatalf("a missing key must be repaired: %v", err)
 	}
 	pairOK()
+	if m := aside(); len(m) != 1 {
+		t.Fatalf("the certificate without its key was not kept aside: %v", m)
+	}
+	for _, p := range aside() {
+		os.Remove(p)
+	}
 
 	// A key of another certificate: regenerated, the old files kept aside.
 	_, otherKey, _ := pgconf.SelfSigned("x", []string{"localhost"}, time.Hour)
@@ -279,7 +292,7 @@ func TestPanelCertificatePair(t *testing.T) {
 		t.Fatalf("a mismatch must be repaired: %v", err)
 	}
 	pairOK()
-	if m, _ := filepath.Glob(panelCertPath(cfg) + ".replaced-*"); len(m) != 1 {
+	if m := aside(); len(m) != 1 {
 		t.Fatalf("the mismatched certificate was not kept aside: %v", m)
 	}
 	if !strings.Contains(logged.String(), "SQS-C083 the panel certificate and its key did not belong together") {

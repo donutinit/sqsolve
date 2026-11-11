@@ -181,7 +181,14 @@ CREATE TABLE "BtVideoInfo"(id bigserial primary key, clip text, meta jsonb);
 CREATE TABLE "Sm2TiItem"(id bigserial primary key, data bytea);
 """
 def resolve_create(user, pw, rows_mb=0):
-    rc, out = psql(user, pw, "postgres", f"CREATE DATABASE {user}")
+    # The panel shows "Waiting for Resolve" a moment before PostgreSQL has loaded the new
+    # pg_hba.conf (the job sets the state, then writes the file and reloads). A workstation that
+    # connects in that moment is still refused by pg_hba.conf and tries again.
+    for _ in range(50):
+        rc, out = psql(user, pw, "postgres", f"CREATE DATABASE {user}")
+        if rc == 0 or "pg_hba.conf" not in out:
+            break
+        time.sleep(0.2)
     if rc != 0:
         return rc, out
     sql = RESOLVE_SCHEMA + "".join(f'CREATE TABLE "SmAux{i:03d}"(id serial primary key, v text);' for i in range(120))
@@ -280,7 +287,8 @@ def s_isolation(lp1, user1, pw1):
     lp2 = create_library("Commercial Café")
     user2, pw2, _ = reveal(lp2)
     rc, out = resolve_create(user2, pw2)
-    wait_active(lp2, 90)
+    check("Resolve (simulated) creates the second library", rc == 0, out[-300:])
+    check("the second library activates by itself", wait_active(lp2, 90))
     rc, out = psql(user2, pw2, user1, "SELECT 1")
     check("a library cannot enter another one", rc != 0, out)
     rc, out = psql(user1, "wrong-password", user1, "SELECT 1")

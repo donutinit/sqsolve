@@ -5,6 +5,11 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+## [1.2.3] 2026-11-10
+
+Fixes from the repository audit of 2026-11-10 (network rules, schedules, retention, restore as
+new, verification, setup, console, tests and CI).
+
 - Security: a library whose identifier is a keyword of `pg_hba.conf` no longer changes what the
   file means. `all`, `sameuser`, `samerole`, `samegroup` and `replication` are valid identifiers,
   and until now they were written bare: from the moment a library called `all` was created, its
@@ -64,11 +69,33 @@ from here (`.github/workflows/release.yml`).
 - Tests: the error codes that no test named are now checked with their message (`SQS-A002`,
   `SQS-A005`, `SQS-B051`, `SQS-C012`, `SQS-C014`, `SQS-C050` to `SQS-C053`, `SQS-E004`,
   `SQS-J003`, `SQS-J004`, `SQS-P040`, `SQS-P041`, `SQS-X001`, `SQS-X003`, `SQS-X900`).
-- Documentation: every document describes 1.2.2 as it is, checked against the code, with what
-  is not implemented or not validated with Resolve said plainly. The task breakdown
-  (`docs/21-tasks.md`), `PLAN.md` and the audit report `REPORT.md` are removed: the known issues
-  of 1.2.2 are in `docs/19-risks.md` §5, what comes next in `docs/20-roadmap.md` and the code
-  layout in `docs/05-architecture.md` §4.
+- The image is built with Go 1.27.4. The pinned builder image carried Go 1.27.3, whose
+  `net/http` has GO-2026-6859 (an HTTP/1 server crash through `MaxBytesReader`, which the panel
+  uses for every form), and `govulncheck` on the binary inside the image stopped the
+  publication. The new builder image was published on 2026-11-10: it is taken before the 7 days
+  the project waits for base images because it is the security fix.
+- Tests: `TestPanelCertificatePair` passed only when two of its steps ran within the same
+  second, and failed in CI when they did not. In `make scenarios` the simulated workstation
+  connected to the second library before PostgreSQL had loaded the new `pg_hba.conf`, and the
+  script did not check that step: it failed much later, at the console backup. The workstation
+  now tries again while `pg_hba.conf` refuses it, and the creation and the activation of the
+  second library are checked (68 checks).
+- Documentation: every document describes the current version as it is, checked against the
+  code, with what is not implemented or not validated with Resolve said plainly. The task
+  breakdown (`docs/21-tasks.md`), `PLAN.md` and the audit report `REPORT.md` are removed: the
+  known issues are in `docs/19-risks.md` §5 (two more, K-10 and K-11, found in this audit and
+  not fixed), what comes next in `docs/20-roadmap.md` and the code layout in
+  `docs/05-architecture.md` §4.
+
+Upgrade: with the `1` tag, `docker compose pull` and `docker compose up -d` (TrueNAS: Update).
+There is no SQLite migration. At the first start `pg_hba.conf` is rewritten with the library
+names between quotes and PostgreSQL reloads it; open sessions are not affected. If `TZ` was
+changed after the first start of the installation, the maintenance jobs move to the hours of the
+current zone. API clients that read the answer of `PUT /libraries/{id}/backup-policy` now get the
+stored policy. The PostgreSQL image is the same as in 1.2.2 (`postgres:18.6-trixie`).
+
+Rollback: image `1.2.2`; there is no schema change. 1.2.2 writes `pg_hba.conf` again without the
+quotes at its first start.
 
 ## [1.2.2] 2026-10-26
 

@@ -10,7 +10,7 @@
 | **Unsupported** | Does not work or is not tested |
 
 Target of the policy: the current major Resolve family is supported, plus the latest version of
-the previous one that Blackmagic declares compatible at library level. As of 1.2.2 no Resolve
+the previous one that Blackmagic declares compatible at library level. As of 1.2.3 no Resolve
 version reaches "Supported": the script of §4 has not run in full on any version (steps 3, 5 and
 6 need what PoC-03, PoC-04 and PoC-07 did not cover), so the matrix uses "Verified" for what was
 tested. sqsolve does not check a library's declared Resolve version against this matrix; showing
@@ -64,7 +64,7 @@ Not validated with real Resolve, on any version or platform:
    characters, for example `21.1.1`). It is copied into each backup's manifest.
 2. **Schema fingerprint** (`07` §9) compared with the registry of known fingerprints included in
    each sqsolve version (`internal/compat/fingerprints.json`), which also indicates which
-   exports were verified with that fingerprint (`verified`). In 1.2.2 the registry holds one
+   exports were verified with that fingerprint (`verified`). In 1.2.3 the registry holds one
    fingerprint: Resolve 21.1.1 (`21.1.1.0010`, `DbPrjVer` 17), `drx` and `drp` verified on
    2026-10-19. The export pages show "Not verified with Resolve" for any other fingerprint; the
    registry is used only by the experimental export.

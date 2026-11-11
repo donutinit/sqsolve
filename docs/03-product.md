@@ -49,7 +49,7 @@ with verified backups, without depending on anyone else.
 
 ### Optional modules not implemented
 
-sqsolve 1.2.2 has none of these; they are product directions in `20-roadmap.md`:
+sqsolve 1.2.3 has none of these; they are product directions in `20-roadmap.md`:
 
 - `.resolvedbkey` keys (experimental, depends on PoC-05, which has not been run).
 - Encrypted off-site copies with restic.
@@ -58,11 +58,11 @@ sqsolve 1.2.2 has none of these; they are product directions in `20-roadmap.md`:
 
 ## 5. Use cases
 
-Status in 1.2.2. "Available" means the panel, the API or the console does it. Resolve behavior is
+Status in 1.2.3. "Available" means the panel, the API or the console does it. Resolve behavior is
 validated only as recorded in `acceptance/1.0.md`, `acceptance/1.2.2.md` and `poc/` (Resolve
 Studio 21.1.1 on Linux); where a case depends on Resolve beyond those records, the status says so.
 
-| ID | Case | Actor | Status (1.2.2) |
+| ID | Case | Actor | Status (1.2.3) |
 |---|---|---|---|
 | CU-01 | Install sqsolve with a Compose file and complete the setup wizard | Administrator | Available |
 | CU-02 | Log in and out of the panel, with optional second factor | Administrator, operator | Available |

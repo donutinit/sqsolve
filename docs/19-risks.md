@@ -1,7 +1,7 @@
 # 19. Risks
 
 Probability (P) and impact (I): H high, M medium, L low. Reviewed with each release; this review
-is for 1.2.2 (2026-10-26).
+is for 1.2.3 (2026-11-10).
 
 ## 1. Technical and compatibility
 
@@ -56,10 +56,10 @@ is for 1.2.2 (2026-10-26).
 
 ## 5. Known issues
 
-Behavior of 1.2.2 that is known to be wrong or weaker than it should be. None of them affects the
+Behavior of 1.2.3 that is known to be wrong or weaker than it should be. None of them affects the
 safety of backups, restores or recovery. Other documents cite them by ID.
 
-| ID | Behavior in 1.2.2 | Effect |
+| ID | Behavior in 1.2.3 | Effect |
 |---|---|---|
 | K-01 | `GET /api/v1/jobs/{id}/logs` answers 200 with `null` items for a job that does not exist, and the empty lists of jobs, job steps, logs, events, audit entries and `attention` come back as `null` instead of `[]` (`10-api.md` §1) | A client has to read `null` as an empty list and cannot tell an unknown job from one without logs |
 | K-02 | The detail of `SQS-E005` includes the PostgreSQL socket path and the `sqsolve_admin` role, and any authenticated user can see it | Internal names are disclosed; no secret is |
