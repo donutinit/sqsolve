@@ -5,10 +5,26 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+## [1.2.5] 2026-11-13
+
+The rebuilt PostgreSQL 18.6 image: the sqsolve image is built on it, and the compose file pins it.
+No change in sqsolve itself.
+
 - Dependencies: the PostgreSQL image is the rebuild of `postgres:18.6-trixie` published on
   2026-11-05 (digest `e3d24f69...`, same PostgreSQL 18.6, `18.6-1.pgdg13+2`), in the `Dockerfile`
   and in `deploy/compose.yaml`; the release workflow uses `softprops/action-gh-release` 3.0.4
   (Dependabot; both published more than 7 days before).
+
+Upgrade: with the `1` tag, `docker compose pull` and `docker compose up -d` (TrueNAS: Update) bring
+the new sqsolve image. The `postgres` service keeps the image line of your compose file: replace it
+with the one below (user guide, "PostgreSQL minor updates"); PostgreSQL restarts, so back up first.
+There is no migration and the PostgreSQL version is the same.
+
+```
+    image: postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+```
+
+Rollback: image `1.2.4`. The `postgres` line can stay as it is: it is the same PostgreSQL 18.6.
 
 ## [1.2.4] 2026-11-13
 

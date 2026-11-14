@@ -16,6 +16,7 @@ release is in `CHANGELOG.md` and the known issues of the current release are in 
 | 1.2.2 | 2026-10-26 | Stabilization, checked on the test installation and with Resolve (`acceptance/1.2.2.md`) |
 | 1.2.3 | 2026-11-10 | Fixes from the repository audit of 2026-11-10 |
 | 1.2.4 | 2026-11-13 | Fixes for the known issues of 1.2.3 and from the repository audit of 2026-11-12 |
+| 1.2.5 | 2026-11-13 | The rebuilt PostgreSQL 18.6 image (base of the sqsolve image and of the compose file) |
 
 ## 2. Next
 
@@ -41,7 +42,7 @@ In order of priority:
    `.resolvedbkey` access keys (RF-ACC-07), schedulable maintenance, PITR (RF-RES-16), OIDC,
    WebAuthn, the PostgreSQL major-version wizard (RF-ACT-05) and an external server mode.
 
-The non-functional requirements that 1.2.4 does not meet or has no evidence for are marked in
+The non-functional requirements that 1.2.5 does not meet or has no evidence for are marked in
 `04-requirements.md` §2.
 
 ## 3. Priorities

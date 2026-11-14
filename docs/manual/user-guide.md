@@ -448,8 +448,9 @@ workflow; images tagged `edge` are not signed.
 
 The `postgres` image in your compose file is pinned by digest (`postgres:18.6-trixie@sha256:...`)
 and **updating sqsolve does not change it**: Docker only pulls the images your file names. A
-PostgreSQL minor release carries security fixes, so when the notes of a sqsolve release say that it
-pins a new PostgreSQL minor version, update it too:
+PostgreSQL minor release carries security fixes, and a rebuild of the same version carries the
+security updates of its Debian base, so when the notes of a sqsolve release say that it pins a new
+PostgreSQL minor version or a rebuilt image, update it too:
 
 1. Back up first: PostgreSQL restarts.
 2. Replace the `image:` line of the `postgres` service with the one in the same release's compose

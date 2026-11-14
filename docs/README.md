@@ -1,6 +1,6 @@
 # sqsolve documentation
 
-The documents describe sqsolve 1.2.4. The research in `01-research.md` has a cutoff date of
+The documents describe sqsolve 1.2.5. The research in `01-research.md` has a cutoff date of
 **2026-10-18**; everything that depends on DaVinci Resolve, PostgreSQL or Docker versions is
 reviewed on every major Resolve release (see `14-compatibility.md`).
 
