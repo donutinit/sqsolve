@@ -84,6 +84,21 @@ func (s *Service) activeRoles(ctx context.Context, libraryID string) ([]string, 
 	return roles, nil
 }
 
+// sessionRoles is every role of the library, revoked credentials included:
+// a session a revoked role opened before (SQS-L081) stays open until it is
+// closed. It is only for closing sessions; who can log in is activeRoles.
+func (s *Service) sessionRoles(ctx context.Context, libraryID string) ([]string, error) {
+	creds, err := s.Credentials(ctx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	var roles []string
+	for _, c := range creds {
+		roles = append(roles, c.PGRole)
+	}
+	return roles, nil
+}
+
 func (s *Service) credential(ctx context.Context, libraryID, credID string) (*Credential, error) {
 	creds, err := s.Credentials(ctx, libraryID)
 	if err != nil {
@@ -232,9 +247,12 @@ func (s *Service) AddMember(ctx context.Context, by audit.Actor, libraryID, pers
 	if c == nil {
 		return nil, err
 	}
-	// Created, even when its result entry failed (SQS-X041): the network
-	// rules must include the new role.
-	if herr := s.SyncHBA(ctx); err == nil {
+	// Created, even when its result entry failed (SQS-X041). The rewrite of
+	// pg_hba.conf that lets the new role in is a change outside SQLite with
+	// an entry of its own (postgres.hba): without that entry the file is not
+	// rewritten and the role cannot connect until the next rewrite (docs 08
+	// §7). The error of the addition wins over the error of the rewrite.
+	if herr := s.syncHBAAfter(ctx, by, "library.member_add", "library", libraryID, map[string]any{"role": role}); err == nil {
 		err = herr
 	}
 	return c, err
@@ -279,7 +297,10 @@ func (s *Service) createMember(ctx context.Context, l *Library, role, person str
 	return c, nil
 }
 
-// RevokeMember disables a personal credential and closes its sessions.
+// RevokeMember disables a personal credential and closes its sessions. A
+// session that cannot be listed or closed does not stop the revocation: it is
+// recorded, so the role never gets its login back, and SQS-L081 reports that
+// a workstation may still be connected.
 func (s *Service) RevokeMember(ctx context.Context, by audit.Actor, libraryID, credID string) error {
 	c, err := s.credential(ctx, libraryID, credID)
 	if err != nil {
@@ -296,20 +317,20 @@ func (s *Service) RevokeMember(ctx context.Context, by audit.Actor, libraryID, c
 		if err := s.PG.SetRoleLogin(ctx, c.PGRole, false); err != nil {
 			return err
 		}
-		if sessions, err := s.PG.Sessions(ctx, l.DBName); err == nil {
-			for _, ss := range sessions {
-				if ss.User == c.PGRole {
-					s.PG.TerminateSession(ctx, l.DBName, ss.PID, []string{c.PGRole})
-				}
-			}
-		}
+		// NOLOGIN does not end an open session. A failure to close one is
+		// reported once the revocation is recorded.
+		_, closeErr := s.endRoleSessions(ctx, l.DBName, []string{c.PGRole})
 		// ADR 0024: every credential that is not revoked gets LOGIN back
 		// when the library's access is applied, so an unrecorded revocation
 		// would come undone at the next start.
 		if _, err := s.DB.ExecContext(ctx, `UPDATE library_credentials SET revoked_at = ? WHERE id = ?`, store.NowT(), c.ID); err != nil {
 			return fmt.Errorf("SQS-L080 the role %s was set NOLOGIN, but its revocation could not be recorded, so the next start would give it its login back; revoke it again: %w", c.PGRole, err)
 		}
-		return s.SyncHBA(ctx)
+		herr := s.SyncHBA(ctx)
+		if closeErr != nil {
+			return errors.Join(fmt.Errorf("SQS-L081 the role %s is revoked and cannot open new connections, but its open sessions could not be closed, so a workstation that is still connected with it keeps working until it disconnects: %w", c.PGRole, closeErr), herr)
+		}
+		return herr
 	})
 }
 

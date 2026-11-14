@@ -60,8 +60,9 @@ func (s *Service) UnchangedSince(ctx context.Context, l *Library) *Backup {
 // BackupGate decides whether a due scheduled backup runs. In activity mode it
 // is skipped while the rows have not changed since the newest usable
 // verified backup: a backup that failed its verification, or was never
-// verified, does not count, so an unchanged library still gets a good one.
-// Every check is recorded on the policy so the panel can show it.
+// verified, or that is blocked, does not count, so an unchanged library
+// still gets a good one. Every check is recorded on the policy so the panel
+// can show it.
 func (s *Service) BackupGate(ctx context.Context, libraryID string) (bool, string) {
 	pol, err := s.Policy(ctx, libraryID)
 	if err != nil || !pol.Adaptive() {
@@ -71,9 +72,7 @@ func (s *Service) BackupGate(ctx context.Context, libraryID string) (bool, strin
 	if err != nil {
 		return true, ""
 	}
-	var lastMark, lastAt string
-	err = s.DB.QueryRowContext(ctx, `SELECT activity_mark, started_at FROM backups WHERE library_id = ? AND status = 'ok' AND source_db = ?
-		AND verify_status IN ('l1_ok', 'l2_ok', 'partial') ORDER BY started_at DESC LIMIT 1`, l.ID, l.DBName).Scan(&lastMark, &lastAt)
+	lastMark, lastAt, err := s.gateReference(ctx, l)
 	if err != nil || lastMark == "" {
 		s.recordActivityCheck(ctx, l.ID, false)
 		return true, "no earlier verified backup with an activity mark"
@@ -88,6 +87,30 @@ func (s *Service) BackupGate(ctx context.Context, libraryID string) (bool, strin
 		return false, fmt.Sprintf("no changes since the backup from %s", store.ParseT(lastAt).In(s.Cfg.Location).Format("2006-01-02 15:04"))
 	}
 	return true, ""
+}
+
+// gateReference returns the activity mark and the start of the newest
+// verified backup of the live database of l that is not blocked (SQS-B043,
+// or SQS-B045 while its path cannot be checked): sqsolve does not read a
+// blocked backup, so it cannot stand for the current rows, as in
+// UnchangedSince. Both are empty when there is none.
+func (s *Service) gateReference(ctx context.Context, l *Library) (mark, startedAt string, err error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, file_path, activity_mark, started_at FROM backups WHERE library_id = ? AND status = 'ok' AND source_db = ?
+		AND verify_status IN ('l1_ok', 'l2_ok', 'partial') ORDER BY started_at DESC`, l.ID, l.DBName)
+	if err != nil {
+		return "", "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, path string
+		if err := rows.Scan(&id, &path, &mark, &startedAt); err != nil {
+			return "", "", err
+		}
+		if !s.blocked(&Backup{ID: id, FilePath: path}) {
+			return mark, startedAt, nil
+		}
+	}
+	return "", "", rows.Err()
 }
 
 func (s *Service) recordActivityCheck(ctx context.Context, libraryID string, same bool) {

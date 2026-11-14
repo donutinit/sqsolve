@@ -130,6 +130,37 @@ func TestDestructiveRequestsAreRefusedBeforeQueueing(t *testing.T) {
 	untouched(t, s)
 }
 
+// A library in the trash keeps its identifier: the catalog refuses a second
+// library with it until the first is purged, so recovering it from the trash
+// never meets another library with that identifier.
+func TestTrashedLibraryKeepsItsIdentifier(t *testing.T) {
+	ctx := context.Background()
+	s, l, _ := auditedCatalog(t)
+	by := audit.Actor{Type: "user", ID: "u1", Name: "diego"}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'trashed' WHERE id = ?`, l.ID); err != nil {
+		t.Fatal(err)
+	}
+	second := func() error {
+		now := store.NowT()
+		_, err := s.DB.ExecContext(ctx, `INSERT INTO libraries(id, slug, display_name, state, db_name, owner_role, creation_strategy, created_at, updated_at)
+			VALUES ('L2', 'lib', 'Lib', 'active', 'lib', 'lib', 'resolve', ?, ?)`, now, now)
+		return err
+	}
+	if err := second(); err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		t.Fatalf("a second library with the identifier of one in the trash: %v", err)
+	}
+	refused(t, "identifier of a library in the trash", s.SlugAvailable(ctx, "lib"), `SQS-L004 a library with identifier "lib" already exists`)
+	if _, err := s.RestoreFromTrash(ctx, by, l.ID); err != nil {
+		t.Fatalf("recover from the trash: %v", err)
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'purged' WHERE id = ?`, l.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := second(); err != nil {
+		t.Fatalf("the identifier of a purged library: %v", err)
+	}
+}
+
 // insertLibrary stores a library row and returns its id.
 func insertLibrary(t *testing.T, s *Service, slug string, st State) string {
 	t.Helper()

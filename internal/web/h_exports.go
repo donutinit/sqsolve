@@ -63,6 +63,13 @@ func (s *Server) exportCatalog(ctx context.Context, r *http.Request, sess *drp.S
 	return buildExportCatalog(r.URL.Query(), projects, power, byProject), err
 }
 
+// exportError is humanError for the export pages: a failed connection to
+// PostgreSQL is logged whole and shown whole only to whoever has the
+// diagnostics permission (core.Service.ExportError).
+func (s *Server) exportError(r *http.Request, err error) string {
+	return humanError(s.A.Svc.ExportError(err, r.URL.Path, principalOf(r).Can(auth.ActDiagnostics)))
+}
+
 func (s *Server) libraryExport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	l := s.libraryOr404(w, r)
@@ -73,7 +80,7 @@ func (s *Server) libraryExport(w http.ResponseWriter, r *http.Request) {
 	data["Running"], _ = s.A.Jobs.List(ctx, jobs.Filter{LibraryID: l.ID, States: []jobs.State{jobs.Queued, jobs.Running}, Limit: 10})
 	sess, err := s.A.Svc.OpenExport(ctx, l)
 	if err != nil {
-		data["Err"] = humanError(err)
+		data["Err"] = s.exportError(r, err)
 		data["Enabled"] = !errors.Is(err, core.ErrExportsDisabled)
 		s.render(w, r, "library_export", l.DisplayName, "libraries", data)
 		return
@@ -82,7 +89,7 @@ func (s *Server) libraryExport(w http.ResponseWriter, r *http.Request) {
 	data["Fingerprint"], data["Known"], data["KnownOK"] = sess.Fingerprint, sess.Known, sess.KnownOK
 	data["Catalog"], err = s.exportCatalog(ctx, r, sess)
 	if err != nil {
-		data["Err"] = humanError(err)
+		data["Err"] = s.exportError(r, err)
 	}
 	s.render(w, r, "library_export", l.DisplayName, "libraries", data)
 }
@@ -108,18 +115,18 @@ func (s *Server) exportDownload(w http.ResponseWriter, r *http.Request, kind, id
 	p := principalOf(r)
 	sess, err := s.A.Svc.OpenExport(ctx, l)
 	if err != nil {
-		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
+		s.renderError(w, r, p, core.ExportStatus(err), s.exportError(r, err))
 		return
 	}
 	defer sess.Close(ctx)
 	name, data, info, err := buildExport(ctx, sess, l.Slug, kind, id)
 	if err != nil {
-		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
+		s.renderError(w, r, p, core.ExportStatus(err), s.exportError(r, err))
 		return
 	}
 	// The session is closed by now: a slow download holds no snapshot or lock.
 	if err := s.A.Svc.AuditExport(ctx, p.Actor(), l, sess, kind, strings.ToLower(id), info); err != nil {
-		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
+		s.renderError(w, r, p, core.ExportStatus(err), s.exportError(r, err))
 		return
 	}
 	serveAttachment(w, name, data)
@@ -155,7 +162,7 @@ func (s *Server) backupExport(w http.ResponseWriter, r *http.Request) {
 	data["Live"] = ws.Live(time.Now())
 	if err != nil {
 		if !errors.Is(err, core.ErrExportNotReady) {
-			data["Err"] = humanError(err)
+			data["Err"] = s.exportError(r, err)
 			data["Enabled"] = !errors.Is(err, core.ErrExportsDisabled)
 		}
 		s.render(w, r, "backup_export", "Export from backup", "backups", data)
@@ -166,7 +173,7 @@ func (s *Server) backupExport(w http.ResponseWriter, r *http.Request) {
 	data["Fingerprint"], data["Known"], data["KnownOK"] = sess.Fingerprint, sess.Known, sess.KnownOK
 	data["Catalog"], err = s.exportCatalog(ctx, r, sess)
 	if err != nil {
-		data["Err"] = humanError(err)
+		data["Err"] = s.exportError(r, err)
 	}
 	s.render(w, r, "backup_export", "Export from backup", "backups", data)
 }
@@ -222,7 +229,7 @@ func (s *Server) backupExportDownload(w http.ResponseWriter, r *http.Request, ki
 	p := principalOf(r)
 	sess, _, err := s.A.Svc.OpenBackupExport(ctx, b.ID)
 	if err != nil {
-		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
+		s.renderError(w, r, p, core.ExportStatus(err), s.exportError(r, err))
 		return
 	}
 	defer sess.Close(ctx)
@@ -232,12 +239,12 @@ func (s *Server) backupExportDownload(w http.ResponseWriter, r *http.Request, ki
 	}
 	name, data, info, err := buildExport(ctx, sess, slug+"_"+b.StartedAt.UTC().Format("20060102T1504"), kind, id)
 	if err != nil {
-		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
+		s.renderError(w, r, p, core.ExportStatus(err), s.exportError(r, err))
 		return
 	}
 	// The session is closed by now: a slow download holds no snapshot or lock.
 	if err := s.A.Svc.AuditBackupExport(ctx, p.Actor(), b, sess, kind, strings.ToLower(id), info); err != nil {
-		s.renderError(w, r, p, core.ExportStatus(err), humanError(err))
+		s.renderError(w, r, p, core.ExportStatus(err), s.exportError(r, err))
 		return
 	}
 	serveAttachment(w, name, data)

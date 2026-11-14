@@ -605,6 +605,9 @@ func (m *Manager) FailedSince(ctx context.Context, t time.Time) (int, error) {
 // ErrNotCancellable is returned when a running job cannot be cancelled.
 var ErrNotCancellable = errors.New("SQS-J003 this job cannot be cancelled right now")
 
+// ErrEnded is returned when the job to cancel has already ended.
+var ErrEnded = errors.New("SQS-J006 the job has already ended")
+
 // Cancel stops a queued or cancellable running job.
 func (m *Manager) Cancel(ctx context.Context, id string) error {
 	res, err := m.db.ExecContext(ctx, `UPDATE jobs SET state = 'cancelled', finished_at = ? WHERE id = ? AND state = 'queued'`, store.NowT(), id)
@@ -623,7 +626,11 @@ func (m *Manager) Cancel(ctx context.Context, id string) error {
 	rj, ok := m.running[id]
 	m.mu.Unlock()
 	if !ok {
-		return ErrNotFound
+		// Neither queued nor running here: it has ended, or it does not exist.
+		if _, err := m.Get(ctx, id); err != nil {
+			return err
+		}
+		return ErrEnded
 	}
 	if !rj.cancellable {
 		return ErrNotCancellable

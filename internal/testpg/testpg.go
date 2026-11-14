@@ -8,11 +8,15 @@ package testpg
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -59,7 +63,10 @@ func BinDir() string {
 	return ""
 }
 
-func freePort() (int, error) {
+// freePort finds a port that is free now; another process can take it
+// before postgres binds it, so Start tries again on another one. It is a
+// variable for the test of that retry.
+var freePort = func() (int, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, err
@@ -68,11 +75,58 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
+// startAttempts bounds the starts of postgres on a fresh port when the
+// chosen one turns out to be taken.
+const startAttempts = 5
+
+// errPortTaken means postgres could not listen on its port and exits.
+var errPortTaken = errors.New("the port is taken")
+
+// removeStale removes the cluster folders that test processes killed
+// before their cleanup left in dir. A folder of this fixture is named
+// pg-<pid of the test process>-<digits>; it goes only when that process is
+// gone and no postmaster named in its data/postmaster.pid runs. Older
+// folders without the pid, symbolic links and other names stay, and
+// RemoveAll does not follow a link inside a folder.
+func removeStale(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		pid, ok := owner(e.Name())
+		if !ok || !e.IsDir() || alive(pid) {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		if b, err := os.ReadFile(filepath.Join(path, "data", "postmaster.pid")); !errors.Is(err, fs.ErrNotExist) {
+			first, _, _ := strings.Cut(string(b), "\n")
+			if pm, perr := strconv.Atoi(first); err != nil || perr != nil || pm <= 0 || alive(pm) {
+				continue
+			}
+		}
+		os.RemoveAll(path)
+	}
+}
+
+// owner returns the pid in a folder name pg-<pid>-<digits>.
+func owner(name string) (int, bool) {
+	digits := func(s string) bool { return s != "" && strings.Trim(s, "0123456789") == "" }
+	rest, ok := strings.CutPrefix(name, "pg-")
+	pid, suffix, ok2 := strings.Cut(rest, "-")
+	if !ok || !ok2 || !digits(pid) || !digits(suffix) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(pid)
+	return n, err == nil && n > 0
+}
+
 func baseDir(t testing.TB) string {
 	if d, err := os.UserCacheDir(); err == nil {
 		dir := filepath.Join(d, "sqsolve-test")
 		if os.MkdirAll(dir, 0o700) == nil {
-			tmp, err := os.MkdirTemp(dir, "pg-")
+			removeStale(dir)
+			tmp, err := os.MkdirTemp(dir, fmt.Sprintf("pg-%d-", os.Getpid()))
 			if err == nil {
 				t.Cleanup(func() { os.RemoveAll(tmp) })
 				return tmp
@@ -99,17 +153,12 @@ func Start(t testing.TB) *Cluster {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(sock) })
-	port, err := freePort()
-	if err != nil {
-		t.Fatal(err)
-	}
 	c := &Cluster{
 		Base:      base,
 		BinDir:    bin,
 		DataDir:   filepath.Join(base, "data"),
 		ConfDir:   filepath.Join(base, "sqsolve"),
 		SocketDir: sock,
-		Port:      port,
 		SuperPass: secrets.GeneratePassword(24),
 		AdminPass: secrets.GeneratePassword(24),
 		LogPath:   filepath.Join(base, "postgres.log"),
@@ -124,12 +173,6 @@ func Start(t testing.TB) *Cluster {
 		t.Fatalf("initdb: %v\n%s", err, out)
 	}
 	os.Remove(pw)
-	conf := pgconf.PostgresConf(pgconf.Params{
-		DataDir: c.DataDir, ConfDir: c.ConfDir, SocketDir: c.SocketDir, Port: c.Port,
-		Listen: "127.0.0.1", MaxConnections: 50, MemoryMB: 256,
-	})
-	conf += "fsync = off\nfull_page_writes = off\n"
-	os.WriteFile(filepath.Join(c.ConfDir, "postgresql.conf"), []byte(conf), 0o600)
 	hba, _ := pgconf.HBA(pgconf.HBAOptions{})
 	os.WriteFile(filepath.Join(c.ConfDir, "pg_hba.conf"), []byte(hba), 0o600)
 	os.WriteFile(filepath.Join(c.ConfDir, "pg_ident.conf"), nil, 0o600)
@@ -138,31 +181,59 @@ func Start(t testing.TB) *Cluster {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(filepath.Join(bin, "postgres"), "-c", "config_file="+filepath.Join(c.ConfDir, "postgresql.conf"))
-	cmd.Stdout, cmd.Stderr = logf, logf
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	c.cmd = cmd
 	t.Cleanup(func() {
 		c.Stop()
 		logf.Close()
 	})
+	for attempt := 1; ; attempt++ {
+		if c.Port, err = freePort(); err != nil {
+			t.Fatal(err)
+		}
+		conf := pgconf.PostgresConf(pgconf.Params{
+			DataDir: c.DataDir, ConfDir: c.ConfDir, SocketDir: c.SocketDir, Port: c.Port,
+			Listen: "127.0.0.1", MaxConnections: 50, MemoryMB: 256,
+		})
+		conf += "fsync = off\nfull_page_writes = off\n"
+		os.WriteFile(filepath.Join(c.ConfDir, "postgresql.conf"), []byte(conf), 0o600)
+		cmd := exec.Command(filepath.Join(bin, "postgres"), "-c", "config_file="+filepath.Join(c.ConfDir, "postgresql.conf"))
+		cmd.Stdout, cmd.Stderr = logf, logf
+		cmd.SysProcAttr = procAttr()
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		c.cmd = cmd
+		err = c.waitStarted()
+		if err == nil {
+			return c
+		}
+		if !errors.Is(err, errPortTaken) || attempt == startAttempts {
+			t.Fatalf("PostgreSQL did not start: %v\n%s", err, c.Log())
+		}
+		// The next start writes a log of its own, as if this one never was.
+		c.Stop()
+		logf.Truncate(0)
+		logf.Seek(0, io.SeekStart)
+	}
+}
+
+// waitStarted waits until the server accepts connections. It gives up at
+// once with errPortTaken when the log says the port is taken.
+func (c *Cluster) waitStarted() error {
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		conn, err := c.Connect(context.Background(), "postgres", c.SuperPass, "postgres")
 		if err == nil {
 			conn.Close(context.Background())
-			break
+			return nil
+		}
+		if strings.Contains(c.Log(), "Address already in use") {
+			return errPortTaken
 		}
 		if time.Now().After(deadline) {
-			log, _ := os.ReadFile(c.LogPath)
-			t.Fatalf("PostgreSQL did not start: %v\n%s", err, log)
+			return err
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return c
 }
 
 // Connect opens a connection through the socket.
@@ -217,7 +288,7 @@ func (c *Cluster) Restart(t testing.TB) {
 	}
 	cmd := exec.Command(filepath.Join(c.BinDir, "postgres"), "-c", "config_file="+filepath.Join(c.ConfDir, "postgresql.conf"))
 	cmd.Stdout, cmd.Stderr = logf, logf
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = procAttr()
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}

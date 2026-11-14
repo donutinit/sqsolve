@@ -14,9 +14,25 @@ import (
 	"github.com/donutinit/sqsolve/internal/core"
 )
 
+// exportHidden is what the export pages say to a user without the
+// diagnostics permission when the connection to PostgreSQL fails.
+const exportHidden = "SQS-E005 the library is not available for export: the connection to PostgreSQL failed (the cause is in the sqsolve log)"
+
+// namesInternals returns the first of internals that s contains, or "".
+func namesInternals(s string, internals ...string) string {
+	for _, internal := range internals {
+		if strings.Contains(s, internal) {
+			return internal
+		}
+	}
+	return ""
+}
+
 // The experimental export without a reachable database: the library tab
 // and its downloads say why with their codes (feature off, library not
-// live, PostgreSQL down), and a viewer cannot download.
+// live, PostgreSQL down), only an administrator reads the driver's text
+// (the socket path, the role and the database), and a viewer cannot
+// download.
 func TestLibraryExportRefusals(t *testing.T) {
 	a, srv, _ := jobsPanel(t)
 	ctx := context.Background()
@@ -36,6 +52,22 @@ func TestLibraryExportRefusals(t *testing.T) {
 	if page := boss.page("/libraries/" + active.ID + "/export"); !strings.Contains(page, "SQS-E005 the library is not available for export: failed to connect to `user=sqsolve_admin database=apolo`: ") {
 		t.Fatal("the export tab without PostgreSQL does not say why")
 	}
+	if st, _, body := boss.do("GET", "/libraries/"+active.ID+"/export/projects/x", nil); st != http.StatusServiceUnavailable ||
+		!strings.Contains(body, "failed to connect to `user=sqsolve_admin database=apolo`: ") {
+		t.Fatalf("project download without PostgreSQL for an administrator: %d", st)
+	}
+	internals := []string{a.Cfg.PGSocket, ".s.PGSQL", "sqsolve_admin", "failed to connect"}
+	eve, _ := jobsLogin(t, srv, "eve", fxViewerPass)
+	if page := eve.page("/libraries/" + active.ID + "/export"); !strings.Contains(page, exportHidden) || namesInternals(page, internals...) != "" {
+		t.Fatalf("the export tab without PostgreSQL for a viewer names %q or does not say why", namesInternals(page, internals...))
+	}
+	op, _ := jobsLogin(t, srv, "op", jobsOpPass)
+	for _, kind := range []string{"projects", "stills", "albums"} {
+		if st, _, body := op.do("GET", "/libraries/"+active.ID+"/export/"+kind+"/x", nil); st != http.StatusServiceUnavailable ||
+			!strings.Contains(body, exportHidden) || namesInternals(body, internals...) != "" {
+			t.Errorf("%s download without PostgreSQL for an operator: %d, names %q", kind, st, namesInternals(body, internals...))
+		}
+	}
 	if page := boss.page("/libraries/" + trashed.ID + "/export"); !strings.Contains(page, "SQS-E005 the library is not available for export: it is in state In the trash") {
 		t.Fatal("the export tab of a library in the trash does not say why")
 	}
@@ -45,7 +77,6 @@ func TestLibraryExportRefusals(t *testing.T) {
 			t.Errorf("%s download from a library in the trash: %d", kind, st)
 		}
 	}
-	eve, _ := jobsLogin(t, srv, "eve", fxViewerPass)
 	for _, kind := range []string{"projects", "stills", "albums"} {
 		if st, _, body := eve.do("GET", "/libraries/"+active.ID+"/export/"+kind+"/x", nil); st != http.StatusForbidden || !strings.Contains(body, fxRoleRefused) {
 			t.Errorf("viewer %s download: %d", kind, st)
@@ -56,7 +87,8 @@ func TestLibraryExportRefusals(t *testing.T) {
 // Export from a backup: preparing queues the temporary restore with its
 // "accepted" entry (and returns the same job while it lives), closing
 // drops the workspace with its entry written first, and every refusal
-// carries its code.
+// carries its code. Without PostgreSQL only an administrator reads the
+// driver's text.
 func TestBackupExportWorkspaceForms(t *testing.T) {
 	a, srv, _ := jobsPanel(t)
 	ctx := context.Background()
@@ -108,12 +140,17 @@ func TestBackupExportWorkspaceForms(t *testing.T) {
 	}
 	ws, _ := a.Svc.BackupExportWorkspace(ctx, good)
 	fxSet(t, a, "export_workspaces", ws.ID, "state = 'ready'")
-	unreachable := "SQS-E005 the library is not available for export: failed to connect to `user=sqsolve_admin database=" + ws.DBName + "`: "
-	if st, _, body := op.do("GET", "/backups/"+good+"/export/albums/v1", nil); st != http.StatusServiceUnavailable || !strings.Contains(body, unreachable) {
-		t.Fatalf("download without PostgreSQL: %d", st)
+	internals := []string{ws.DBName, ".s.PGSQL", "sqsolve_admin", a.Cfg.PGSocket}
+	if st, _, body := op.do("GET", "/backups/"+good+"/export/albums/v1", nil); st != http.StatusServiceUnavailable || !strings.Contains(body, exportHidden) ||
+		namesInternals(body, internals...) != "" {
+		t.Fatalf("download without PostgreSQL: %d, names %q", st, namesInternals(body, internals...))
 	}
-	if page := op.page("/backups/" + good + "/export"); !strings.Contains(page, unreachable) {
-		t.Fatal("the export page of a ready workspace without PostgreSQL does not say why")
+	if page := op.page("/backups/" + good + "/export"); !strings.Contains(page, exportHidden) || namesInternals(page, internals...) != "" {
+		t.Fatalf("the export page of a ready workspace without PostgreSQL names %q or does not say why", namesInternals(page, internals...))
+	}
+	boss, _ := jobsLogin(t, srv, "boss", jobsAdminPass)
+	if page := boss.page("/backups/" + good + "/export"); !strings.Contains(page, "failed to connect to `user=sqsolve_admin database="+ws.DBName+"`: ") {
+		t.Fatal("the export page of a ready workspace without PostgreSQL does not show the driver's text to an administrator")
 	}
 
 	// Closing writes its entry before dropping the database.

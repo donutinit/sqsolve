@@ -3,11 +3,15 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/donutinit/sqsolve/internal/app"
 	"github.com/donutinit/sqsolve/internal/core"
+	"github.com/donutinit/sqsolve/internal/events"
+	"github.com/donutinit/sqsolve/internal/health"
+	"github.com/donutinit/sqsolve/internal/store"
 )
 
 // GET /system/status reports what the dashboard shows, here with
@@ -58,6 +62,35 @@ func TestAPIStatusAndVersion(t *testing.T) {
 	}
 }
 
+// The lists of GET /system/status are [] when there is nothing in them, never
+// null (docs 10 §1), and they keep their shape: an attention line without its
+// panel link, a volume without its marker id.
+func TestStatusBodyListsAreNeverNull(t *testing.T) {
+	lists := func(st health.Status) map[string]json.RawMessage {
+		t.Helper()
+		b, err := json.Marshal(statusBody(st))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]json.RawMessage
+		if err := json.Unmarshal(b, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if got := lists(health.Status{}); string(got["attention"]) != "[]" || string(got["volumes"]) != "[]" {
+		t.Errorf("nothing to report: attention %s, volumes %s", got["attention"], got["volumes"])
+	}
+	got := lists(health.Status{
+		Attention: []health.Attention{{Severity: events.Warning, Message: "Volume Backups is at 85 %", Link: "/health"}},
+		Volumes:   []health.Volume{{ID: "backups", Name: "Backups", Path: "/backups", Total: 100, Free: 15, UsedPct: 85}},
+	})
+	if string(got["attention"]) != `[{"severity":"warning","message":"Volume Backups is at 85 %"}]` ||
+		string(got["volumes"]) != `[{"name":"Backups","path":"/backups","total_bytes":100,"free_bytes":15,"used_percent":85}]` {
+		t.Errorf("one of each: attention %s, volumes %s", got["attention"], got["volumes"])
+	}
+}
+
 // Anything under /api/ that is not a route, including a known path with a
 // method it does not take, is 404 with SQS-C062 before any credential is
 // read.
@@ -81,22 +114,57 @@ func TestAPIUnknownRoutes(t *testing.T) {
 }
 
 // A catalog table that cannot be read makes a list route answer 500 with a
-// problem instead of a partial or empty list.
+// problem instead of a partial or empty list. The library L1 and the job J1
+// that the routes name exist, so the failure is the table's and not an
+// unknown library or job.
 func TestAPIListsWhenTheCatalogFails(t *testing.T) {
 	for _, c := range []struct{ table, path string }{
 		{"libraries", "/api/v1/libraries"},
 		{"backups", "/api/v1/backups"},
 		{"backups", "/api/v1/libraries/L1/backups"},
 		{"jobs", "/api/v1/jobs"},
+		{"jobs", "/api/v1/jobs/J1/logs"},
 		{"job_logs", "/api/v1/jobs/J1/logs"},
+		{"job_steps", "/api/v1/jobs/J1"},
 		{"events", "/api/v1/events"},
 		{"audit_log", "/api/v1/audit"},
 	} {
 		e := apiServer(t)
+		now := store.NowT()
+		e.seedLibrary(t, "L1", "lib", "Lib", core.StateActive)
+		e.exec(t, `INSERT INTO jobs(id, type, state, scheduled_for, created_at, created_by_type) VALUES ('J1', 'system.vacuum', 'succeeded', ?, ?, 'system')`, now, now)
 		e.exec(t, `ALTER TABLE `+c.table+` RENAME TO gone`)
 		r := e.call(t, "GET", c.path, e.admin, "", false)
 		if r.status != 500 || r.problem.Status != 500 || r.problem.Instance != c.path || !strings.Contains(r.problem.Detail, c.table) || strings.Contains(r.body, "items") {
 			t.Errorf("%s without %s: %d %s", c.path, c.table, r.status, r.body)
+		}
+	}
+}
+
+// The library or the job that a route names cannot be read when its table
+// cannot: that is 500, a failure of sqsolve, and not 422, which is a refusal
+// of the request. An unknown library or job stays 404.
+func TestAPIDetailRoutesWhenTheCatalogFails(t *testing.T) {
+	for _, c := range []struct{ method, table, path string }{
+		{"GET", "libraries", "/api/v1/libraries/L1"},
+		{"PATCH", "libraries", "/api/v1/libraries/L1"},
+		{"GET", "libraries", "/api/v1/libraries/L1/backups"},
+		{"GET", "libraries", "/api/v1/libraries/L1/projects"},
+		{"GET", "libraries", "/api/v1/libraries/L1/grades"},
+		{"GET", "libraries", "/api/v1/libraries/L1/projects/P1/export"},
+		{"GET", "libraries", "/api/v1/libraries/L1/grades/S1/export"},
+		{"GET", "libraries", "/api/v1/libraries/L1/grades/albums/V1/export"},
+		{"GET", "jobs", "/api/v1/jobs/J1"},
+	} {
+		e := apiServer(t)
+		now := store.NowT()
+		e.seedLibrary(t, "L1", "lib", "Lib", core.StateActive)
+		e.exec(t, `INSERT INTO jobs(id, type, state, scheduled_for, created_at, created_by_type) VALUES ('J1', 'system.vacuum', 'succeeded', ?, ?, 'system')`, now, now)
+		e.exec(t, `ALTER TABLE `+c.table+` RENAME TO gone`)
+		r := e.call(t, c.method, c.path, e.admin, `{"notes":"lost"}`, false)
+		if r.status != 500 || r.problem.Status != 500 || r.problem.Title != "Internal Server Error" || r.problem.Type != "about:blank" ||
+			r.problem.Code != "" || r.problem.Instance != c.path || !strings.Contains(r.problem.Detail, "no such table: "+c.table) {
+			t.Errorf("%s %s without %s: %d %s", c.method, c.path, c.table, r.status, r.body)
 		}
 	}
 }

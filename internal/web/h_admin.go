@@ -71,11 +71,15 @@ func (s *Server) auditExport(w http.ResponseWriter, r *http.Request) {
 	s.A.Audit.Export(r.Context(), w, time.Time{}, time.Now().Add(time.Hour))
 }
 
+// healthPage shows the driver's text of a failed connection to PostgreSQL
+// only to a reader with the diagnostics permission (docs 08 §5).
 func (s *Server) healthPage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st := s.A.Monitor.Snapshot(ctx)
+	full := principalOf(r).Can(auth.ActDiagnostics)
+	st := s.A.Monitor.ForReader(s.A.Monitor.Snapshot(ctx), r.URL.Path, full)
 	scheds, _ := s.A.Sched.List(ctx)
-	s.render(w, r, "health", "Health", "health", map[string]any{"S": st, "Schedules": scheds, "Checks": app.Doctor(ctx, s.A)})
+	checks := s.A.ChecksFor(app.Doctor(ctx, s.A), r.URL.Path, full)
+	s.render(w, r, "health", "Health", "health", map[string]any{"S": st, "Schedules": scheds, "Checks": checks})
 }
 
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +89,8 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	if tab == "" {
 		tab = "general"
 	}
-	data := map[string]any{"Tab": tab, "Settings": s.A.Svc.Settings(ctx), "Cfg": s.A.Cfg, "InstanceID": s.A.InstanceID}
+	data := map[string]any{"Tab": tab, "Settings": s.A.Svc.Settings(ctx), "Cfg": s.A.Cfg, "InstanceID": s.A.InstanceID,
+		"CheckOptions": []int{5, 10, 15, 30, 60}}
 	switch tab {
 	case "users":
 		if !p.Can(auth.ActUsersManage) {
@@ -128,7 +133,18 @@ func (s *Server) settingsGeneral(w http.ResponseWriter, r *http.Request) {
 	st.RequireTLS = r.FormValue("require_tls") == "on"
 	st.TOTPRequiredAdmins = r.FormValue("totp_required") == "on"
 	st.ExperimentalExports = r.FormValue("experimental_exports") == "on"
-	st.DefaultPolicy.Cron = strings.TrimSpace(r.FormValue("default_cron"))
+	// The schedule of the default policy, as in the Schedule tab of a
+	// library: in activity mode the cron field is not read.
+	dp := &st.DefaultPolicy
+	if mode := r.FormValue("default_mode"); mode != "" {
+		dp.Mode = mode
+	}
+	if dp.Adaptive() {
+		dp.CheckMinutes = atoi(r.FormValue("default_check_minutes"), dp.CheckMinutes)
+		dp.Cron = core.ActivityCron(dp.CheckMinutes)
+	} else {
+		dp.Cron = strings.TrimSpace(r.FormValue("default_cron"))
+	}
 	st.DefaultPolicy.KeepLast = atoi(r.FormValue("keep_last"), st.DefaultPolicy.KeepLast)
 	st.DefaultPolicy.KeepDaily = atoi(r.FormValue("keep_daily"), st.DefaultPolicy.KeepDaily)
 	st.DefaultPolicy.KeepWeekly = atoi(r.FormValue("keep_weekly"), st.DefaultPolicy.KeepWeekly)

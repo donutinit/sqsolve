@@ -4,8 +4,8 @@
 {{template "libtabs" .}}
 
 {{if eq .Data.Tab "connection"}}
-  {{if eq $l.State "provisioning"}}
-    <section class="card"><p>Preparing the library. This page refreshes by itself.</p><div data-autorefresh="3" data-watch="/api/v1/libraries/{{$id}}" data-watch-state="{{$l.State}}"></div></section>
+  {{if or (eq $l.State "provisioning") .Data.Creating}}
+    <section class="card"><p>Preparing the library. This page refreshes by itself.</p>{{if eq $l.State "provisioning"}}<div data-autorefresh="3" data-watch="/api/v1/libraries/{{$id}}" data-watch-state="{{$l.State}}"></div>{{else}}<div data-autorefresh="3"></div>{{end}}</section>
   {{else if eq $l.State "awaiting_init"}}
     {{with .Data.Misnamed}}<div class="flash warn" role="status">Resolve created {{range $i, $d := .}}{{if $i}}, {{end}}<code>{{$d}}</code>{{end}}, but the library must be named exactly <code>{{$l.Slug}}</code>. In Resolve remove that library from the list and create it again with the correct name. sqsolve does not delete the wrongly named database on its own.</div>{{end}}
     <section class="card emphasis">
@@ -164,7 +164,8 @@
     <p class="hint">Each library starts a few minutes after the exact hour so it does not coincide with the others.</p>
   </section>
   <section class="card"><h2>Effect of the retention today</h2>
-    <p><strong>{{.Data.Keep}}</strong> backups are kept and <strong>{{.Data.Expire}}</strong> would be deleted on the next pass.</p>
+    {{if .Data.OwnPolicy}}<p><strong>{{.Data.Keep}}</strong> backups are kept and <strong>{{.Data.Expire}}</strong> would be deleted on the next pass.</p>
+    {{else}}<p>This library has no policy of its own, so retention deletes none of its backups. Saved as shown, the policy would keep <strong>{{.Data.Keep}}</strong> backups and delete <strong>{{.Data.Expire}}</strong> on the next pass.</p>{{end}}
   </section>
 </div>
 {{end}}

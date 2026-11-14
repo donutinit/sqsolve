@@ -67,7 +67,7 @@ func (s *Service) Register() {
 	const admin = "settings.edit"
 	j.Register(jobs.Spec{Type: JobLibraryCreate, Title: "Create library", Priority: 90, Lock: jobs.LockWrite, Action: "library.create", Run: s.runLibraryCreate})
 	j.Register(jobs.Spec{Type: JobLibraryDelete, Title: "Move to trash", Priority: 90, Lock: jobs.LockWrite, Heavy: true, Reconcile: true, Action: "library.delete", Run: s.runTrash})
-	j.Register(jobs.Spec{Type: JobLibraryUntrash, Title: "Restore from trash", Priority: 90, Lock: jobs.LockWrite, Action: "library.delete", Run: s.runUntrash})
+	j.Register(jobs.Spec{Type: JobLibraryUntrash, Title: "Restore from trash", Priority: 90, Lock: jobs.LockWrite, Reconcile: true, Action: "library.delete", Run: s.runUntrash})
 	j.Register(jobs.Spec{Type: JobLibraryPurge, Title: "Purge library", Priority: 40, Lock: jobs.LockWrite, Reconcile: true, Action: "library.delete", Run: s.runPurge})
 	j.Register(jobs.Spec{Type: JobBackupCreate, Title: "Back up", Priority: 50, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Retryable: true, Action: "backup.create", Run: s.runBackupCreate})
 	j.Register(jobs.Spec{Type: JobBackupVerify, Title: "Verify backup", Priority: 30, Lock: jobs.LockRead, Heavy: true, Cancellable: true, Retryable: true, Action: "backup.verify", Run: s.runVerify})
@@ -130,20 +130,40 @@ func (s *Service) EnsureSystemSchedules(ctx context.Context) error {
 }
 
 func (s *Service) runRetentionAll(ctx context.Context, r *jobs.Run) error {
+	// The pass fails as a whole, rather than every library with a warning
+	// and a run that looks applied: retention deletes nothing on a volume
+	// that is not this installation's.
+	if err := s.BackupVolumeOK(); err != nil {
+		return err
+	}
 	libs, err := s.Libraries(ctx, ListOptions{IncludePurged: true})
 	if err != nil {
 		return err
 	}
-	total := 0
+	total, empty := 0, 0
+	var kept []string
 	for _, l := range libs {
-		n, err := s.applyRetention(ctx, l.ID)
+		n, own, err := s.retainLibrary(ctx, l.ID)
 		if err != nil {
 			r.Warnf("%s: %v", l.Slug, err)
 			continue
 		}
+		if !own {
+			// A library with no backups at all (one not active yet) had
+			// nothing to keep; one that cannot be told is named.
+			if bs, err := s.Backups(ctx, BackupFilter{LibraryID: l.ID, Limit: 1}); err == nil && len(bs) == 0 {
+				empty++
+			} else {
+				kept = append(kept, l.Slug)
+			}
+		}
 		total += n
 	}
-	r.Infof("Retention applied to %d libraries; %d backups deleted", len(libs), total)
+	r.Infof("Retention applied to %d libraries; %d backups deleted", len(libs)-len(kept)-empty, total)
+	if len(kept) > 0 {
+		r.Infof("Kept every backup of %d libraries without a policy of their own (save one in the Schedule tab of each to apply retention): %s",
+			len(kept), strings.Join(kept, ", "))
+	}
 	return nil
 }
 
@@ -242,7 +262,7 @@ func (s *Service) runCatalogCheck(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	invalid, err := s.CheckCatalogPaths(ctx)
+	invalid, unchecked, err := s.CheckCatalogPaths(ctx)
 	if err != nil {
 		return err
 	}
@@ -276,35 +296,59 @@ func (s *Service) runCatalogCheck(ctx context.Context, r *jobs.Run) error {
 		s.Events.Emit(ctx, events.Event{Type: "backup.catalog_mismatch", Severity: events.Warning,
 			Message: fmt.Sprintf("Catalog and files do not match: %d files are missing and %d files are not in the catalog", missing, orphans)})
 	}
-	r.Infof("%d backups checked; %d missing; %d orphaned; %d with a path that is not valid", len(bs), missing, orphans, len(invalid))
+	r.Infof("%d backups checked; %d missing; %d orphaned; %d with a path that is not valid; %d with a path that could not be checked",
+		len(bs), missing, orphans, len(invalid), len(unchecked))
 	return nil
 }
 
-// CheckCatalogPaths lists, sorted, the backups of the catalog (deleted ones
-// aside) whose path is not valid, and reports them in one critical event.
-// The rows are left as they are: AbsPath blocks every operation on them
-// until an administrator reviews them (PLAN 1.3.2,
-// docs/runbooks/invalid-backup-path.md). Startup and the catalog check run
+// CheckCatalogPaths lists, each sorted, the backups of the catalog (deleted
+// ones aside) whose path is not valid and those whose path could not be
+// checked because of a disk error, and reports each list in one event:
+// critical backup.path_invalid, error backup.path_unchecked. The rows are
+// left as they are: AbsPath blocks every operation on them, the first kind
+// until an administrator reviews them (PLAN 1.3.2), the second while the
+// error lasts (docs/runbooks/invalid-backup-path.md). A context that ends
+// stops the pass and nothing is reported. Startup and the catalog check run
 // it.
-func (s *Service) CheckCatalogPaths(ctx context.Context) ([]string, error) {
+func (s *Service) CheckCatalogPaths(ctx context.Context) (invalid, unchecked []string, err error) {
 	bs, err := s.Backups(ctx, BackupFilter{})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var ids []string
+	var cause error
 	for _, b := range bs {
-		if _, err := s.AbsPath(b); errors.Is(err, ErrBackupPath) {
-			ids = append(ids, b.ID)
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		switch _, err := s.AbsPath(b); {
+		case err == nil:
+		case errors.Is(err, ErrBackupPath):
+			invalid = append(invalid, b.ID)
+		default:
+			unchecked = append(unchecked, b.ID)
+			if cause == nil {
+				cause = err
+			}
 		}
 	}
-	slices.Sort(ids)
-	if len(ids) > 0 {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	slices.Sort(invalid)
+	slices.Sort(unchecked)
+	if len(invalid) > 0 {
 		s.Events.Emit(ctx, events.Event{Type: events.BackupPathInvalid, Severity: events.Critical,
 			Message: fmt.Sprintf("%d backups in the catalog have a path outside the backups volume or not valid; sqsolve does not read, restore or delete them until an administrator reviews them: %s",
-				len(ids), strings.Join(ids, ", ")),
-			Data: map[string]any{"backup_ids": ids}})
+				len(invalid), strings.Join(invalid, ", ")),
+			Data: map[string]any{"backup_ids": invalid}})
 	}
-	return ids, nil
+	if len(unchecked) > 0 {
+		s.Events.Emit(ctx, events.Event{Type: events.BackupPathUnchecked, Severity: events.Error,
+			Message: fmt.Sprintf("The path of %d backups in the catalog could not be checked; until it can, sqsolve does not read them or count them as verified, and retention leaves them alone. First error: %s",
+				len(unchecked), shortErr(cause)),
+			Data: map[string]any{"backup_ids": unchecked}})
+	}
+	return invalid, unchecked, nil
 }
 
 // runCatalogRebuild adds backups found on disk to the catalog.

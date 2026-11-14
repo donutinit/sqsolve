@@ -21,13 +21,16 @@
     </fieldset>
     <fieldset {{if not ($p.Can "settings.edit")}}disabled{{end}}>
       <legend>Default policy for new libraries</legend>
-      <label>Schedule (cron)<input name="default_cron" value="{{$st.DefaultPolicy.Cron}}" class="mono"></label>
+      {{$dp := $st.DefaultPolicy}}
+      <label class="radio"><input type="radio" name="default_mode" value="activity" {{if $dp.Adaptive}}checked{{end}}> Activity-based: check every <select name="default_check_minutes" class="tiny" aria-label="Minutes between checks">{{range $m := $.Data.CheckOptions}}<option value="{{$m}}" {{if eq $m $dp.CheckMinutes}}selected{{end}}>{{$m}}</option>{{end}}</select> minutes and back up only if there were changes since the last backup</label>
+      <label class="radio"><input type="radio" name="default_mode" value="cron" {{if not $dp.Adaptive}}checked{{end}}> Cron expression <input name="default_cron" value="{{if $dp.Adaptive}}0 2 * * *{{else}}{{$dp.Cron}}{{end}}" class="mono" aria-label="Cron expression"></label>
       <div class="row5">
         <label>Latest<input type="number" name="keep_last" value="{{$st.DefaultPolicy.KeepLast}}" min="0"></label>
         <label>Daily<input type="number" name="keep_daily" value="{{$st.DefaultPolicy.KeepDaily}}" min="0"></label>
         <label>Weekly<input type="number" name="keep_weekly" value="{{$st.DefaultPolicy.KeepWeekly}}" min="0"></label>
         <label>Monthly<input type="number" name="keep_monthly" value="{{$st.DefaultPolicy.KeepMonthly}}" min="0"></label>
       </div>
+      <p class="hint">A new library starts with this schedule and this retention. Changing them here does not change a library that has its own policy (Schedule tab). 5-field cron: minute, hour, day of month, month, day of week, in the time zone {{$dp.Timezone}}.</p>
     </fieldset>
     <fieldset {{if not ($p.Can "settings.edit")}}disabled{{end}}>
       <legend>Time limits</legend>

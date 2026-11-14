@@ -232,6 +232,70 @@ func TestVerifyMismatchIsVerdict(t *testing.T) {
 	}
 }
 
+// TestStructureMismatchIsRefusedAndAVerdict: a backup whose restored
+// structure differs from its manifest is not restored as a new library, which
+// leaves no database or role behind, and its test restore marks it failed.
+func TestStructureMismatchIsRefusedAndAVerdict(t *testing.T) {
+	e := newQuietEnv(t)
+	ctx := e.ctx
+	l, _ := e.createActive("structure")
+	b := e.firstBackup(l)
+	e.quiesce()
+	mp := strings.TrimSuffix(mustAbs(e.svc, b), ".backup") + ".manifest.json"
+	m, err := core.ReadManifest(mp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Schema.Fingerprint = "sha256:" + strings.Repeat("0", 64)
+	m.Schema.Tables = 7
+	raw, _ := json.Marshal(m)
+	if err := os.WriteFile(mp, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const want = "SQS-R011 the restored structure does not match the manifest (2 tables, expected 7)"
+
+	// Restore as new first, while the backup is still usable.
+	nl, rj, err := e.svc.RestoreAsNew(ctx, admin, b.ID, "structure_copy", "Copy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := e.wait(rj, jobs.Failed)
+	if g.ErrorCode != "SQS-R011" || g.ErrorDetail != want {
+		t.Fatalf("restore as new: %s %q", g.ErrorCode, g.ErrorDetail)
+	}
+	if d := e.db("structure_copy"); d != nil {
+		t.Fatalf("the restored database was left behind: %+v", d)
+	}
+	if ok, err := e.svc.PG.RoleExists(ctx, "structure_copy"); err != nil || ok {
+		t.Fatalf("the role of the new library was left behind: %v %v", ok, err)
+	}
+	if st := e.lib(nl.ID).State; st != core.StatePurged {
+		t.Fatalf("new library in state %s", st)
+	}
+	if !e.backupNow(b.ID).Usable() {
+		t.Fatal("a refused restore marked the backup unusable")
+	}
+
+	// The test restore gives the verdict.
+	vj, err := e.svc.Jobs.Enqueue(ctx, core.JobBackupVerify, l.ID, core.VerifyParams{BackupID: b.ID}, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g = e.wait(vj, jobs.Failed)
+	if g.ErrorCode != "SQS-R011" || g.ErrorDetail != want {
+		t.Fatalf("test restore: %s %q", g.ErrorCode, g.ErrorDetail)
+	}
+	if got := e.backupNow(b.ID); got.VerifyStatus != core.VerifyFailed || got.Usable() {
+		t.Fatalf("mismatch not recorded: %s usable=%v", got.VerifyStatus, got.Usable())
+	}
+	if evs := e.eventsOf(events.BackupVerifyFailed, l.ID); len(evs) != 1 {
+		t.Fatalf("verify_failed events %+v", evs)
+	}
+	if evs := e.eventsOf(core.EventVerifySkipped, l.ID); len(evs) != 0 {
+		t.Fatalf("verify_skipped emitted for a verdict: %+v", evs)
+	}
+}
+
 // TestVerifyL1Outcomes: only a verdict on the content of a backup marks it
 // failed; a cancelled job, a missing volume or a tool that cannot start
 // leave its status as it was (audit H5).
@@ -302,7 +366,7 @@ func TestVerifyL1Outcomes(t *testing.T) {
 	os.WriteFile(mp, mb, 0o600)
 	e.svc.DB.ExecContext(ctx, `UPDATE backups SET sha256 = ? WHERE id = ?`, hexSum, b.ID)
 	err = e.svc.VerifyL1(ctx, b.ID)
-	if err == nil || !strings.HasPrefix(err.Error(), "SQS-B020 verification failed: SQS-B041 ") || status() != core.VerifyFailed {
+	if err == nil || !strings.HasPrefix(err.Error(), "SQS-B020 verification failed: SQS-B041 pg_restore cannot read the file: pg_restore exited with code 1: ") || status() != core.VerifyFailed {
 		t.Fatalf("garbage archive: %v (%s)", err, status())
 	}
 }
@@ -367,6 +431,82 @@ func TestImportReadsWholeArchive(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(mustAbs(e.svc, bs[0])); !bytes.Equal(got, full) {
 		t.Fatal("catalogued file differs from the source")
+	}
+}
+
+// TestVerifyL2CatchesAnArchiveCutShort: an archive cut after its index, with
+// its checksum recorded again, passes level 1; its test restore fails with
+// the error of pg_restore, the backup is marked failed and the test database
+// is dropped.
+func TestVerifyL2CatchesAnArchiveCutShort(t *testing.T) {
+	e := newQuietEnv(t)
+	ctx := e.ctx
+	l, pass := e.createActive("cut_short")
+	conn := e.connect(l.OwnerRole, pass, l.DBName)
+	if _, err := conn.Exec(ctx, `INSERT INTO "Sm2TiItem"(project, payload) SELECT g % 50, jsonb_build_object('x', md5(g::text)) FROM generate_series(1, 50000) g`); err != nil {
+		t.Fatal(err)
+	}
+	conn.Close(ctx)
+	e.firstBackup(l)
+	e.quiesce()
+	bj, err := e.svc.BackupNow(ctx, admin, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(bj, jobs.Succeeded)
+	e.quiesce()
+	b := e.okBackups(l.ID)[0]
+	abs := mustAbs(e.svc, b)
+	full, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cut := full[:len(full)*6/10]
+	if err := os.WriteFile(abs, cut, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Level 1 agrees with the cut file: the manifest and the catalog carry
+	// its checksum and its size.
+	sum := sha256.Sum256(cut)
+	hexSum := hex.EncodeToString(sum[:])
+	mp := strings.TrimSuffix(abs, ".backup") + ".manifest.json"
+	m, err := core.ReadManifest(mp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SHA256, m.Size = hexSum, int64(len(cut))
+	mb, _ := json.Marshal(m)
+	if err := os.WriteFile(mp, mb, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.DB.ExecContext(ctx, `UPDATE backups SET sha256 = ?, size_bytes = ? WHERE id = ?`, hexSum, len(cut), b.ID); err != nil {
+		t.Fatal(err)
+	}
+	vj, err := e.svc.Jobs.Enqueue(ctx, core.JobBackupVerify, l.ID, core.VerifyParams{BackupID: b.ID}, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := e.wait(vj, jobs.Failed)
+	if g.ErrorCode != "SQS-R010" || !strings.HasPrefix(g.ErrorDetail, "SQS-R010 pg_restore failed: pg_restore exited with code 1: ") {
+		t.Fatalf("job error %s: %q", g.ErrorCode, g.ErrorDetail)
+	}
+	if got := e.backupNow(b.ID); got.VerifyStatus != core.VerifyFailed {
+		t.Fatalf("a cut archive was not marked failed: %s (%s)", got.VerifyStatus, got.VerifyDetail)
+	}
+	if evs := e.eventsOf(events.BackupVerifyFailed, l.ID); len(evs) != 1 {
+		t.Fatalf("verify_failed events %+v", evs)
+	}
+	if evs := e.eventsOf(core.EventVerifySkipped, l.ID); len(evs) != 0 {
+		t.Fatalf("verify_skipped emitted for a verdict: %+v", evs)
+	}
+	dbs, err := e.svc.PG.Databases(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range dbs {
+		if strings.HasPrefix(d.Name, "sqsolve_verify_") {
+			t.Fatalf("test database left behind: %s", d.Name)
+		}
 	}
 }
 

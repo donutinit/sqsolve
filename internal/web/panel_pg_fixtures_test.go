@@ -75,19 +75,13 @@ func fxPGPanel(t *testing.T) (*app.App, *httptest.Server, *testpg.Cluster) {
 	return a, srv, c
 }
 
-// fxConnect opens a workstation connection (TCP, like Resolve) as role,
-// retrying while PostgreSQL applies a pg_hba.conf reload.
+// fxConnect opens a workstation connection (TCP, like Resolve) as role, once:
+// when the panel has answered, or the job that creates a library has ended,
+// pg_hba.conf already lets the role in, because PostgreSQL applies a reload
+// it was sent before it accepts the next connection.
 func fxConnect(t *testing.T, c *testpg.Cluster, role string, pass secrets.String, db string) (*pgx.Conn, error) {
 	t.Helper()
-	var conn *pgx.Conn
-	var err error
-	for i := 0; i < 30; i++ {
-		if conn, err = c.ConnectTCP(context.Background(), role, pass, db); err == nil {
-			return conn, nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return nil, err
+	return c.ConnectTCP(context.Background(), role, pass, db)
 }
 
 // fxReveal returns the password of a credential of a library ("" for the
@@ -109,14 +103,8 @@ func fxActiveLibrary(t *testing.T, a *app.App, c *testpg.Cluster, b *browser, to
 	ctx := context.Background()
 	_, loc, _ := b.do("POST", "/libraries/new", url.Values{"csrf": {tok}, "name": {name}, "slug": {slug}, "strategy": {"resolve"}})
 	id := strings.TrimPrefix(loc, "/libraries/")
-	var l *core.Library
-	for i := 0; i < 100; i++ {
-		if l, _ = a.Svc.Library(ctx, id); l != nil && l.State == core.StateAwaitingInit {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if l == nil || l.State != core.StateAwaitingInit {
+	l := waitCreated(t, a, id)
+	if l.State != core.StateAwaitingInit {
 		t.Fatalf("library %s not waiting for Resolve: %+v (%s)", slug, l, loc)
 	}
 	pw := fxReveal(t, a, id, "")

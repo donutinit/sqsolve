@@ -5,6 +5,7 @@ package web_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/donutinit/sqsolve/internal/audit"
 	"github.com/donutinit/sqsolve/internal/core"
+	"github.com/donutinit/sqsolve/internal/fsx"
+	"github.com/donutinit/sqsolve/internal/jobs"
 )
 
 // Verifying a backup queues its job for whoever may verify; pinning it
@@ -205,6 +208,32 @@ func TestImportForms(t *testing.T) {
 	}
 }
 
+// An upload to the import folder needs the backups volume: on an unmounted
+// disk (an empty mount point, without the marker) it is refused with the
+// error of the volume check before anything is written, and no job is queued.
+func TestImportUploadNeedsTheBackupsVolume(t *testing.T) {
+	a, srv, _ := jobsPanel(t)
+	l := fxLibrary(t, a, "apolo", core.StateActive)
+	dir := a.Svc.ImportDir()
+	if err := os.Remove(filepath.Join(a.Cfg.BackupDir, fsx.MarkerName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	boss, tok := jobsLogin(t, srv, "boss", jobsAdminPass)
+	loc, msg := uploadImport(t, boss, tok, [][2]string{{"library", l.ID}}, "night.backup", []byte("PGDMP upload"))
+	if loc != "/backups/import" || msg != "SQS-S001 the volume has no sqsolve marker" {
+		t.Fatalf("upload without the volume: %s %q", loc, msg)
+	}
+	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the upload wrote to the empty mount point: %v", err)
+	}
+	if js, err := a.Jobs.List(context.Background(), jobs.Filter{LibraryID: l.ID}); err != nil || len(js) != 0 {
+		t.Fatalf("jobs after the refused upload: %+v %v", js, err)
+	}
+}
+
 // Restoring by replacing is refused to a role that only restores as a
 // copy, asks for the identifier and a library that can be replaced, and
 // queues its job with the "accepted" entry; a restore as a copy validates
@@ -258,5 +287,53 @@ func TestRestoreFormRefusals(t *testing.T) {
 	j := fxQueuedJob(t, a, loc, core.JobRestoreReplace, l.ID, "restore.replace", "boss")
 	if !strings.Contains(string(j.Params), `"backup_id":"`+good+`"`) || !strings.Contains(string(j.Params), `"terminate_sessions":true`) {
 		t.Fatalf("replace params %s", j.Params)
+	}
+}
+
+// K-03, ADR 0029: "Replace library" pressed again while its job is queued
+// opens the same job; with the other choice for the open sessions or
+// another backup it goes back to the form with SQS-J005, which names the job.
+func TestReplaceFormSecondRequest(t *testing.T) {
+	a, srv, _ := jobsPanel(t)
+	l := fxLibrary(t, a, "apolo", core.StateActive)
+	good := fxBackup(t, a, l.ID, core.BackupOK, core.VerifyL1OK, time.Now().Add(-3*time.Hour))
+	good2 := fxBackup(t, a, l.ID, core.BackupOK, core.VerifyL1OK, time.Now().Add(-2*time.Hour))
+	boss, tok := jobsLogin(t, srv, "boss", jobsAdminPass)
+	form := func(extra ...string) url.Values {
+		f := url.Values{"csrf": {tok}, "mode": {"replace"}, "confirm": {"apolo"}}
+		for i := 0; i+1 < len(extra); i += 2 {
+			f.Set(extra[i], extra[i+1])
+		}
+		return f
+	}
+	var locs []string
+	for range 2 {
+		st, loc, msg := fxPost(boss, "/backups/"+good+"/restore", form())
+		if st != http.StatusSeeOther || !strings.HasPrefix(loc, "/jobs/") || msg != "" {
+			t.Fatalf("replace: %d %s %q", st, loc, msg)
+		}
+		locs = append(locs, loc)
+	}
+	if locs[0] != locs[1] {
+		t.Fatalf("two jobs: %v", locs)
+	}
+	j005 := "SQS-J005 another job of this type is already queued or running for this library with different parameters; wait for it or cancel it (job " + strings.TrimPrefix(locs[0], "/jobs/") + ")"
+	for _, c := range []struct {
+		backup string
+		form   url.Values
+	}{
+		{good, form("terminate", "on")},
+		{good2, form()},
+	} {
+		st, loc, msg := fxPost(boss, "/backups/"+c.backup+"/restore", c.form)
+		if st != http.StatusSeeOther || loc != "/backups/"+c.backup+"/restore?mode=replace" || msg != j005 {
+			t.Errorf("replace %s %v: %d %s %q", c.backup, c.form, st, loc, msg)
+		}
+	}
+	if n := jobCount(t, a); n != 1 {
+		t.Fatalf("%d jobs", n)
+	}
+	if es := auditEntries(t, a, "restore.replace"); len(es) != 1 || es[0].Outcome != audit.Accepted {
+		t.Fatalf("entries %+v", es)
 	}
 }

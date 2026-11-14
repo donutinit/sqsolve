@@ -46,6 +46,7 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-B042` | the manifest is not a valid version 1 manifest |
 | `SQS-B043` | the catalog path of this backup is not valid; it is blocked until an administrator reviews it |
 | `SQS-B044` | only a backup whose catalog path is not valid can be removed from the catalog this way |
+| `SQS-B045` | the path of this backup could not be checked; it is blocked until the check can be made |
 | `SQS-B050` | choose a file from the import folder or upload one |
 | `SQS-B051` | the file is outside the import folder |
 | `SQS-B052` | could not save the upload: ... |
@@ -70,6 +71,8 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-C030` | invalid advertised address: type only the IP or the name, without a port |
 | `SQS-C031` | the initialization window must be between 5 and 1440 minutes |
 | `SQS-C032` | retention periods must be between 1 and ... days |
+| `SQS-C033` | the hours without a backup before the warning must be between 1 and ... |
+| `SQS-C034` | the maximum upload must be between 1 and ... MB |
 | `SQS-C040` | type the target Resolve version |
 | `SQS-C041` | unknown maintenance action |
 | `SQS-C050` | could not create ...: ... |
@@ -77,6 +80,7 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-C052` | ... is missing: run sqsolve init (the sqsolve-init service of the compose file): ... |
 | `SQS-C053` | the service runs as ...:... but SQSOLVE_UID and SQSOLVE_GID say ...:.... |
 | `SQS-C054` | PostgreSQL will not be able to use the database volume (...). |
+| `SQS-C055` | could not write ...: ... |
 | `SQS-C060` | The request body is too large |
 | `SQS-C061` | invalid JSON body: ... |
 | `SQS-C062` | unknown API route |
@@ -108,6 +112,7 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-J003` | this job cannot be cancelled right now |
 | `SQS-J004` | only failed, cancelled or interrupted jobs can be retried |
 | `SQS-J005` | another job of this type is already queued or running for this library with different parameters; wait for it or cancel it |
+| `SQS-J006` | the job has already ended |
 | `SQS-J010` | the process stopped while the job was running |
 | `SQS-J020` | invalid schedule expression |
 | `SQS-J021` | unknown schedule kind: ... |
@@ -138,7 +143,6 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-L040` | type the library identifier to confirm |
 | `SQS-L041` | cannot delete a library in state ... |
 | `SQS-L042` | the library is not in the trash |
-| `SQS-L043` | another library with identifier ... already exists |
 | `SQS-L044` | only libraries in the trash can be purged |
 | `SQS-L045` | there is no verified final backup; not purging |
 | `SQS-L046` | role ... still owns: ...; review them before purging |
@@ -149,10 +153,15 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-L053` | the job journal could not be written, so nothing was locked: ... |
 | `SQS-L054` | not every library role of ... could be set NOLOGIN, so the connections of its database were left as they were |
 | `SQS-L055` | the job journal could not be written, so the database was not moved to the trash: ... |
+| `SQS-L056` | the library could not be recorded in the trash: ... |
+| `SQS-L057` | the job journal could not be written, so the database was not moved back from the trash: ... |
+| `SQS-L058` | the recovery from the trash stopped before it finished: ... |
 | `SQS-L070` | the new password of ... could not be saved; the previous password is still in force: ... |
 | `SQS-L071` | the new password of ... could not be saved and the previous one could not be put back (...); rotate the password again: ... |
 | `SQS-L072` | could not add ...: ... |
 | `SQS-L080` | the role ... was set NOLOGIN, but its revocation could not be recorded, so the next start would give it its login back; revoke it again: ... |
+| `SQS-L081` | the role ... is revoked and cannot open new connections, but its open sessions could not be closed, so a workstation that is still connected with it keeps working until it disconnects: ... |
+| `SQS-L082` | ... is in maintenance and does not accept new connections, but its open sessions could not all be closed (... closed); close the others from the Activity tab: ... |
 | `SQS-N001` | unknown channel kind |
 | `SQS-N002` | the destination responded ... |
 | `SQS-N010` | invalid sender: ... |
@@ -179,6 +188,7 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-P041` | could not write pg_hba.conf: ... |
 | `SQS-P042` | generated pg_hba.conf is not valid: ... |
 | `SQS-P043` | could not reload PostgreSQL: ... |
+| `SQS-P044` | the stored settings could not be read, so pg_hba.conf was not rewritten: ... |
 | `SQS-P050` | PostgreSQL gave up waiting for a lock that another session holds (lock_timeout); try again when that session finishes |
 | `SQS-P051` | PostgreSQL cancelled a statement that ran for longer than sqsolve allows (statement_timeout) |
 | `SQS-R001` | the backup cannot be restored (it failed or was deleted) |
@@ -204,6 +214,7 @@ is listed with the text shown in the panel, the API, the console or the log.
 | `SQS-R059` | the job journal could not be written, so the backup was not restored: ... |
 | `SQS-R060` | the database was restored, but the library could not be activated: .... ... |
 | `SQS-R061` | could not recreate the access of the library: ... |
+| `SQS-R062` | ... was left invalid by an interrupted DROP DATABASE and is never dropped automatically; it was kept, drop it by hand after checking Health |
 | `SQS-R090` | ... is named by an interrupted job that reconciliation at startup has not settled yet; it was kept |
 | `SQS-R091` | could not tell whether an interrupted job pending reconciliation names ..., so it was kept: ... |
 | `SQS-S001` | the volume has no sqsolve marker |

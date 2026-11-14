@@ -17,7 +17,9 @@
   `Retry-After: 5`.
 - Errors: RFC 9457 `application/problem+json`. `type` is the relative path
   `/docs/errors/<code>` (`about:blank` when the error has no code), `title` is the HTTP status
-  text, `detail` is the whole message with its code and `instance` the request path:
+  text, `detail` is the whole message with its code (the driver's text of a failed connection
+  to PostgreSQL only for a caller with the `diagnostics` permission, `08-security.md` §5) and
+  `instance` the request path:
 
 ```json
 {
@@ -31,26 +33,41 @@
 ```
 
   Status codes: `400` for a body that cannot be read, `404` for an unknown library, backup or
-  job, `409` for a job that cannot be cancelled, a backup with an invalid path or a job conflict
-  (`SQS-J005`), `503` when the audit log or PostgreSQL is unavailable, `507` for `SQS-B012`, and
-  `422` for the other refusals of the services. Any other path under `/api/` answers `404` with
-  `SQS-C062`.
+  job, `409` for a job that cannot be cancelled (`SQS-J003`) or has already ended (`SQS-J006`),
+  a backup whose path is not valid or could not be checked (`SQS-B043`, `SQS-B045`) or a job
+  conflict (`SQS-J005`), `500` when the catalog cannot be read by `GET /libraries`, `/backups`,
+  `/jobs`, `/events` or `/audit`, by `GET /jobs/{id}` and its logs, or by a route that first
+  reads the library of its path (`GET` and `PATCH /libraries/{id}` and the `GET` routes of its
+  backups, projects and grades), or when a `PATCH /libraries/{id}` or a reveal is done but its
+  answer cannot be read back, `503` when the audit log or PostgreSQL is unavailable, `507` for
+  `SQS-B012`, and `422` for the other refusals of the services. Any other path under `/api/`
+  answers `404` with `SQS-C062`.
 - Long operations: `202 Accepted` with the job (alone, or next to the library or export workspace
   it creates). `POST /libraries` and `POST /libraries/{id}/backups` also set
   `Location: /api/v1/jobs/{id}`.
-- Idempotency: sqsolve does not support `Idempotency-Key`. A revert or recreate repeated from the
-  panel returns the job already queued for that library.
+- Idempotency: sqsolve does not support `Idempotency-Key`. A restore by replacing, a delete, a
+  revert, a recreate, a recovery from the trash or a purge requested again while its job is queued
+  or running returns that job (the API has routes for delete and restore by replacing: `202` with
+  the same `id`, in state `queued` or `running`; the panel opens the job's page), queues nothing
+  and writes no audit entry. A restore by replacing or a recreate with other parameters (another
+  backup, another `terminate_sessions`) is refused with `409` and `SQS-J005`, whose detail names
+  the job that holds the library (ADR 0028, ADR 0029). The state of the library is checked first:
+  once the running job has changed it (a library being swapped is `restoring`), the request gets
+  the `422` of that state.
 - Optimistic concurrency: sqsolve uses neither `ETag` nor `If-Match`.
 - Pagination by cursor, newest first: `GET /backups` and `GET /libraries/{id}/backups` take
   `limit` (up to 500, default 200) and `cursor`, and answer `next_cursor` when the page is full;
   `GET /jobs` pages by 50 with `cursor` and `next_cursor`; `GET /events` (100 per page) and
   `GET /audit` (200 per page) take `cursor` (the last `id`, or the last `seq` for the audit log)
   and answer no `next_cursor`.
-- Lists answer `{"items": [...]}`. Those read from the job, event and audit stores
-  (`GET /jobs`, `GET /jobs/{id}/logs`, the `steps` of `GET /jobs/{id}`, `GET /events`,
-  `GET /audit`) are `null` instead of `[]` when empty, and so is `attention` in
-  `GET /system/status`; `GET /jobs/{id}/logs` answers `200` with `null` items for a job that
-  does not exist (K-01 in `19-risks.md` §5).
+- Lists answer `{"items": [...]}`. A list that sqsolve builds for an answer is `[]` when it is
+  empty, never `null`: the `items` of every list route and the lists inside other answers (the
+  `steps` of `GET /jobs/{id}`, `volumes` and `attention` in `GET /system/status`, `projects`,
+  `albums` and their `stills`). The documents that sqsolve stores and returns as they were
+  written (`params` and `result` of a job, `data` of a step or an event, `details` of an audit
+  entry) are not rewritten, and a list in them can be `null`: `libraries` in the result of a
+  Resolve upgrade window that found no library, `notes` in the audit entry of an export without
+  notes and `cidrs` in the audit entry of a change that empties the network rules of a library.
 - Dates RFC 3339 in UTC. Sizes in bytes. Identifiers are ULIDs, except the `seq` of audit
   entries, job steps and log lines.
 - Dangerous operations require `"confirm": "<slug>"` in the body and, with a token, the scope
@@ -77,20 +94,20 @@ every permission).
 | Method and path | Permission | Minimum role | Token scope | Description |
 |---|---|---|---|---|
 | `GET /system/health` | none | no authentication | none | `200` or `503` with states and counts only: PostgreSQL, volumes, backup freshness (for uptime monitors; fields in `13-observability.md` §3) |
-| `GET /system/status` | `view` | viewer | any | What the dashboard shows: `postgres` (`up`, `version`, `connections`, `max_connections`, `error`), `volumes` (name, path, total, free, used percent, error), `jobs` (`queued`, `running`, `failed_24h`), `libraries` (`total`, `active`) and `attention` (`severity`, `message`) |
+| `GET /system/status` | `view` | viewer | any | What the dashboard shows: `postgres` (`up`, `version`, `connections`, `max_connections`, `error`, which holds the driver's text of a failed connection only for a caller with the `diagnostics` permission, `08-security.md` §5), `volumes` (name, path, total, free, used percent, error), `jobs` (`queued`, `running`, `failed_24h`), `libraries` (`total`, `active`) and `attention` (`severity`, `message`) |
 | `GET /system/version` | `view` | viewer | any | `sqsolve`, `commit`, `postgres` (server version) and `instance_id` |
 | `GET /libraries` | `view` | viewer | any | List; `?state=` filters by one state |
-| `POST /libraries` | `library.create` | administrator | `admin` | `{ "display_name": "...", "slug": "...", "strategy": "resolve", "notes": "..." }`, the slug suggested from the name when empty; `202` with `library` and `job` |
-| `GET /libraries/{id}` | `view` | viewer | any | Detail |
+| `POST /libraries` | `library.create` | administrator | `admin` | `{ "display_name": "...", "slug": "...", "strategy": "resolve", "notes": "..." }`, the slug suggested from the name when empty; `202` with `library` and `job`. A client connects to the library only once that job has succeeded: the job makes the library `awaiting_init` (`active` with `"strategy": "precreate"`) one step before it writes the library's `pg_hba.conf` lines and reloads PostgreSQL, so a connection in between is refused |
+| `GET /libraries/{id}` | `view` | viewer | any | Detail. While the library's `library.create` job is queued or running (`GET /jobs?type=library.create&library_id=<id>`), its `state` does not yet mean that a workstation can connect (`POST /libraries`) |
 | `PATCH /libraries/{id}` | `library.edit` | administrator | `admin` | `display_name`, `notes`, `resolve_version`, `connection_limit`; returns the library |
-| `DELETE /libraries/{id}` | `library.delete` | administrator | `admin` | `{ "confirm": "<slug>" }`; to the trash; `202` with the job |
-| `POST /libraries/{id}/maintenance` | `library.maintenance` | administrator | `admin` | `{ "enabled": true, "terminate_sessions": false }`; returns `maintenance` and `terminated_sessions` |
+| `DELETE /libraries/{id}` | `library.delete` | administrator | `admin` | `{ "confirm": "<slug>" }`; to the trash; `202` with the job (the same job while one is queued or running, §1) |
+| `POST /libraries/{id}/maintenance` | `library.maintenance` | administrator | `admin` | `{ "enabled": true, "terminate_sessions": false }`; returns `maintenance` and `terminated_sessions`; when open sessions could not all be closed, an error with `SQS-L082` and the library is in maintenance all the same |
 | `GET /libraries/{id}/connection` | `view` | viewer | any | `library_name`, `host`, `port`, `database`, `user`; no password. `?credential=<id>` for a per-person credential |
 | `POST /libraries/{id}/connection/reveal` | `library.reveal` | administrator | `admin` | The same plus `password` (also `?credential=`); audited, emits `library.credential_revealed` |
 | `GET /libraries/{id}/sessions` | `view` | viewer | any | Active sessions: `pid`, `user`, `client_addr`, `application`, `started_at`, `state`, `ssl`, `tls_version` |
-| `GET /libraries/{id}/backup-policy` | `view` | viewer | any | Policy: `enabled`, `mode` (`cron` or `activity`), `check_minutes` (5, 10, 15, 30, 60), `cron`, `timezone`, `keep_last`, `keep_daily`, `keep_weekly`, `keep_monthly`, `min_verified`; `last_check_at` and `last_check_same` read-only (ADR 0022) |
+| `GET /libraries/{id}/backup-policy` | `view` | viewer | any | Policy: `enabled`, `mode` (`cron` or `activity`), `check_minutes` (5, 10, 15, 30, 60), `cron`, `timezone`, `keep_last`, `keep_daily`, `keep_weekly`, `keep_monthly`, `min_verified`; `last_check_at` and `last_check_same` read-only (ADR 0022); a library without a policy of its own answers the default policy of Settings, which retention does not apply to it until a `PUT` stores it (docs 11 §6) |
 | `PUT /libraries/{id}/backup-policy` | `policy.edit` | administrator | `admin` | The same object; returns it as stored (an empty `mode` is `cron`; in activity mode `cron` is the check cadence) |
-| `GET /libraries/{id}/backups` | `view` | viewer | any | The library's catalog; `status`, `limit`, `cursor` |
+| `GET /libraries/{id}/backups` | `view` | viewer | any | The library's catalog; `status`, `limit`, `cursor`; `404` with `SQS-L002` for a library that does not exist |
 | `POST /libraries/{id}/backups` | `backup.create` | operator | `backup` | Back up now; `202` with the job |
 | `GET /libraries/{id}/projects` | `view` | viewer | any | Projects with folder and date, and the `schema` state (experimental, `22`) |
 | `GET /libraries/{id}/projects/{pid}/export` | `library.export` | operator | `export` | Download of the `.drp` (experimental) |
@@ -101,22 +118,25 @@ every permission).
 | `GET /backups/{id}` | `view` | viewer | any | Detail: kind, status, verification, size, SHA-256, `pg_dump` version, fingerprint, pin, dates, error |
 | `GET /backups/{id}/download` | `backup.download` | operator | `restore` | The file, with `Content-Disposition`, `X-Sqsolve-SHA256` and range requests; audited; `404` unless the backup is available |
 | `POST /backups/{id}/verify` | `backup.verify` | operator | `backup` | Test restore (L2); `202` with the job |
-| `POST /backups/{id}/restore` | `restore.new`; `restore.replace` to replace | operator; administrator to replace | `restore` | `{ "mode": "new", "slug": "...", "display_name": "..." }` (`202` with `library` and `job`) or `{ "mode": "replace", "confirm": "<slug>", "terminate_sessions": false }` (`202` with the job); another mode: `400` with `SQS-C063` |
+| `POST /backups/{id}/restore` | `restore.new`; `restore.replace` to replace | operator; administrator to replace | `restore` | `{ "mode": "new", "slug": "...", "display_name": "..." }` (`202` with `library` and `job`) or `{ "mode": "replace", "confirm": "<slug>", "terminate_sessions": false }` (`202` with the job); another mode: `400` with `SQS-C063`; a replace repeated while its job is queued or running answers `202` with that job, and one with another backup or another `terminate_sessions` answers `409` with `SQS-J005` (§1) |
 | `GET /backups/{id}/export` | `view` | viewer | any | The backup's export workspace and, when `ready`, its `projects`, `albums` and `schema` (experimental, `22` §7) |
 | `POST /backups/{id}/export` | `library.export` | operator | `export` | Restore the backup into a temporary database to export from it; `202` with `workspace` and `job` |
 | `DELETE /backups/{id}/export` | `library.export` | operator | `export` | Close the workspace and drop its temporary database; `204` |
 | `GET /backups/{id}/export/projects/{pid}`, `.../export/grades/{sid}`, `.../export/grades/albums/{vid}` | `library.export` | operator | `export` | Downloads from the workspace, as for a library |
 | `GET /jobs` | `view` | viewer | any | Filters `state`, `type`, `library_id`; `cursor` |
 | `GET /jobs/{id}` | `view` | viewer | any | `{ "job": {...}, "steps": [...] }` (§3) |
-| `GET /jobs/{id}/logs` | `view` | viewer | any | Lines with `seq`, `ts`, `level`, `message`; `?after=<seq>` returns the ones after it (up to 5000) |
-| `POST /jobs/{id}/cancel` | `job.cancel` and the job type's | operator | `admin` | Cancel; `202` with `{ "status": "cancel_requested" }`, `409` if it cannot be cancelled. The type's permission is the one that starts its operation (`restore.replace` for a restore by replacing, `settings.edit` for system jobs); without it, `403` with `SQS-A030` and a `denied` entry in the audit log |
+| `GET /jobs/{id}/logs` | `view` | viewer | any | Lines with `seq`, `ts`, `level`, `message`; `?after=<seq>` returns the ones after it (up to 5000); `404` with `SQS-J002` for a job that does not exist |
+| `POST /jobs/{id}/cancel` | `job.cancel` and the job type's | operator | `admin` | Cancel; `202` with `{ "status": "cancel_requested" }`, `409` if it cannot be cancelled (`SQS-J003`) or has already ended (`SQS-J006`). The type's permission is the one that starts its operation (`restore.replace` for a restore by replacing, `settings.edit` for system jobs); without it, `403` with `SQS-A030` and a `denied` entry in the audit log |
 | `GET /events` | `view` | viewer | any | Filters `library_id`, `min_severity`, `type` (prefix); `cursor` |
 | `GET /audit` | `audit.view` | operator | `admin` | Audit log; filter `target_id`; `cursor` |
 
 The experimental routes answer `409` with `SQS-E002` while the setting is off. A library that is
-not active or in maintenance, or that sqsolve cannot open, answers `503` with `SQS-E005`; when the
-connection fails, that detail names the PostgreSQL socket and the `sqsolve_admin` role (K-02 in
-`19-risks.md` §5). Downloads carry `X-Sqsolve-Name` (the suggested file name),
+not active or in maintenance, or that sqsolve cannot open, answers `503` with `SQS-E005`. When the
+connection to PostgreSQL fails, the detail ends in "the connection to PostgreSQL failed (the
+cause is in the sqsolve log)"; only a caller with the `diagnostics` permission (an
+administrator's session, or an administrator's token with the `admin` scope) gets the driver's
+text instead, which names the socket, the `sqsolve_admin` role and the database
+(`08-security.md` §5). Downloads carry `X-Sqsolve-Name` (the suggested file name),
 `X-Sqsolve-Experimental: true` and, when there are any, `X-Sqsolve-Notes`.
 
 The API has no route for the rest, which only the panel does (`09-web-ui.md`): reopening the
@@ -181,8 +201,8 @@ Job types: `library.create`, `library.delete`, `library.untrash`, `library.purge
 | `library.maintenance_on`, `library.maintenance_off` | info | Locks |
 | `library.missing` | critical, warning | Critical: reconciliation found no usable database under the library's name (none, or an invalid one). Warning: a database with the name and owner of a `missing` library is on the server again but was not adopted, because it has no tables while the library had some or it could not be inspected; the message says why and that the database is kept (docs 11 §7.7) |
 | `library.found` | info | The database of a `missing` library is on the server again with its owner and has tables (or the library never had any); the library is active |
-| `library.prev_kept` | warning | A previous state (`__prev`) was not dropped because no verified backup of it exists or could be taken (`SQS-R055`), or because the journal of a job still pending reconciliation names it (`SQS-R090`) or those jobs could not be read (`SQS-R091`) |
-| `library.reconcile_pending` | warning | At a start, reconciliation could not settle an interrupted restore, revert, delete or recreate (a check failed, a rename or a catalog write was refused, or no rule covers the state of the swap). The message says why, that the library's state and access are left as they are and which databases its journal names are kept; every start tries again until it is settled (docs 11 §7.3, §8). Without a library: the jobs pending reconciliation could not be read, so every `__restore` database is kept, libraries left restoring stay restoring and no previous state is forgotten |
+| `library.prev_kept` | warning | A previous state (`__prev`) was not dropped because no verified backup of it exists or could be taken (`SQS-R055`), or because the journal of a job still pending reconciliation names it (`SQS-R090`) or those jobs could not be read (`SQS-R091`), or because an interrupted `DROP DATABASE` left it invalid (`SQS-R062`) |
+| `library.reconcile_pending` | warning | At a start, reconciliation could not settle an interrupted restore, revert, delete, recovery from the trash, recreate or purge (a check failed, a rename or a catalog write was refused, no rule covers the state of the swap, or a recovery from the trash finds neither its trash database nor one of the library under its name). The message says why, that the library's state and access are left as they are and which databases its journal names are kept; every start tries again until it is settled (docs 11 §7.3, §8). Without a library: the jobs pending reconciliation could not be read, so every `__restore` database is kept, libraries left restoring stay restoring and no previous state is forgotten |
 | `library.credential_rotated`, `library.credential_revealed` | info | Credentials |
 | `backup.started`, `backup.succeeded` | info | Backups; a backup cut by a cancel or a graceful stop emits no `backup.failed` |
 | `backup.verified` | info | A test restore (L2) matched the manifest |
@@ -193,13 +213,14 @@ Job types: `library.create`, `library.delete`, `library.untrash`, `library.purge
 | `backup.expired` | info | Retention deleted a backup |
 | `backup.catalog_mismatch` | warning | The catalog check found backup files missing from the volume or files not in the catalog |
 | `backup.path_invalid` | critical | At a start or in the catalog check, catalog rows whose path is outside the backups volume or not valid; sqsolve does not read, restore or delete them until an administrator reviews them (`data.backup_ids`, `runbooks/invalid-backup-path.md`) |
+| `backup.path_unchecked` | error | At a start or in the catalog check, catalog rows whose path could not be checked because of a disk error (`SQS-B045`); while it lasts sqsolve does not read them or count them as verified and retention leaves them alone (`data.backup_ids`; the message carries the first error; `runbooks/invalid-backup-path.md`) |
 | `restore.started`, `restore.succeeded`, `restore.reverted` | info | Restore |
 | `restore.failed` | error | Failed restore (the active library was not touched or was reverted); critical when a swap stopped halfway (`SQS-R053`) or its reopening failed (`SQS-R054`) |
 | `storage.low` | warning at 80 %, error at 90 % | Space; `data.volume` is `db`, `app` or `backups` |
 | `storage.volume_missing` | critical | The backups volume marker is missing, or a volume cannot be measured (`data.volume` is `db`, `app` or `backups`); also when a backup finds the backups volume unmounted or foreign (with the library, without `data.volume`) |
 | `postgres.down`, `postgres.up` | critical, info | Availability: first failed check after it answered, or no answer in the 5 minutes after sqsolve started; `up` only after a `down`, and it ends the grouping window of `down` on every channel |
 | `postgres.cluster_changed` | critical | The cluster's system identifier is not the stored one; sqsolve holds (ADR 0023) |
-| `postgres.cluster_accepted` | warning | `SQSOLVE_PG_ACCEPT_SYSTEM_ID` accepted a new cluster |
+| `postgres.cluster_accepted` | warning | `SQSOLVE_PG_ACCEPT_SYSTEM_ID` accepted a new cluster; emitted once the new identifier is stored with its audit entry, and the variable can then be removed |
 | `auth.login_failed_burst` | warning | Probable brute force (`data.ip`, `data.username`) |
 | `auth.locked` | critical | An account was locked for 15 minutes after 10 wrong passwords in a row (ADR 0025; `data.username`, `data.ip`) |
 | `audit.chain_broken` | critical | Audit log integrity (daily housekeeping) |
@@ -287,7 +308,12 @@ rotate the master key or the PostgreSQL superuser password (`08-security.md` §6
 `backup create`, `restore` and `catalog rebuild` queue a job in the same database the server uses;
 the running server executes it, with the same job locks, and `--wait` follows it until it ends.
 Console actions go through the same services and are recorded in the audit log with actor type
-`cli`, shown as "console".
+`cli`, shown as "console". `restore --replace` has the unique job identity of the panel and the
+API (ADR 0028, ADR 0029): repeated while the first one is still queued it prints the same job,
+and with another backup or another choice of `--terminate` it ends with `SQS-J005`. The console
+does not see the jobs the server is running, so the same command repeated while the server
+already runs the replacement queues a second job, which runs after the first (K-03 in
+`19-risks.md` §5).
 
 ## 8. Internal formats
 

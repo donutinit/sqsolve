@@ -246,13 +246,20 @@ step is recorded before it runs so that it can be completed or reverted after a 
 2. Open SQLite; copy with `VACUUM INTO` and migrate if there are pending migrations.
 3. Connect to PostgreSQL over the socket (with retries; the panel starts even if it fails and
    says so).
-4. Reconcile: running jobs become "interrupted"; delete orphaned `.partial` files; drop
+4. Reconcile: running jobs become "interrupted"; delete orphaned `.partial` files (only on this
+   installation's backups volume); drop
    `sqsolve_verify_*`, `sqsolve_export_*` and `__restore_*` databases without a live job; complete or revert
-   half-done swaps according to their journal; remove `CREATEDB` from expired windows;
+   half-done swaps and finish half-done moves to and from the trash according to their journal;
+   remove `CREATEDB` from expired windows;
    regenerate `pg_hba.conf` from the catalog and reload. A journal that cannot be settled
    stays pending and is tried again at every start; until then its library is left as it is and
    nothing its journal names is dropped (docs 11 §7.3, §8).
 5. Start the scheduler (with the misfire policy) and the HTTP server.
+
+The HTTP server opens without waiting for PostgreSQL, for reconciliation or for the check of the
+catalog paths (docs 11 §3); that check runs in the background from the start and only reports.
+Before the server opens sqsolve still reads the marker of the backups volume and lists
+`_system/` once, to remove what an interrupted control plane copy left.
 
 ## 7. Configuration
 

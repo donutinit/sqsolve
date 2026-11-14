@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/donutinit/sqsolve/internal/audit"
@@ -118,6 +119,39 @@ func TestAPIJobsListAndDetail(t *testing.T) {
 	wantProblem(t, "unknown job", e.call(t, "GET", "/api/v1/jobs/NOPE", e.read, "", false), 404, "SQS-J002 job not found")
 }
 
+// The log of a job that does not exist is 404 with SQS-J002, not an empty
+// list; the log of a job without lines, or read after its last line, is an
+// empty list and not null (docs 10 §1).
+func TestAPIJobLogsOfAnUnknownJob(t *testing.T) {
+	e := apiServer(t)
+	for _, path := range []string{"/api/v1/jobs/NOPE/logs", "/api/v1/jobs/NOPE/logs?after=3"} {
+		r := e.call(t, "GET", path, e.read, "", false)
+		wantProblem(t, path, r, 404, "SQS-J002 job not found")
+		if r.problem.Type != "/docs/errors/SQS-J002" || r.problem.Title != "Not Found" || r.problem.Instance != "/api/v1/jobs/NOPE/logs" {
+			t.Errorf("%s: %+v", path, r.problem)
+		}
+	}
+	j := enqueue(t, e, core.JobVacuum, "", nil)
+	empty := func(query string) {
+		t.Helper()
+		r := e.call(t, "GET", "/api/v1/jobs/"+j.ID+"/logs"+query, e.read, "", false)
+		if r.status != 200 || strings.Join(strings.Fields(r.body), "") != `{"items":[]}` {
+			t.Errorf("logs%s: %d %s", query, r.status, r.body)
+		}
+	}
+	empty("")
+	e.exec(t, `INSERT INTO job_logs(job_id, seq, ts, level, message) VALUES (?, 1, ?, 'info', 'one')`, j.ID, store.NowT())
+	empty("?after=1")
+	r := e.call(t, "GET", "/api/v1/jobs/"+j.ID+"/logs", e.read, "", false)
+	var out struct {
+		Items []jobs.LogLine `json:"items"`
+	}
+	decodeInto(t, r, &out)
+	if r.status != 200 || len(out.Items) != 1 || out.Items[0].Message != "one" {
+		t.Errorf("logs with one line: %d %s", r.status, r.body)
+	}
+}
+
 // Cancelling needs job.cancel and also the permission that starts the job's
 // type: an operator may not cancel a restore by replacing nor a system job,
 // and each refusal leaves a denied entry naming the type (docs 10 §2). A
@@ -143,4 +177,24 @@ func TestAPIJobCancelPermissions(t *testing.T) {
 		}
 	}
 	wantProblem(t, "operator cancels an unknown job", operator.call(t, "POST", "/api/v1/jobs/NOPE/cancel", "cookie", "", true), 404, "SQS-J002 job not found")
+}
+
+// Cancelling a job that has already ended is 409 with SQS-J006 (docs 10 §2:
+// "409 if it cannot be cancelled"), not 404: the job exists, and it keeps
+// its state.
+func TestAPICancelAnEndedJob(t *testing.T) {
+	e := apiServer(t)
+	for _, st := range []jobs.State{jobs.Succeeded, jobs.Failed, jobs.Cancelled, jobs.Interrupted} {
+		j := enqueue(t, e, core.JobVacuum, "", nil)
+		e.exec(t, `UPDATE jobs SET state = ?, finished_at = ? WHERE id = ?`, string(st), store.NowT(), j.ID)
+		path := "/api/v1/jobs/" + j.ID + "/cancel"
+		r := e.call(t, "POST", path, e.admin, "", false)
+		wantProblem(t, "cancel a "+string(st)+" job", r, 409, "SQS-J006 the job has already ended")
+		if r.problem.Type != "/docs/errors/SQS-J006" || r.problem.Title != "Conflict" || r.problem.Instance != path {
+			t.Errorf("%s job: %+v", st, r.problem)
+		}
+		if got, err := e.a.Jobs.Get(context.Background(), j.ID); err != nil || got.State != st {
+			t.Errorf("%s job after the refused cancel: %+v %v", st, got, err)
+		}
+	}
 }

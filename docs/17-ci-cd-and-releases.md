@@ -90,7 +90,8 @@ What runs, in `.github/workflows` and `.github/dependabot.yml`:
   Dependabot opens one pull request per file, whoever merges it applies the same tag and digest to
   the other file in that pull request; `make pg-image-check` fails until both match. The pull
   request already runs the full CI, including the smoke test with the new PostgreSQL. Go modules
-  are not covered: they follow section 7.
+  are not covered: they follow section 7, which also says when a base image is taken by hand
+  before its 7 days.
 
 - `fuzz.yml`: every night (and by hand), each fuzz target for 5 minutes (`make fuzz
   FUZZTIME=5m`); a failing input is printed in the log so it can be added to the target's
@@ -156,6 +157,13 @@ vuln-binary BINARY=...`).
   when `postgres:18.x-trixie`, the Go builder image or a GitHub Action has a new version, 7 days
   after it was published; the pull request goes through the full CI. The PostgreSQL pin lives in
   two files that must stay equal (`make pg-image-check`).
+- A base image that fixes a vulnerability may be taken before its 7 days, like a Go module.
+  Dependabot does not open that pull request sooner: its cooldown delays every version update
+  and it offers no security updates for Docker images (GitHub documentation read on
+  2026-11-12). The new digest, and the new tag when the tag changes, is written by hand, for
+  PostgreSQL in the `Dockerfile` and in `deploy/compose.yaml`. The change goes through the full
+  CI like any other, and the release notes name the vulnerability and say that the image was
+  taken early, as 1.2.3 did for the Go builder image (GO-2026-6859).
 - The PostgreSQL pin in `deploy/compose.yaml` is the operator's copy: a new sqsolve release does
   not change a running installation. A release that moves to a new PostgreSQL minor says so in its
   notes, and the operator pastes the new compose file or replaces the `postgres` image line
@@ -169,7 +177,8 @@ vuln-binary BINARY=...`).
 3. Acceptance script (on major and minor versions) or smoke (on patches).
 4. Release notes with upgrade and rollback steps. If the PostgreSQL pin changed since the
    previous release, say so and give the new `image:` line, because installed copies of the
-   compose file keep the old digest.
+   compose file keep the old digest. If a base image was taken before its 7 days (section 7),
+   name the vulnerability it fixes.
 5. `vX.Y.Z` tag; automatic publication; manual verification of the image signature and SBOM.
 6. `deploy/compose.yaml` and the `Dockerfile` on `main` carry the same, current PostgreSQL tag and
    digest (Dependabot proposes them; `make pg-image-check` enforces that they match).

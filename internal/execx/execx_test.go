@@ -26,6 +26,28 @@ func fakeBin(t *testing.T, name, body string) *Runner {
 	return r
 }
 
+// An allowed program that is absent, not executable or a folder is not
+// found, by Path and by Run, which then starts nothing.
+func TestMissingProgramIsReported(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pg_dump"), []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "pg_restore"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := &Runner{paths: map[string]string{}, dirs: []string{dir, ""}, GracePeriod: time.Second}
+	for _, name := range []string{"pg_dump", "pg_restore", "vacuumdb"} {
+		want := "SQS-X002 " + name + " not found"
+		if _, err := r.Path(name); err == nil || err.Error() != want {
+			t.Errorf("Path(%s): %v", name, err)
+		}
+		if _, err := r.Run(context.Background(), Cmd{Name: name}); err == nil || err.Error() != want {
+			t.Errorf("Run(%s): %v", name, err)
+		}
+	}
+}
+
 func TestNotAllowed(t *testing.T) {
 	r := NewRunner("")
 	if _, err := r.Run(context.Background(), Cmd{Name: "sh", Args: []string{"-c", "true"}}); err == nil || err.Error() != "SQS-X001 program not allowed: sh" {

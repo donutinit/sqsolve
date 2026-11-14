@@ -5,10 +5,13 @@ package pg_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/donutinit/sqsolve/internal/execx"
 	"github.com/donutinit/sqsolve/internal/pg"
@@ -242,6 +245,26 @@ func TestPingFollowsTheServer(t *testing.T) {
 	if _, err := cl.Databases(ctx); err == nil {
 		t.Fatal("database list from a stopped server")
 	}
+	// Once the pool holds no connection from before the stop, every check
+	// dials: the driver's error stays in the chain of SQS-P001, so pg.Public
+	// cuts the socket path and the role for a reader without the
+	// diagnostics permission (docs 08 §5).
+	for i := 0; ; i++ {
+		_, err := cl.Server(ctx)
+		if errors.As(err, new(*pgconn.ConnectError)) {
+			break
+		}
+		if i == 20 {
+			t.Fatalf("the pool still answers with connections from before the stop: %v", err)
+		}
+	}
+	err = cl.Ping(ctx)
+	if !errors.Is(err, pg.ErrUnavailable) || !errors.As(err, new(*pgconn.ConnectError)) {
+		t.Fatalf("ping that dials a stopped server: %v", err)
+	}
+	if text, _ := pg.Public(err); text != "SQS-P001 PostgreSQL is not available: "+hiddenText {
+		t.Fatalf("public text of the ping: %q", text)
+	}
 	c.Restart(t)
 	deadline := time.Now().Add(10 * time.Second)
 	for cl.Ping(ctx) != nil {
@@ -297,14 +320,15 @@ func TestToolsConnectWithTheAdminCredential(t *testing.T) {
 }
 
 // TestFailedStatementsKeepTheVerifierSecret: a password change that
-// PostgreSQL refuses returns its error without the SCRAM verifier.
+// PostgreSQL refuses returns its error without the SCRAM verifier, and the
+// error keeps its SQLSTATE.
 func TestFailedStatementsKeepTheVerifierSecret(t *testing.T) {
 	ctx := context.Background()
 	_, cl := setup(t)
 	v, _ := pg.ScramVerifier(secrets.GeneratePassword(24))
 	err := cl.SetRolePassword(ctx, "ghost_role", v)
-	if err == nil || !strings.Contains(err.Error(), `role "ghost_role" does not exist`) || strings.Contains(err.Error(), v) {
-		t.Fatalf("password of a missing role: %v", err)
+	if err == nil || !strings.Contains(err.Error(), `role "ghost_role" does not exist`) || strings.Contains(err.Error(), v) || !pg.IsCode(err, "42704") {
+		t.Fatalf("password of a missing role: %s", hidden(fmt.Sprint(err), v))
 	}
 }
 

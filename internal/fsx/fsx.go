@@ -388,7 +388,10 @@ func Within(dir, path string) (bool, error) {
 
 // Confined reports whether path lies strictly below dir once every symlink
 // of its existing part is resolved; the part that does not exist yet cannot
-// hold a symlink. A dangling symlink, or one that loops, is not confined.
+// hold a symlink. A symlink that leads nowhere (a missing target, a file
+// used as a folder, a loop) is not confined. An error of the disk (an I/O
+// error, a folder that may not be entered) is returned: the check could not
+// be made.
 func Confined(dir, path string) (bool, error) {
 	rd, err := filepath.EvalSymlinks(dir)
 	if err != nil {
@@ -399,7 +402,10 @@ func Confined(dir, path string) (bool, error) {
 		if _, err := os.Lstat(p); err == nil {
 			rp, err := filepath.EvalSymlinks(p)
 			if err != nil {
-				return false, nil
+				if leadsNowhere(err) {
+					return false, nil
+				}
+				return false, err
 			}
 			rel, err := filepath.Rel(rd, filepath.Join(rp, rest))
 			if err != nil {
@@ -416,6 +422,15 @@ func Confined(dir, path string) (bool, error) {
 		rest = filepath.Join(filepath.Base(p), rest)
 		p = parent
 	}
+}
+
+// leadsNowhere reports whether err, from filepath.EvalSymlinks, says where
+// the path leads rather than that the disk failed: the target does not
+// exist, a file stands where a folder should be, or the symlinks loop (an
+// error EvalSymlinks makes itself, without a *fs.PathError).
+func leadsNowhere(err error) bool {
+	var pe *fs.PathError
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ELOOP) || !errors.As(err, &pe)
 }
 
 // trace, when set, sees each change made to a folder and each folder sync,

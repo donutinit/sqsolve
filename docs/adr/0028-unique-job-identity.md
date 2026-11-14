@@ -1,7 +1,9 @@
 # ADR 0028. A unique job is its type, its library and its parameters
 
 **Status:** Accepted (2026-10-25), Diego's decision. Refines `jobs.Unique` (ADR 0026 moved its
-check into the transaction that queues the job).
+check into the transaction that queues the job). Its list of operations is extended by ADR 0029
+(accepted 2026-11-13): restore by replacing, delete, recover and a purge asked by hand use
+`jobs.Unique` too.
 
 **Context.** `jobs.Unique` returned the queued or running job of the same type and library,
 whatever its parameters. For a recreate that meant a second request with another backup got,

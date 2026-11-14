@@ -31,6 +31,9 @@ password; connect it from Resolve with Connect.
    separate database), "Compare with the manifest", "Wait for sessions to close", "Lock
    connections", "Swap databases" and "Reopen". Its log ends with "Backed up the previous
    state ..." and it ends as "Succeeded". A library in maintenance stays in maintenance.
+   Pressing "Replace library" again while that job is queued or running opens the same job;
+   with another backup or the other choice of "Close open sessions" it is refused with
+   `SQS-J005` until the job ends.
 4. Ask everyone to open the project again in Resolve; the library entry and its password do not
    change. Expected: the projects as they were in the backup.
 
@@ -48,11 +51,12 @@ the database holding the original (`<identifier>__prev_<mark>`). Use section C: 
 back under the library's name.
 
 If Activity shows a "reconciliation pending" warning (`library.reconcile_pending`) after a
-restart: sqsolve was stopped during a restore, revert, delete or recreate and could not settle
-it at start. Nothing was changed or deleted: the library keeps its state (usually "Restoring")
-and the databases the warning lists are kept. Fix what the warning names (for example close the
-session that refused the rename) and restart sqsolve; every start tries again. Expected: the
-warning stops and the library is Active (or in the trash, for a delete).
+restart: sqsolve was stopped during a restore, revert, delete, recovery from the trash or
+recreate and could not settle it at start. Nothing was changed or deleted: the library keeps its
+state (usually "Restoring") and the databases the warning lists are kept. Fix what the warning
+names (for example close the session that refused the rename) and restart sqsolve; every start
+tries again. Expected: the warning stops and the library is Active (or in the trash, for a delete
+or for a recovery that had not moved its database back).
 
 If the log says "Could not back up the previous state": the replacement worked, but the
 previous version is only covered by the pre-restore backup. It is kept (not deleted when it

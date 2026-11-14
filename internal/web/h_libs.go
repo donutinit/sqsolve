@@ -127,6 +127,14 @@ func (s *Server) library(w http.ResponseWriter, r *http.Request) {
 	}
 	running, _ := s.A.Jobs.List(ctx, jobs.Filter{LibraryID: l.ID, States: []jobs.State{jobs.Queued, jobs.Running}, Limit: 10})
 	data["Running"] = running
+	// The creation job opens the window (or makes an E0 library active) one
+	// step before it writes the library's pg_hba.conf lines, so until it
+	// ends the library is shown as being prepared, not ready to connect.
+	for _, j := range running {
+		if j.Type == core.JobLibraryCreate {
+			data["Creating"] = true
+		}
+	}
 	switch tab {
 	case "backups":
 		bs, _ := s.A.Svc.Backups(ctx, core.BackupFilter{LibraryID: l.ID, Limit: 200})
@@ -135,6 +143,9 @@ func (s *Server) library(w http.ResponseWriter, r *http.Request) {
 	case "schedule":
 		pol, _ := s.A.Svc.Policy(ctx, l.ID)
 		data["Policy"] = pol
+		// Without a policy of its own the form shows the default one, which
+		// retention does not apply to the library until it is saved here.
+		data["OwnPolicy"], _ = s.A.Svc.HasOwnPolicy(ctx, l.ID)
 		data["CheckOptions"] = []int{5, 10, 15, 30, 60}
 		data["Upcoming"], _ = scheduler.Upcoming(pol.Cron, pol.Timezone, time.Now(), 5)
 		keep, expire, _ := s.A.Svc.RetentionPreview(ctx, l.ID, pol)

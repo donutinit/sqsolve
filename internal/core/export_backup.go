@@ -142,9 +142,12 @@ func (s *Service) runBackupExport(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
+	// The stored error is read by every viewer: the driver's text of a
+	// failed connection goes only to the process log (docs 08 §5).
 	fail := func(cause error) error {
 		s.PG.DropDatabase(context.WithoutCancel(ctx), w.DBName)
-		s.DB.ExecContext(context.WithoutCancel(ctx), `UPDATE export_workspaces SET state = 'failed', error = ? WHERE id = ?`, cause.Error(), w.ID)
+		shown := s.ReaderError(cause, "backup export", false, "workspace", w.ID)
+		s.DB.ExecContext(context.WithoutCancel(ctx), `UPDATE export_workspaces SET state = 'failed', error = ? WHERE id = ?`, shown.Error(), w.ID)
 		return cause
 	}
 	if b.Status != BackupOK {
@@ -188,7 +191,7 @@ func (s *Service) OpenBackupExport(ctx context.Context, backupID string) (*drp.S
 	}
 	conn, err := s.PG.ConnectDB(ctx, w.DBName)
 	if err != nil {
-		return nil, w, fmt.Errorf("%w: %v", ErrExportUnavailable, err)
+		return nil, w, fmt.Errorf("%w: %w", ErrExportUnavailable, err)
 	}
 	s.DB.ExecContext(ctx, `UPDATE export_workspaces SET expires_at = ? WHERE id = ?`, store.T(s.now().Add(ExportWorkspaceTTL)), w.ID)
 	sess, err := drp.Open(ctx, conn)

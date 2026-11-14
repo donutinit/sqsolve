@@ -5,6 +5,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,7 +52,37 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	enc.Encode(v)
 }
 
+// orEmpty returns s, or an empty list when s is nil: a list in an answer is
+// never null (docs 10 §1).
+func orEmpty[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
+// readerKey holds, in the context of a request that passed guard, what
+// problem needs to apply docs 08 §5 to the detail.
+type readerKey struct{}
+
+type reader struct {
+	svc  *core.Service
+	full bool // the caller has the diagnostics permission
+}
+
+// problem answers err. In a request that passed guard, the driver's text of
+// a failed connection to PostgreSQL goes to the process log and only a
+// caller with the diagnostics permission gets it (core.Service.ReaderError);
+// status comes from the caller, which takes it from err.
 func problem(w http.ResponseWriter, r *http.Request, status int, err error) {
+	if rd, ok := r.Context().Value(readerKey{}).(reader); ok {
+		err = rd.svc.ReaderError(err, "request", rd.full, "path", r.URL.Path)
+	}
+	writeProblem(w, r, status, err)
+}
+
+// writeProblem answers err with its whole text.
+func writeProblem(w http.ResponseWriter, r *http.Request, status int, err error) {
 	msg := err.Error()
 	code := codeRe.FindString(msg)
 	typ := "about:blank"
@@ -73,7 +104,8 @@ func statusFor(err error) int {
 	switch {
 	case errors.Is(err, core.ErrLibraryNotFound), errors.Is(err, core.ErrBackupNotFound), errors.Is(err, jobs.ErrNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, jobs.ErrNotCancellable), errors.Is(err, core.ErrBackupPath), errors.Is(err, jobs.ErrConflict):
+	case errors.Is(err, jobs.ErrNotCancellable), errors.Is(err, jobs.ErrEnded), errors.Is(err, core.ErrBackupPath),
+		errors.Is(err, core.ErrBackupPathUnchecked), errors.Is(err, jobs.ErrConflict):
 		return http.StatusConflict
 	case errors.Is(err, audit.ErrUnavailable):
 		return http.StatusServiceUnavailable
@@ -86,6 +118,16 @@ func statusFor(err error) int {
 		return http.StatusServiceUnavailable
 	}
 	return http.StatusUnprocessableEntity
+}
+
+// readStatus is the status of a failed read of the library or the job that
+// the path names: 404 when it does not exist, 500 when the catalog could not
+// be read (a failure of sqsolve, not a refusal of the request).
+func readStatus(err error) int {
+	if errors.Is(err, core.ErrLibraryNotFound) || errors.Is(err, jobs.ErrNotFound) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
 }
 
 // clientIP resolves the caller's address with the same rules as the panel:
@@ -134,6 +176,7 @@ func (a *API) guard(action auth.Action, h handler) http.HandlerFunc {
 			problem(w, r, http.StatusForbidden, errors.New("SQS-A030 the role or the token scopes do not allow this action"))
 			return
 		}
+		r = r.WithContext(context.WithValue(r.Context(), readerKey{}, reader{a.A.Svc, p.Can(auth.ActDiagnostics)}))
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		h(w, r, p)
 	}
@@ -250,12 +293,18 @@ func healthBody(pgOK, volOK, clusterChanged bool, fresh health.Freshness, vols [
 }
 
 func (a *API) status(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
-	st := a.A.Monitor.Snapshot(r.Context())
+	st := a.A.Monitor.ForReader(a.A.Monitor.Snapshot(r.Context()), r.URL.Path, p.Can(auth.ActDiagnostics))
+	writeJSON(w, http.StatusOK, statusBody(st))
+}
+
+// statusBody builds the answer of GET /system/status. Its lists are never
+// null: nothing to attend to is an empty list.
+func statusBody(st health.Status) map[string]any {
 	type att struct {
 		Severity string `json:"severity"`
 		Message  string `json:"message"`
 	}
-	var attention []att
+	attention := make([]att, 0, len(st.Attention))
 	for _, x := range st.Attention {
 		attention = append(attention, att{string(x.Severity), x.Message})
 	}
@@ -267,15 +316,15 @@ func (a *API) status(w http.ResponseWriter, r *http.Request, p *auth.Principal) 
 		UsedPct float64 `json:"used_percent"`
 		Error   string  `json:"error,omitempty"`
 	}
-	var vols []vol
+	vols := make([]vol, 0, len(st.Volumes))
 	for _, v := range st.Volumes {
 		vols = append(vols, vol{v.Name, v.Path, v.Total, v.Free, v.UsedPct, v.Err})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"postgres": map[string]any{"up": st.PostgresUp, "version": st.Postgres.Version, "connections": st.Postgres.Connections, "max_connections": st.Postgres.MaxConnections, "error": st.PostgresErr},
 		"volumes":  vols, "jobs": map[string]int{"queued": st.Queued, "running": st.Running, "failed_24h": st.Failed24h},
 		"libraries": map[string]int{"total": st.Libraries, "active": st.Active}, "attention": attention,
-	})
+	}
 }
 
 func (a *API) version(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
@@ -376,7 +425,7 @@ func (a *API) libraryCreate(w http.ResponseWriter, r *http.Request, p *auth.Prin
 func (a *API) lib(w http.ResponseWriter, r *http.Request) *core.Library {
 	l, err := a.A.Svc.Library(r.Context(), r.PathValue("id"))
 	if err != nil {
-		problem(w, r, statusFor(err), err)
+		problem(w, r, readStatus(err), err)
 		return nil
 	}
 	return l
@@ -420,7 +469,12 @@ func (a *API) libraryPatch(w http.ResponseWriter, r *http.Request, p *auth.Princ
 		problem(w, r, statusFor(err), err)
 		return
 	}
-	l, _ = a.A.Svc.Library(r.Context(), l.ID)
+	// The change is done and recorded; only the answer is missing.
+	l, err := a.A.Svc.Library(r.Context(), l.ID)
+	if err != nil {
+		problem(w, r, http.StatusInternalServerError, err)
+		return
+	}
 	writeJSON(w, 200, libDTO(l))
 }
 
@@ -474,7 +528,12 @@ func (a *API) reveal(w http.ResponseWriter, r *http.Request, p *auth.Principal) 
 		problem(w, r, statusFor(err), err)
 		return
 	}
-	c, _ := a.A.Svc.Connection(r.Context(), id, cred)
+	// The reveal is recorded; without its connection data there is no answer.
+	c, err := a.A.Svc.Connection(r.Context(), id, cred)
+	if err != nil {
+		problem(w, r, http.StatusInternalServerError, err)
+		return
+	}
 	writeJSON(w, 200, map[string]any{"host": c.Host, "port": c.Port, "database": c.Database, "user": c.User, "password": pass.Reveal()})
 }
 
@@ -559,7 +618,10 @@ func (a *API) listBackups(w http.ResponseWriter, r *http.Request, libraryID stri
 }
 
 func (a *API) libraryBackups(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
-	a.listBackups(w, r, r.PathValue("id"))
+	// An unknown library is not a library without backups.
+	if l := a.lib(w, r); l != nil {
+		a.listBackups(w, r, l.ID)
+	}
 }
 
 func (a *API) backups(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
@@ -675,7 +737,7 @@ func (a *API) jobsList(w http.ResponseWriter, r *http.Request, p *auth.Principal
 		problem(w, r, 500, err)
 		return
 	}
-	resp := map[string]any{"items": list}
+	resp := map[string]any{"items": orEmpty(list)}
 	if len(list) == f.Limit {
 		resp["next_cursor"] = list[len(list)-1].ID
 	}
@@ -685,21 +747,35 @@ func (a *API) jobsList(w http.ResponseWriter, r *http.Request, p *auth.Principal
 func (a *API) job(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	j, err := a.A.Jobs.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		problem(w, r, statusFor(err), err)
+		problem(w, r, readStatus(err), err)
 		return
 	}
-	steps, _ := a.A.Jobs.Steps(r.Context(), j.ID)
-	writeJSON(w, 200, map[string]any{"job": j, "steps": steps})
-}
-
-func (a *API) jobLogs(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
-	after, _ := strconv.Atoi(r.URL.Query().Get("after"))
-	logs, err := a.A.Jobs.Logs(r.Context(), r.PathValue("id"), after)
+	steps, err := a.A.Jobs.Steps(r.Context(), j.ID)
 	if err != nil {
 		problem(w, r, 500, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": logs})
+	writeJSON(w, 200, map[string]any{"job": j, "steps": orEmpty(steps)})
+}
+
+func (a *API) jobLogs(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	// An unknown job is not a job without lines.
+	j, err := a.A.Jobs.Get(r.Context(), r.PathValue("id"))
+	if errors.Is(err, jobs.ErrNotFound) {
+		problem(w, r, http.StatusNotFound, err)
+		return
+	}
+	if err != nil {
+		problem(w, r, 500, err)
+		return
+	}
+	after, _ := strconv.Atoi(r.URL.Query().Get("after"))
+	logs, err := a.A.Jobs.Logs(r.Context(), j.ID, after)
+	if err != nil {
+		problem(w, r, 500, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": orEmpty(logs)})
 }
 
 // jobCancel also needs the permission of the job's type (the one that
@@ -738,7 +814,7 @@ func (a *API) eventsList(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		problem(w, r, 500, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": evs})
+	writeJSON(w, 200, map[string]any{"items": orEmpty(evs)})
 }
 
 func (a *API) auditList(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
@@ -748,5 +824,5 @@ func (a *API) auditList(w http.ResponseWriter, r *http.Request, p *auth.Principa
 		problem(w, r, 500, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": list})
+	writeJSON(w, 200, map[string]any{"items": orEmpty(list)})
 }

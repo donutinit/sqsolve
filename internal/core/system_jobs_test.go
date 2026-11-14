@@ -11,6 +11,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -266,6 +267,78 @@ func TestCatalogCheckFlagsMissingFiles(t *testing.T) {
 	}
 }
 
+// Pending 3.7 item 1: the catalog check counts the backups whose path could
+// not be checked, reports them, and gives no verdict on them: such a backup
+// is not marked missing, nobody looked at it.
+func TestCatalogCheckCountsUncheckedPaths(t *testing.T) {
+	e := newJobsEnv(t, time.Now())
+	l := e.library("cat_lib", StateActive)
+	e.backup(l, bkOpt{started: time.Now().Add(-anotherYear)})
+	stuck := e.backup(l, bkOpt{})
+	defer e.uncheckable(stuck)()
+	j := e.run(JobCatalogCheck, "", nil, jobs.Succeeded)
+	if !strings.Contains(e.logs(j), "2 backups checked; 0 missing; 0 orphaned; 0 with a path that is not valid; 1 with a path that could not be checked") {
+		t.Fatalf("logs: %s", e.logs(j))
+	}
+	if b, _ := e.svc.Backup(e.ctx, stuck.ID); b.VerifyStatus != VerifyL1OK {
+		t.Fatalf("a backup nobody could look at got a verdict: %+v", b)
+	}
+	if evs := e.events(events.BackupPathUnchecked); len(evs) != 1 || evs[0].Severity != events.Error {
+		t.Fatalf("path_unchecked events %+v", evs)
+	}
+	if evs := e.events("backup.catalog_mismatch"); len(evs) != 0 {
+		t.Fatalf("mismatch events %+v", evs)
+	}
+}
+
+// Pending 3.7 item 1: a purge needs a final backup whose path can be
+// checked; one that cannot be read does not let it drop the database.
+func TestPurgeNeedsAFinalBackupWhosePathCanBeChecked(t *testing.T) {
+	e := newJobsEnv(t, time.Now())
+	tr := e.library("trashed_x", StateTrashed)
+	if _, err := e.svc.DB.ExecContext(e.ctx, `UPDATE libraries SET trash_db_name = 'trashed_x__trash_202610250000' WHERE id = ?`, tr.ID); err != nil {
+		t.Fatal(err)
+	}
+	final := e.backup(tr, bkOpt{kind: KindPreDelete})
+	defer e.uncheckable(final)()
+	j := e.run(JobLibraryPurge, tr.ID, nil, jobs.Failed)
+	if j.ErrorCode != "SQS-L045" || j.ErrorDetail != "SQS-L045 there is no verified final backup; not purging" {
+		t.Fatalf("purge with a final backup that cannot be checked: %s %q", j.ErrorCode, j.ErrorDetail)
+	}
+	if got, err := e.svc.Library(e.ctx, tr.ID); err != nil || got.State != StateTrashed {
+		t.Fatalf("library after the refused purge: %+v %v", got, err)
+	}
+}
+
+// With the backups disk not mounted (an empty folder at the mount point) the
+// path of the final backup still checks, but sqsolve cannot see the file: the
+// purge stops at check_backup with the volume error, before its journal and
+// before any drop.
+func TestPurgeStopsWhenTheBackupsVolumeIsNotMounted(t *testing.T) {
+	e := newJobsEnv(t, time.Now())
+	tr := e.library("trashed_x", StateTrashed)
+	if _, err := e.svc.DB.ExecContext(e.ctx, `UPDATE libraries SET trash_db_name = 'trashed_x__trash_202610250000' WHERE id = ?`, tr.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.backup(tr, bkOpt{kind: KindPreDelete})
+	_, mount := e.unmount()
+	defer mount()
+	j := e.run(JobLibraryPurge, tr.ID, nil, jobs.Failed)
+	if j.ErrorCode != "SQS-S001" || j.ErrorDetail != "SQS-S001 the volume has no sqsolve marker" {
+		t.Fatalf("purge on an unmounted backups volume: %s %q", j.ErrorCode, j.ErrorDetail)
+	}
+	steps, err := e.svc.Jobs.Steps(e.ctx, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 || steps[0].Name != "check_backup" || steps[0].State != "failed" || string(steps[0].Data) != "{}" {
+		t.Fatalf("steps of the refused purge: %+v", steps)
+	}
+	if got, err := e.svc.Library(e.ctx, tr.ID); err != nil || got.State != StateTrashed || got.TrashDB != "trashed_x__trash_202610250000" {
+		t.Fatalf("library after the refused purge: %+v %v", got, err)
+	}
+}
+
 // writeManifest stores a manifest at path.
 func writeManifest(t *testing.T, path string, m Manifest) {
 	t.Helper()
@@ -331,6 +404,11 @@ func TestCatalogRebuildKeepsWhatItCannotUse(t *testing.T) {
 	lib, err := e.svc.Library(ctx, lostID)
 	if err != nil || lib.State != StatePurged || lib.Slug != "lost_lib" || !strings.Contains(lib.Notes, "Rebuilt from the manifests on the backups volume") {
 		t.Fatalf("rebuilt library %+v %v", lib, err)
+	}
+	// The manifests do not record a policy: retention keeps every backup of
+	// the rebuilt library until one is saved for it.
+	if own, err := e.svc.HasOwnPolicy(ctx, lostID); own || err != nil {
+		t.Fatalf("policy of the rebuilt library: own %v %v", own, err)
 	}
 	if _, err := e.svc.Backup(ctx, orphan.BackupID); err == nil {
 		t.Fatal("a manifest without its file was added")
@@ -428,6 +506,100 @@ func TestRetentionOfEveryLibrary(t *testing.T) {
 		if got, _ := e.svc.Backup(ctx, c.b.ID); got.Status != c.want {
 			t.Errorf("%s of %s: %s, want %s", c.b.ID, c.b.LibraryID, got.Status, c.want)
 		}
+	}
+}
+
+// The retention job applies the default policy of Settings to no library:
+// a purged library with its own policy is pruned with it, one without a
+// policy of its own keeps every backup, and the job log names it. Libraries
+// that have no backups at all (not active yet) are not named: retention
+// left nothing of theirs alone.
+func TestRetentionJobNamesLibrariesWithoutTheirOwnPolicy(t *testing.T) {
+	e := newJobsEnv(t, time.Now())
+	ctx := e.ctx
+	now := time.Now()
+	st := DefaultSettings("UTC")
+	st.DefaultPolicy.KeepLast, st.DefaultPolicy.KeepDaily, st.DefaultPolicy.KeepWeekly, st.DefaultPolicy.KeepMonthly = 1, 0, 0, 0
+	if err := e.svc.DB.SetSetting(ctx, settingsKey, st, "test"); err != nil {
+		t.Fatal(err)
+	}
+	own := e.library("own_purged", StatePurged)
+	e.policy(own, 1, 1)
+	ownOld := e.backup(own, bkOpt{started: now.Add(-48 * time.Hour)})
+	ownNew := e.backup(own, bkOpt{started: now.Add(-time.Hour)})
+	rb := e.library("rebuilt", StatePurged)
+	rbOld := e.backup(rb, bkOpt{started: now.Add(-48 * time.Hour)})
+	rbNew := e.backup(rb, bkOpt{started: now.Add(-time.Hour)})
+	for _, st := range []State{StateProvisioning, StateAwaitingInit, StateInitExpired} {
+		e.library("empty_"+string(st), st)
+	}
+
+	j := e.run(JobRetention, "", nil, jobs.Succeeded)
+	want := "info: Retention applied to 1 libraries; 1 backups deleted\n" +
+		"info: Kept every backup of 1 libraries without a policy of their own (save one in the Schedule tab of each to apply retention): rebuilt"
+	if logs := e.logs(j); logs != want {
+		t.Fatalf("logs:\n%s\nwant:\n%s", logs, want)
+	}
+	for _, c := range []struct {
+		b    *Backup
+		want string
+	}{{ownOld, BackupDeleted}, {ownNew, BackupOK}, {rbOld, BackupOK}, {rbNew, BackupOK}} {
+		if got, _ := e.svc.Backup(ctx, c.b.ID); got.Status != c.want {
+			t.Errorf("%s of %s: %s, want %s", c.b.ID, c.b.LibraryID, got.Status, c.want)
+		}
+	}
+}
+
+// F09: while the backups disk is not mounted the retention job fails as a
+// whole with the code of the volume: nothing is deleted or recorded deleted,
+// the row of an old failed backup included, and no deletion is announced.
+// Once the disk is back the next run applies it.
+func TestRetentionJobFailsOnAnUnmountedVolume(t *testing.T) {
+	e := newJobsEnv(t, time.Now())
+	ctx := e.ctx
+	now := time.Now()
+	l := e.library("ret_unmounted", StateActive)
+	e.policy(l, 1, 1)
+	old := e.backup(l, bkOpt{started: now.Add(-48 * time.Hour)})
+	newest := e.backup(l, bkOpt{started: now.Add(-time.Hour)})
+	failed := e.backup(l, bkOpt{started: now.Add(-40 * 24 * time.Hour), status: BackupFailed, verify: VerifyNone})
+
+	disk, mount := e.unmount()
+	j := e.run(JobRetention, "", nil, jobs.Failed)
+	if j.ErrorCode != "SQS-S001" || j.ErrorDetail != "SQS-S001 the volume has no sqsolve marker" {
+		t.Fatalf("retention on an unmounted volume: %s %q", j.ErrorCode, j.ErrorDetail)
+	}
+	if logs := e.logs(j); strings.Contains(logs, "Retention applied") {
+		t.Fatalf("logs: %s", logs)
+	}
+	for _, b := range []*Backup{old, newest} {
+		if got, _ := e.svc.Backup(ctx, b.ID); got.Status != BackupOK || got.DeletedAt != nil {
+			t.Fatalf("%s recorded as %+v", b.ID, got)
+		}
+	}
+	if _, err := e.svc.Backup(ctx, failed.ID); err != nil {
+		t.Fatalf("the row of the failed backup was removed: %v", err)
+	}
+	if !onDisk(filepath.Join(disk, old.FilePath)) {
+		t.Fatal("the file left the disk")
+	}
+	if evs := e.events(events.BackupExpired); len(evs) != 0 {
+		t.Fatalf("deletions announced: %+v", evs)
+	}
+	if evs := e.events(events.JobFailed); len(evs) != 1 || evs[0].Message != `The job "Apply retention" failed: SQS-S001 the volume has no sqsolve marker` {
+		t.Fatalf("job.failed events: %+v", evs)
+	}
+	mount()
+
+	j = e.run(JobRetention, "", nil, jobs.Succeeded)
+	if logs := e.logs(j); !strings.Contains(logs, "info: Retention applied to 1 libraries; 1 backups deleted") {
+		t.Fatalf("logs: %s", logs)
+	}
+	if got, _ := e.svc.Backup(ctx, old.ID); got.Status != BackupDeleted || onDisk(mustAbs(e.svc, old)) {
+		t.Fatalf("after mounting: %+v", got)
+	}
+	if _, err := e.svc.Backup(ctx, failed.ID); !errors.Is(err, ErrBackupNotFound) {
+		t.Fatalf("the row of the failed backup after mounting: %v", err)
 	}
 }
 

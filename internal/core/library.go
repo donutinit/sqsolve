@@ -417,7 +417,9 @@ func (s *Service) runLibraryCreate(ctx context.Context, r *jobs.Run) error {
 			if err := s.PG.SecureDatabase(ctx, l.DBName, []string{l.OwnerRole}); err != nil {
 				return err
 			}
-			s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'active', updated_at = ? WHERE id = ?`, store.NowT(), l.ID)
+			if _, err := s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'active', updated_at = ? WHERE id = ?`, store.NowT(), l.ID); err != nil {
+				return err
+			}
 			return s.ensurePolicy(ctx, l.ID)
 		})
 		if err != nil {
@@ -460,7 +462,14 @@ func (s *Service) ReopenInitWindow(ctx context.Context, by audit.Actor, id strin
 			return err
 		}
 		exp := s.now().Add(time.Duration(s.Settings(ctx).InitWindowMinutes) * time.Minute)
-		s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'awaiting_init', init_window_expires_at = ?, init_table_count = -1, updated_at = ? WHERE id = ?`, store.T(exp), store.NowT(), id)
+		if _, err := s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'awaiting_init', init_window_expires_at = ?, init_table_count = -1, updated_at = ? WHERE id = ?`, store.T(exp), store.NowT(), id); err != nil {
+			// The library keeps its state: an expired window does not keep
+			// CREATEDB, which nothing takes back in that state.
+			if l.State == StateInitExpired {
+				err = errors.Join(err, s.PG.SetRoleCreateDB(context.WithoutCancel(ctx), l.OwnerRole, false))
+			}
+			return err
+		}
 		return s.SyncHBA(ctx)
 	})
 }
@@ -483,10 +492,13 @@ func (s *Service) checkInit(ctx context.Context, l *Library) error {
 		if err := s.PG.SetRoleCreateDB(ctx, l.OwnerRole, false); err != nil {
 			return err
 		}
-		s.setState(ctx, l.ID, StateInitExpired)
+		if err := s.setState(ctx, l.ID, StateInitExpired); err != nil {
+			return err
+		}
 		s.Events.Emit(ctx, events.Event{Type: events.LibraryInitExpired, Severity: events.Warning, LibraryID: l.ID,
 			Message: fmt.Sprintf("The window to initialize %q from Resolve expired; you can reopen it", l.DisplayName)})
-		return nil
+		// An expired window takes no connections: its pg_hba.conf lines go.
+		return s.SyncHBA(ctx)
 	}
 	db, err := s.PG.Database(ctx, l.DBName)
 	if err != nil {
@@ -644,7 +656,9 @@ func (s *Service) UpdateLibrary(ctx context.Context, by audit.Actor, id string, 
 // SetMaintenance closes or reopens a library to its workstations (ADR 0024):
 // maintenance sets every library role NOLOGIN and keeps the database open, so
 // sqsolve_admin can still back it up, restore it or delete it. Sessions that
-// are already open keep working unless terminate is set (PoC-09).
+// are already open keep working unless terminate is set (PoC-09). A session
+// that cannot be listed or closed leaves the library in maintenance and is
+// reported (SQS-L082) with the number that were closed.
 func (s *Service) SetMaintenance(ctx context.Context, by audit.Actor, id string, on, terminate bool) (int, error) {
 	l, err := s.Library(ctx, id)
 	if err != nil {
@@ -658,6 +672,9 @@ func (s *Service) SetMaintenance(ctx context.Context, by audit.Actor, id string,
 		st, typ, msg = StateMaintenance, events.LibraryMaintenanceOn, "%q is in maintenance: it does not accept new connections"
 	}
 	n := 0
+	// left is the error of sessions that could not be closed: the library is
+	// in maintenance all the same, so its event is still emitted.
+	var left error
 	details := map[string]any{"on": on, "terminate_sessions": terminate}
 	err = s.Audit.Do(ctx, by, "library.maintenance", "library", id, details, func() error {
 		if _, err := s.applyAccess(ctx, l, st); err != nil {
@@ -665,18 +682,27 @@ func (s *Service) SetMaintenance(ctx context.Context, by audit.Actor, id string,
 			s.applyAccess(context.WithoutCancel(ctx), l, l.State)
 			return err
 		}
+		var closeErr error
 		if on && terminate {
-			n = s.terminateRoleSessions(ctx, l)
+			n, closeErr = s.terminateRoleSessions(ctx, l)
 		}
-		s.setState(ctx, id, st)
 		details["terminated"] = n
+		if err := s.setState(ctx, id, st); err != nil {
+			// The catalog keeps the state it had, and so does the access.
+			s.applyAccess(context.WithoutCancel(ctx), l, l.State)
+			return err
+		}
+		if closeErr != nil {
+			left = fmt.Errorf("SQS-L082 %s is in maintenance and does not accept new connections, but its open sessions could not all be closed (%d closed); close the others from the Activity tab: %w", l.Slug, n, closeErr)
+			return left
+		}
 		return nil
 	})
-	if err != nil {
+	if err != nil && err != left {
 		return 0, err
 	}
 	s.Events.Emit(ctx, events.Event{Type: typ, LibraryID: id, Message: fmt.Sprintf(msg, l.DisplayName)})
-	return n, nil
+	return n, err
 }
 
 // applyAccess makes PostgreSQL grant what state st promises (ADR 0024), so it
@@ -734,27 +760,50 @@ func (s *Service) applyAccess(ctx context.Context, l *Library, st State) ([]stri
 }
 
 // terminateRoleSessions ends the sessions of the library roles on its
-// database. Sessions of sqsolve itself (a backup running in maintenance) are
-// kept.
-func (s *Service) terminateRoleSessions(ctx context.Context, l *Library) int {
-	roles, err := s.activeRoles(ctx, l.ID)
+// database, revoked credentials included. Sessions of sqsolve itself (a
+// backup running in maintenance) are kept.
+func (s *Service) terminateRoleSessions(ctx context.Context, l *Library) (int, error) {
+	roles, err := s.sessionRoles(ctx, l.ID)
 	if err != nil {
-		return 0
+		return 0, err
 	}
-	ss, err := s.PG.Sessions(ctx, l.DBName)
+	return s.endRoleSessions(ctx, l.DBName, roles)
+}
+
+// endRoleSessions ends the sessions of roles on db. It returns how many it
+// ended and the first error; a session that cannot be ended does not stop
+// the others, and one that ended on its own meanwhile is not an error.
+func (s *Service) endRoleSessions(ctx context.Context, db string, roles []string) (int, error) {
+	ss, err := s.PG.Sessions(ctx, db)
+	if ferr := fault("sessions.list"); ferr != nil {
+		err = ferr
+	}
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	n := 0
+	var first error
 	for _, x := range ss {
 		if !slices.Contains(roles, x.User) {
 			continue
 		}
-		if ok, _ := s.PG.TerminateSession(ctx, l.DBName, x.PID, roles); ok {
+		// The fault takes the place of the call, so the session it reports
+		// as not closed stays open.
+		ok, err := false, fault("sessions.terminate")
+		if err == nil {
+			ok, err = s.PG.TerminateSession(ctx, db, x.PID, roles)
+		}
+		if err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		if ok {
 			n++
 		}
 	}
-	return n
+	return n, first
 }
 
 // closeSessions ends every session on db before it is renamed. sqsolve_admin
@@ -794,13 +843,14 @@ func (s *Service) Sessions(ctx context.Context, id string) ([]pg.Session, error)
 	return s.PG.Sessions(ctx, l.DBName)
 }
 
-// TerminateSession ends one session of the library.
+// TerminateSession ends one session of a library role, revoked credentials
+// included.
 func (s *Service) TerminateSession(ctx context.Context, by audit.Actor, id string, pid int32) error {
 	l, err := s.Library(ctx, id)
 	if err != nil {
 		return err
 	}
-	roles, err := s.activeRoles(ctx, id)
+	roles, err := s.sessionRoles(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -926,19 +976,37 @@ func (p Policy) Validate() error {
 	return nil
 }
 
-// Policy returns the backup policy of a library (defaults if none).
+// Policy returns the backup policy of a library: its own, or the default
+// policy of Settings while it has none (a library not active yet, or one
+// the catalog rebuild registered). Retention applies only a policy of the
+// library's own (retainLibrary).
 func (s *Service) Policy(ctx context.Context, libraryID string) (Policy, error) {
-	var p Policy
+	p, own, err := s.policyRow(ctx, libraryID)
+	if err == nil && !own {
+		return s.Settings(ctx).DefaultPolicy, nil
+	}
+	return p, err
+}
+
+// HasOwnPolicy reports whether a library has a backup policy of its own.
+func (s *Service) HasOwnPolicy(ctx context.Context, libraryID string) (bool, error) {
+	_, own, err := s.policyRow(ctx, libraryID)
+	return own, err
+}
+
+// policyRow reads the backup_policies row of a library; own is false when
+// there is none.
+func (s *Service) policyRow(ctx context.Context, libraryID string) (p Policy, own bool, err error) {
 	var lastCheck sql.NullString
-	err := s.DB.QueryRowContext(ctx, `SELECT enabled, schedule_cron, timezone, keep_last, keep_daily, keep_weekly, keep_monthly, min_verified,
+	err = s.DB.QueryRowContext(ctx, `SELECT enabled, schedule_cron, timezone, keep_last, keep_daily, keep_weekly, keep_monthly, min_verified,
 		mode, check_minutes, last_check_at, last_check_same FROM backup_policies WHERE library_id = ?`, libraryID).
 		Scan(&p.Enabled, &p.Cron, &p.Timezone, &p.KeepLast, &p.KeepDaily, &p.KeepWeekly, &p.KeepMonthly, &p.MinVerified,
 			&p.Mode, &p.CheckMinutes, &lastCheck, &p.LastCheckSame)
 	if errors.Is(err, sql.ErrNoRows) {
-		return s.Settings(ctx).DefaultPolicy, nil
+		return Policy{}, false, nil
 	}
 	p.LastCheckAt = store.NullT(lastCheck)
-	return p, err
+	return p, err == nil, err
 }
 
 // SetPolicy stores the policy and updates the schedules.

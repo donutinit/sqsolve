@@ -186,6 +186,79 @@ func TestInitFailsWhenAnACLKeepsAWiderMode(t *testing.T) {
 	}
 }
 
+// Up to 1.2.3, init checked the mode of a file that was already there,
+// not of one it had just written. A volume that does not keep the mode
+// passed the run that wrote the secrets and failed only the next one,
+// after sqsolve had refused to start with SQS-C010.
+func TestInitFailsWhenANewFileDoesNotKeepItsMode(t *testing.T) {
+	for _, c := range []struct {
+		path   func(*config.Config) string
+		mode   os.FileMode
+		refuse bool // chmod fails, instead of leaving a wider mode
+	}{
+		{instanceIDPath, 0o600, false},
+		{masterKeyPath, 0o400, false},
+		{masterKeyPath, 0o400, true},
+		{adminPassPath, 0o400, false},
+		{func(c *config.Config) string { return c.SuperuserPasswordFile() }, 0o440, false},
+		{func(c *config.Config) string { return filepath.Join(c.PGConfDir(), "pg_hba.conf") }, 0o640, false},
+		{func(c *config.Config) string { return filepath.Join(c.PGConfDir(), "pg_ident.conf") }, 0o640, false},
+	} {
+		// No earlier Init: the file is written by the run under test.
+		cfg := testConfig(t)
+		path := c.path(cfg)
+		cause := "it stays 0700; an ACL on the volume probably grants more (docs/12-deployment.md, \"Permissions and ACLs\")"
+		if c.refuse {
+			cause = "chmod " + path + ": operation not permitted"
+		}
+		chmod = func(p string, m os.FileMode) error {
+			switch {
+			case p != path:
+				return os.Chmod(p, m)
+			case c.refuse:
+				return &fs.PathError{Op: "chmod", Path: p, Err: syscall.EPERM}
+			}
+			return os.Chmod(p, 0o700)
+		}
+		out, err := initOut(t, cfg)
+		chmod = os.Chmod
+		want := fmt.Sprintf("SQS-C085 could not set the mode of %s to %04o: %s", path, c.mode, cause)
+		if err == nil || err.Error() != want {
+			t.Errorf("want %q, got %v", want, err)
+			continue
+		}
+		if strings.Contains(out, "sqsolve init: done") {
+			t.Errorf("%s: init reported success:\n%s", path, out)
+		}
+		// The run stopped at instance_id, before any secret was generated.
+		if path == instanceIDPath(cfg) && exists(masterKeyPath(cfg)) {
+			t.Errorf("init generated the master key after %s did not keep its mode", path)
+		}
+		// The file stays. The next run, on a volume that keeps the mode,
+		// checks that same file and does not write another.
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("the file init wrote is gone: %v", err)
+			continue
+		}
+		if err := Init(cfg, io.Discard); err != nil {
+			t.Errorf("%s: the next run: %v", path, err)
+			continue
+		}
+		st, err := os.Stat(path)
+		if err != nil {
+			t.Errorf("%s after the next run: %v", path, err)
+			continue
+		}
+		if st.Mode().Perm() != c.mode {
+			t.Errorf("%s: mode %04o after the next run, want %04o", path, st.Mode().Perm(), c.mode)
+		}
+		if after, _ := os.ReadFile(path); string(after) != string(before) {
+			t.Errorf("%s: the next run wrote the file again", path)
+		}
+	}
+}
+
 // A folder sqsolve needs and cannot create stops init with its code and the
 // path: one of the application volume (a file sits where the folder goes) and
 // the backups volume of a new installation (its parent cannot be written).
@@ -213,5 +286,33 @@ func TestInitNamesTheFolderItCannotCreate(t *testing.T) {
 	fresh.BackupDir = filepath.Join(parent, "backups")
 	if _, err := initOut(t, fresh); err == nil || !strings.HasPrefix(err.Error(), "SQS-C051 backups volume: ") || !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("a backups folder that cannot be created: %v", err)
+	}
+}
+
+// A file init cannot write stops it with its code and the path, keeping the
+// cause: a secret written for the first time and postgresql.conf, which
+// every run writes again. A folder where the .partial file goes makes the
+// write fail, also as root.
+func TestInitNamesTheFileItCannotWrite(t *testing.T) {
+	for _, path := range []func(*config.Config) string{
+		masterKeyPath,
+		func(c *config.Config) string { return filepath.Join(c.PGConfDir(), "postgresql.conf") },
+	} {
+		cfg := established(t)
+		p := path(cfg)
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(p+".partial", 0o700); err != nil {
+			t.Fatal(err)
+		}
+		out, err := initOut(t, cfg)
+		want := fmt.Sprintf("SQS-C055 could not write %s: open %s.partial: is a directory", p, p)
+		if err == nil || err.Error() != want || !errors.Is(err, syscall.EISDIR) {
+			t.Errorf("want %q, got %v", want, err)
+		}
+		if strings.Contains(out, "sqsolve init: done") {
+			t.Errorf("%s: init reported success:\n%s", p, out)
+		}
 	}
 }

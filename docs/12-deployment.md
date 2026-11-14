@@ -123,16 +123,16 @@ Decisions of the reference file that are not obvious:
 1. `sqsolve-init` (as root, without network): checks the identity of the three volumes and marks
    them (`.sqsolve-volume`, ADR 0023). On a new installation it marks all three. Once the
    installation has an identity it never marks an empty, unmarked backups folder (an unmounted
-   disk looks like that): it warns `SQS-S014` and goes on, and `sqsolve` refuses to write
-   backups there; a backups folder with foreign files (`SQS-S004`) or another installation's
-   marker (`SQS-S003`) is also only a warning, so PostgreSQL still starts. It stops with a coded
-   error before PostgreSQL could create an empty cluster or sqsolve new secrets: an empty `db`
-   volume when the catalog already exists (`SQS-S012`), a `db` volume of another installation
-   (`SQS-S011`), an empty `app` volume while `db` and `backups` belong to an installation
-   (`SQS-S013`), or a volume of this installation on the path of another one, when the host paths
-   are swapped (`SQS-S019`; on the backups path it is a warning). If `app` is empty and the
-   backups volume carries a marker, it adopts that identity for a recovery. It generates missing
-   secrets with `crypto/rand`; generates
+   disk looks like that): it warns `SQS-S014` and goes on, and `sqsolve` refuses to write or
+   delete backups there; a backups folder with foreign files (`SQS-S004`) or another
+   installation's marker (`SQS-S003`) is also only a warning, so PostgreSQL still starts. It
+   stops with a coded error before PostgreSQL could create an empty cluster or sqsolve new
+   secrets: an empty `db` volume when the catalog already exists (`SQS-S012`), a `db` volume of
+   another installation (`SQS-S011`), an empty `app` volume while `db` and `backups` belong to an
+   installation (`SQS-S013`), or a volume of this installation on the path of another one, when
+   the host paths are swapped (`SQS-S019`; on the backups path it is a warning). If `app` is
+   empty and the backups volume carries a marker, it adopts that identity for a recovery. It
+   generates missing secrets with `crypto/rand`; generates
    `postgresql.conf` and an initial `pg_hba.conf`; generates the PostgreSQL TLS certificate
    (self-signed, ECDSA P-256, 10 years; key and certificate written as a pair and generated
    again if one is missing or they do not match; the key belongs to the PostgreSQL user with
@@ -173,13 +173,16 @@ container. A volume with an ACL can grant other users access that the mode does 
 TrueNAS, a dataset created with the SMB preset, or one whose permissions were edited as an ACL,
 carries inherited NFSv4 entries (for example `group:builtin_users` with full access) on every
 new file, and `chmod` leaves them in place. On every run `sqsolve-init` checks the mode that the
-secret folders, every secret file that already exists and the PostgreSQL TLS key have after
-setting it, and stops with `SQS-C085 ... it stays 0700; an ACL on the volume probably grants
-more`. A secret file written in that same run (the master key, the `sqsolve_admin` password or
-the PostgreSQL superuser password) is not checked until the next run (known issue K-05,
-`19-risks.md` §5). A secret file left with a wider mode, whether written in that run or by an
-older `sqsolve-init`, shows at the start of `sqsolve` as `SQS-C010 permissions too open on a
-secrets file: ... has mode 700`.
+secret folders, the secret files it writes (the master key, the `sqsolve_admin` password and the
+PostgreSQL superuser password) and the PostgreSQL TLS key have after setting it, and stops with
+`SQS-C085 ... it stays 0700; an ACL on the volume probably grants more`. A secret file written in
+that same run is checked like one that was already there: the run stops, PostgreSQL and
+`sqsolve`, which wait for `sqsolve-init`, are not started, the file stays in place, and the next
+run checks it again and generates no other. `instance_id` (0600) is checked the same way and is
+the first file written on a new application volume, so on a new installation the message can
+name it, before any secret is generated. `sqsolve` applies its own check at every start: a
+secret file with a wider mode is refused with `SQS-C010 permissions too open on a secrets
+file: ... has mode 700`.
 
 To fix it on TrueNAS, for each of the three datasets: Datasets, the dataset, Permissions, Edit,
 "Strip ACL", with "Apply permissions recursively", then start or update the app again:
@@ -253,7 +256,9 @@ Recovering on a new server:
    (after typing its identifier) creates it from its most recent verified backup with the same
    slug and the original passwords. Without the kit or without a copy in `_system/`, install
    from scratch and use "Rebuild the catalog" (Settings, Maintenance): the libraries come back
-   from the manifests, with new passwords.
+   from the manifests, with new passwords. They come back Purged and without a policy of their
+   own, so retention keeps all their backups until a policy is saved for each
+   (`docs/runbooks/recover-installation.md`).
 5. Workstations reconnect with the new IP if it changed.
 
 ## 10. Uninstalling

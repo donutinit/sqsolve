@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -275,7 +276,7 @@ func TestCheckCatalogPathsReportsWithoutRewriting(t *testing.T) {
 	for _, b := range rows {
 		before = append(before, b.ID+"|"+b.FilePath+"|"+b.Status+"|"+b.VerifyStatus)
 	}
-	ids, err := e.svc.CheckCatalogPaths(e.ctx)
+	ids, unchecked, err := e.svc.CheckCatalogPaths(e.ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,8 +285,8 @@ func TestCheckCatalogPathsReportsWithoutRewriting(t *testing.T) {
 		want = append(want, b.ID)
 	}
 	slices.Sort(want)
-	if !slices.Equal(ids, want) {
-		t.Fatalf("invalid %v, want %v", ids, want)
+	if !slices.Equal(ids, want) || len(unchecked) != 0 {
+		t.Fatalf("invalid %v, want %v; unchecked %v, want none", ids, want, unchecked)
 	}
 	evs := e.events(events.BackupPathInvalid)
 	if len(evs) != 1 || evs[0].Severity != events.Critical || !strings.HasPrefix(evs[0].Message, "8 backups in the catalog have a path outside the backups volume or not valid") {
@@ -300,8 +301,238 @@ func TestCheckCatalogPathsReportsWithoutRewriting(t *testing.T) {
 	// Nothing to report: no event.
 	e2 := newBkEnv(t)
 	e2.backup(e2.library("other", StateActive), bkOpt{})
-	if ids, err := e2.svc.CheckCatalogPaths(e2.ctx); err != nil || len(ids) != 0 || len(e2.events(events.BackupPathInvalid)) != 0 {
-		t.Fatalf("clean catalog: %v %v", ids, err)
+	if ids, unchecked, err := e2.svc.CheckCatalogPaths(e2.ctx); err != nil || len(ids) != 0 || len(unchecked) != 0 || len(e2.events(events.BackupPathInvalid)) != 0 {
+		t.Fatalf("clean catalog: %v %v %v", ids, unchecked, err)
+	}
+}
+
+// uncheckable makes the path of b fail its check with an error that is not
+// "does not exist", as a disk error would: the year folder of b is moved out
+// of libraries/ and a regular file takes its name, so every lstat below it
+// answers "not a directory". It works as root too, unlike a folder without
+// permission. The returned function puts the folder back.
+func (e *bkEnv) uncheckable(b *Backup) (restore func()) {
+	e.t.Helper()
+	parts := strings.Split(b.FilePath, "/") // libraries/<slug>/<YYYY>/<MM>/<file>
+	if len(parts) != 5 {
+		e.t.Fatalf("unexpected backup path %q", b.FilePath)
+	}
+	year := filepath.Join(e.svc.Cfg.BackupDir, parts[0], parts[1], parts[2])
+	aside := filepath.Join(e.svc.Cfg.BackupDir, "aside-"+b.ID)
+	if err := os.Rename(year, aside); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(year, []byte("not a folder"), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+	return func() {
+		e.t.Helper()
+		if err := os.Remove(year); err != nil {
+			e.t.Fatal(err)
+		}
+		if err := os.Rename(aside, year); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+}
+
+// anotherYear back from now always lands in an earlier year: a backup
+// started then has a year folder of its own, which uncheckable leaves alone.
+const anotherYear = 400 * 24 * time.Hour
+
+// Pending 3.7 item 1: a disk error that stops the check of a backup path
+// has its own code, SQS-B045, and keeps its cause.
+func TestAbsPathSaysWhenAPathCannotBeChecked(t *testing.T) {
+	e := newBkEnv(t)
+	l := e.library("client_x", StateActive)
+	b := e.backup(l, bkOpt{})
+	abs := filepath.Join(e.svc.Cfg.BackupDir, b.FilePath)
+	restore := e.uncheckable(b)
+	_, err := e.svc.AbsPath(b)
+	if !errors.Is(err, ErrBackupPathUnchecked) || errors.Is(err, ErrBackupPath) || !errors.Is(err, syscall.ENOTDIR) {
+		t.Fatalf("want SQS-B045 with the cause, got %v", err)
+	}
+	if want := "SQS-B045 the path of this backup could not be checked; it is blocked until the check can be made (backup " + b.ID + "): lstat " + abs + ": not a directory"; err.Error() != want {
+		t.Fatalf("message\n%q\nwant\n%q", err.Error(), want)
+	}
+	restore()
+	if p, err := e.svc.AbsPath(b); err != nil || p != abs {
+		t.Fatalf("after the folder is back: %q %v", p, err)
+	}
+}
+
+// A disk error while a symlink of the path is followed is SQS-B045 too, not
+// SQS-B043: the backup file is a symlink to its copy in a folder of the
+// volume that sqsolve may not enter. Once it can, the backup is usable as
+// it was; a symlink that leaves the volume stays SQS-B043
+// (TestAbsPathConfinesCatalogPaths).
+func TestAbsPathSaysWhenASymlinkCannotBeFollowed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root enters a folder without permission")
+	}
+	e := newBkEnv(t)
+	l := e.library("client_x", StateActive)
+	b := e.backup(l, bkOpt{})
+	abs := filepath.Join(e.svc.Cfg.BackupDir, b.FilePath)
+	locked := filepath.Join(e.svc.Cfg.BackupDir, "libraries", l.Slug, "locked")
+	moved := filepath.Join(locked, filepath.Base(abs))
+	if err := os.Mkdir(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(abs, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, abs); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	_, err := e.svc.AbsPath(b)
+	if !errors.Is(err, ErrBackupPathUnchecked) || errors.Is(err, ErrBackupPath) || !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("want SQS-B045 with the cause, got %v", err)
+	}
+	if want := "SQS-B045 the path of this backup could not be checked; it is blocked until the check can be made (backup " + b.ID + "): lstat " + moved + ": permission denied"; err.Error() != want {
+		t.Fatalf("message\n%q\nwant\n%q", err.Error(), want)
+	}
+	if err := os.Chmod(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := e.svc.AbsPath(b); err != nil || p != abs {
+		t.Fatalf("once the folder can be entered: %q %v", p, err)
+	}
+}
+
+// Pending 3.7 item 1: a backup whose path cannot be checked counts for no
+// safety rule while the error lasts: it is not the latest verified backup,
+// not the one the manual delete guard protects, not a retention candidate,
+// and it cannot be forgotten. Once the check works it counts again, as it
+// was.
+func TestUncheckedBackupsDoNotCountAsVerified(t *testing.T) {
+	e := newBkEnv(t)
+	e.svc.Audit = audit.New(e.svc.DB)
+	l := e.library("client_x", StateActive)
+	usable := e.backup(l, bkOpt{started: time.Now().Add(-anotherYear)})
+	newest := e.backup(l, bkOpt{})
+	restore := e.uncheckable(newest)
+	if got, err := e.svc.LatestVerified(e.ctx, l.ID); err != nil || got == nil || got.ID != usable.ID {
+		t.Fatalf("latest verified %+v %v, want the usable backup", got, err)
+	}
+	if err := e.svc.DeleteBackup(e.ctx, bkActor, usable.ID); err == nil || err.Error() != "SQS-B034 it is the most recent verified backup of the library; it cannot be deleted manually" {
+		t.Fatalf("the newest usable backup could be deleted: %v", err)
+	}
+	if err := e.svc.DeleteBackup(e.ctx, bkActor, newest.ID); !errors.Is(err, ErrBackupPathUnchecked) {
+		t.Fatalf("delete of a backup whose path cannot be checked: %v", err)
+	}
+	pol := Policy{Enabled: true, Cron: "0 2 * * *", Timezone: "UTC", KeepLast: 1, MinVerified: 1}
+	keep, expire, err := e.svc.RetentionPreview(e.ctx, l.ID, pol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keep) != 1 || keep[usable.ID] == "" || len(expire) != 0 {
+		t.Fatalf("keep %v, expire %v: want only the usable backup kept and nothing expired", keep, expire)
+	}
+	e.policy(l, 1, 1)
+	if n, err := e.svc.applyRetention(e.ctx, l.ID); err != nil || n != 0 {
+		t.Fatalf("applyRetention: %d %v", n, err)
+	}
+	for _, b := range []*Backup{usable, newest} {
+		if got, err := e.svc.Backup(e.ctx, b.ID); err != nil || got.Status != BackupOK {
+			t.Fatalf("backup %s after retention: %+v %v", b.ID, got, err)
+		}
+	}
+	if abs := mustAbs(e.svc, usable); !onDisk(abs) || !onDisk(manifestPath(abs)) {
+		t.Fatal("retention deleted the usable backup")
+	}
+	if err := e.svc.ForgetInvalidBackup(e.ctx, audit.CLI, newest.ID); err == nil || err.Error() != "SQS-B044 only a backup whose catalog path is not valid can be removed from the catalog this way" {
+		t.Fatalf("forget: %v", err)
+	}
+	if got, _ := e.svc.Backup(e.ctx, newest.ID); got.Status != BackupOK || got.FilePath != newest.FilePath {
+		t.Fatalf("the row changed: %+v", got)
+	}
+
+	restore()
+	got, err := e.svc.LatestVerified(e.ctx, l.ID)
+	if err != nil || got == nil || got.ID != newest.ID || got.Status != BackupOK || got.VerifyStatus != VerifyL1OK {
+		t.Fatalf("latest verified after the folder is back: %+v %v", got, err)
+	}
+	keep, expire, err = e.svc.RetentionPreview(e.ctx, l.ID, pol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keep[newest.ID] == "" || !slices.Equal(expire, []string{usable.ID}) {
+		t.Fatalf("keep %v, expire %v: want the newest kept and the older expired", keep, expire)
+	}
+}
+
+// Pending 3.7 item 1: the catalog check reports the rows whose path could
+// not be checked in an event of their own (error), apart from the invalid
+// ones, with the first cause, and rewrites nothing.
+func TestCheckCatalogPathsReportsUncheckedPaths(t *testing.T) {
+	e := newBkEnv(t)
+	l := e.library("client_x", StateActive)
+	readable := e.backup(l, bkOpt{started: time.Now().Add(-anotherYear)})
+	bad := e.pathRow(l, "../x.backup")
+	stuck := e.backup(l, bkOpt{})
+	restore := e.uncheckable(stuck)
+	_, cause := e.svc.AbsPath(stuck)
+	before := map[string]string{}
+	for _, b := range []*Backup{readable, bad, stuck} {
+		before[b.ID] = b.ID + "|" + b.FilePath + "|" + b.Status + "|" + b.VerifyStatus
+	}
+	invalid, unchecked, err := e.svc.CheckCatalogPaths(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(invalid, []string{bad.ID}) || !slices.Equal(unchecked, []string{stuck.ID}) {
+		t.Fatalf("invalid %v, unchecked %v", invalid, unchecked)
+	}
+	evs := e.events(events.BackupPathInvalid)
+	if len(evs) != 1 || evs[0].Severity != events.Critical || strings.Contains(evs[0].Message, stuck.ID) {
+		t.Fatalf("path_invalid events %+v", evs)
+	}
+	evs = e.events(events.BackupPathUnchecked)
+	want := "The path of 1 backups in the catalog could not be checked; until it can, sqsolve does not read them or count them as verified, and retention leaves them alone. First error: " + shortErr(cause)
+	if len(evs) != 1 || evs[0].Severity != events.Error || evs[0].Message != want {
+		t.Fatalf("path_unchecked events %+v\nwant message %q", evs, want)
+	}
+	if ids, ok := evs[0].Data["backup_ids"].([]any); !ok || len(ids) != 1 || ids[0] != stuck.ID {
+		t.Fatalf("data %+v", evs[0].Data)
+	}
+	for id, was := range before {
+		got, _ := e.svc.Backup(e.ctx, id)
+		if s := got.ID + "|" + got.FilePath + "|" + got.Status + "|" + got.VerifyStatus; s != was {
+			t.Errorf("row rewritten: %s, was %s", s, was)
+		}
+	}
+	restore()
+	if _, unchecked, err := e.svc.CheckCatalogPaths(e.ctx); err != nil || len(unchecked) != 0 {
+		t.Fatalf("after the folder is back: %v %v", unchecked, err)
+	}
+	if evs := e.events(events.BackupPathUnchecked); len(evs) != 1 {
+		t.Fatalf("a second path_unchecked event: %+v", evs)
+	}
+}
+
+// stopped says it was cancelled without closing Done: the catalog read
+// still runs and the pass meets the stop at its first row.
+type stopped struct{ context.Context }
+
+func (stopped) Err() error { return context.Canceled }
+
+// Pending 3.7 item 2: the check of a start runs in the background and stops
+// with its context; a pass cut short reports nothing.
+func TestCheckCatalogPathsStopsWithItsContext(t *testing.T) {
+	e := newBkEnv(t)
+	l := e.library("client_x", StateActive)
+	e.pathRow(l, "../x.backup")
+	invalid, unchecked, err := e.svc.CheckCatalogPaths(stopped{e.ctx})
+	if !errors.Is(err, context.Canceled) || invalid != nil || unchecked != nil {
+		t.Fatalf("got %v %v %v, want a stop", invalid, unchecked, err)
+	}
+	if evs := e.events(events.BackupPathInvalid); len(evs) != 0 {
+		t.Fatalf("a stopped pass reported %+v", evs)
 	}
 }
 

@@ -138,10 +138,11 @@ func (c *capped) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Run executes the command and waits. Cancelling ctx sends SIGTERM to the
-// child's own process group and, once the child exits or the grace period
-// passes, SIGKILL to the whole group, so no member that ignores SIGTERM
-// outlives the job.
+// Run executes the command and waits. Cancelling ctx while the child runs
+// sends SIGTERM to the child's own process group and, once the child exits
+// or the grace period passes, SIGKILL to the whole group. On Linux every
+// member, even one that ignores SIGTERM, has been sent SIGKILL when Run
+// returns, but it may still be finishing its exit.
 func (r *Runner) Run(ctx context.Context, c Cmd) (Result, error) {
 	path, err := r.Path(c.Name)
 	if err != nil {
@@ -206,15 +207,21 @@ func (r *Runner) Run(ctx context.Context, c Cmd) (Result, error) {
 }
 
 // supervise returns once the leader pid has exited, without reaping it. If
-// ctx ends first (cmd.Cancel then sends SIGTERM to the group), the whole
-// group gets SIGKILL as soon as the leader exits or the grace period
-// passes, whichever comes first. Only cmd.Wait reaps the leader, after this
-// returns, so the group id still names the group this command started.
+// ctx ends first (cmd.Cancel then sends SIGTERM to the group), or has ended
+// when the exit is seen, the whole group gets SIGKILL as soon as the leader
+// exits or the grace period passes, whichever comes first. Only cmd.Wait
+// reaps the leader, after this returns, so the group id still names the
+// group this command started.
 func supervise(ctx context.Context, pid int, grace time.Duration, signal func(syscall.Signal) error) {
 	exited := make(chan error, 1)
 	go func() { exited <- waitExit(pid) }()
 	select {
-	case <-exited:
+	case err := <-exited:
+		// The SIGTERM of a cancel can make the leader exit before this
+		// select runs, and select then takes either ready case.
+		if err == nil && ctx.Err() != nil {
+			signal(syscall.SIGKILL)
+		}
 		return
 	case <-ctx.Done():
 	}

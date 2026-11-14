@@ -487,3 +487,44 @@ func TestBackupWithAnInvalidPathIsNotServed(t *testing.T) {
 		t.Error("the backup page does not show the block, or still offers download or restore")
 	}
 }
+
+// Pending 3.7 item 1: a backup whose path cannot be checked (a disk error)
+// is blocked in the panel and the API like one whose path is not valid, with
+// its own code.
+func TestBackupWhosePathCannotBeCheckedIsNotServed(t *testing.T) {
+	ctx := context.Background()
+	a, srv := sqliteApp(t)
+	a.Auth.CreateUser(ctx, audit.System, "boss", "", "tungsten light 3200K", auth.RoleAdmin)
+	b := mustSignIn(t, srv, "boss", "tungsten light 3200K")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := a.DB.ExecContext(ctx, `INSERT INTO libraries(id, slug, display_name, state, db_name, owner_role, creation_strategy, created_at, updated_at)
+		VALUES ('L1', 'lib', 'Lib', 'active', 'lib', 'lib', 'resolve', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	libDir := filepath.Join(a.Cfg.BackupDir, "libraries", "lib")
+	if err := os.MkdirAll(libDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A regular file where the row expects a folder: its lstat answers "not
+	// a directory", which is not "does not exist".
+	if err := os.WriteFile(filepath.Join(libDir, "blocker"), []byte("not a folder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DB.ExecContext(ctx, `INSERT INTO backups(id, library_id, kind, status, file_path, started_at) VALUES ('B1', 'L1', 'manual', 'ok', 'libraries/lib/blocker/x.backup', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/backups/B1/download", "/api/v1/backups/B1/download"} {
+		st, _, body := b.do("GET", path, nil)
+		if st != http.StatusConflict || !strings.Contains(body, "SQS-B045") {
+			t.Errorf("%s: %d %q", path, st, body[:min(len(body), 200)])
+		}
+	}
+	entries, _ := a.Audit.List(ctx, 0, 50, "B1")
+	if len(entries) != 0 {
+		t.Errorf("a refused download was audited as done: %+v", entries)
+	}
+	page := b.page("/backups/B1")
+	if !strings.Contains(page, "SQS-B045") || strings.Contains(page, `href="/backups/B1/download"`) || strings.Contains(page, `href="/backups/B1/restore"`) {
+		t.Error("the backup page does not show the block, or still offers download or restore")
+	}
+}

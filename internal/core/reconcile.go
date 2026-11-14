@@ -77,10 +77,17 @@ func (s *Service) Reconcile(ctx context.Context, interrupted []*jobs.Job) []stri
 		s.reportPending(ctx, j, why, names, note)
 	}
 
-	// 2. Backups that were running.
+	// 2. Backups that were running. Their files, and the .partial files
+	// below libraries/, are removed only on this installation's backups
+	// volume; elsewhere the rows are recorded interrupted, and retention
+	// cleans their leftovers once the volume is this installation's.
+	volErr := s.BackupVolumeOK()
 	rows, _ := s.Backups(ctx, BackupFilter{Statuses: []string{BackupRunning}})
 	for _, b := range rows {
 		abs, err := s.AbsPath(b)
+		if err == nil {
+			err = volErr
+		}
 		if err == nil {
 			removeIfExists(abs + ".partial")
 			removeIfExists(abs)
@@ -93,12 +100,14 @@ func (s *Service) Reconcile(ctx context.Context, interrupted []*jobs.Job) []stri
 			note("backup %s interrupted; its leftovers were deleted", b.ID)
 		}
 	}
-	filepath.WalkDir(filepath.Join(s.Cfg.BackupDir, "libraries"), func(p string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".partial") {
-			os.Remove(p)
-		}
-		return nil
-	})
+	if volErr == nil {
+		filepath.WalkDir(filepath.Join(s.Cfg.BackupDir, "libraries"), func(p string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && strings.HasSuffix(p, ".partial") {
+				os.Remove(p)
+			}
+			return nil
+		})
+	}
 
 	// 3. Auxiliary databases nobody owns any more. A database the journal of
 	// a pending job names is kept: a __restore one may be the half of a swap
@@ -319,13 +328,17 @@ func (s *Service) journalsToReconcile(ctx context.Context, interrupted []*jobs.J
 //
 // A journal no longer describes a library that moved on, and acting on it
 // could undo later work, so it is settled without changing anything when a
-// newer restore, revert, delete or recreate of the library succeeded or is
-// itself pending, and, for a swap tried again, when the library is no longer
-// restoring: a pending swap always leaves it restoring, a state every other
-// operation refuses. A delete or a recreate tried again only acts on the
-// state the library has now (a delete applies the access of that state or
-// records the move its journal names; a recreate acts only on a missing
-// library), so it needs no more.
+// newer restore, revert, delete, recreate or recovery from the trash of the
+// library succeeded or is itself pending, and, for a swap tried again, when
+// the library is no longer restoring: a pending swap always leaves it
+// restoring, a state every other operation refuses. A delete or a recreate
+// tried again only acts on the state the library has now (a delete applies
+// the access of that state or records the move its journal names; a
+// recreate acts only on a missing library; a recovery from the trash acts
+// only on a library still in the
+// trash under the trash name its journal names, or on one active or in
+// maintenance, whose access and schedule it applies again), so it needs no
+// more.
 func (s *Service) reconcileJournal(ctx context.Context, j *jobs.Job, retried bool, note func(string, ...any)) (settled bool, names []string, read bool) {
 	steps, err := s.Jobs.Steps(ctx, j.ID)
 	if err != nil {
@@ -336,6 +349,7 @@ func (s *Service) reconcileJournal(ctx context.Context, j *jobs.Job, retried boo
 	var trashMove map[string]string
 	var recreate recreateJournal
 	var purge purgeJournal
+	var untrash untrashJournal
 	for _, st := range steps {
 		var tmp swapJournal
 		if json.Unmarshal(st.Data, &tmp) == nil && tmp.Live != "" {
@@ -353,6 +367,10 @@ func (s *Service) reconcileJournal(ctx context.Context, j *jobs.Job, retried boo
 		if json.Unmarshal(st.Data, &pj) == nil && pj.Library != "" {
 			purge = pj
 		}
+		var uj untrashJournal
+		if json.Unmarshal(st.Data, &uj) == nil && uj.TrashDB != "" {
+			untrash = uj
+		}
 	}
 	if j.Type == JobRestoreReplace || j.Type == JobRestoreRevert {
 		names = journal.names()
@@ -365,7 +383,7 @@ func (s *Service) reconcileJournal(ctx context.Context, j *jobs.Job, retried boo
 		note("job %s: could not read its library (%v)", j.ID, err)
 		return false, names, true
 	}
-	newer, err := s.Jobs.NewerJob(ctx, j, JobRestoreReplace, JobRestoreRevert, JobLibraryDelete, JobRestoreRecreate)
+	newer, err := s.Jobs.NewerJob(ctx, j, JobRestoreReplace, JobRestoreRevert, JobLibraryDelete, JobRestoreRecreate, JobLibraryUntrash)
 	if err != nil {
 		note("job %s: could not look for newer jobs of its library (%v)", j.ID, err)
 		return false, names, true
@@ -385,6 +403,8 @@ func (s *Service) reconcileJournal(ctx context.Context, j *jobs.Job, retried boo
 		return !s.reconcileRecreate(ctx, l, recreate, note), nil, true
 	case JobLibraryPurge:
 		return s.reconcilePurge(ctx, l, purge, note), nil, true
+	case JobLibraryUntrash:
+		return s.reconcileUntrash(ctx, l, untrash, note), nil, true
 	}
 	if journal.Live == "" {
 		// Cut before its journal: nothing was locked or renamed, and step 4
@@ -610,7 +630,68 @@ func (s *Service) reconcileTrash(ctx context.Context, l *Library, move map[strin
 			return false
 		}
 		s.Sched.SetEnabled(ctx, l.ID, false)
+		s.Events.Emit(ctx, events.Event{Type: events.LibraryTrashed, Severity: events.Warning, LibraryID: l.ID,
+			Message: fmt.Sprintf("Finished the interrupted move of %q to the trash; it will be permanently deleted on %s", l.DisplayName, purge.In(s.Cfg.Location).Format("2006-01-02"))})
 		note("%s: completed the move to the trash", l.Slug)
+	}
+	return true
+}
+
+// reconcileUntrash settles a recovery from the trash that stopped after its
+// journal and reports whether it is settled. One that stopped before the
+// rename leaves the library in the trash, where it can be recovered again.
+// One whose database is back under the library's name is completed: the
+// library is recorded active and gets its access (ADR 0024) and its backup
+// schedule back. Nothing is renamed or dropped here. A check or a write that
+// fails, or a library whose trash database is gone while no database of its
+// own has its name, leaves the job for the next start; nothing else is
+// changed.
+func (s *Service) reconcileUntrash(ctx context.Context, l *Library, j untrashJournal, note func(string, ...any)) (settled bool) {
+	st := l.State
+	switch {
+	case j.TrashDB == "":
+		return true // stopped before its journal: nothing was renamed
+	case l.State == StateTrashed && l.TrashDB == j.TrashDB:
+		trash, err := s.PG.Database(ctx, j.TrashDB)
+		if err == nil && trash != nil {
+			note("%s: the recovery from the trash stopped before moving %s back; the library stays in the trash", l.Slug, j.TrashDB)
+			return true
+		}
+		var live *pg.DBInfo
+		if err == nil {
+			live, err = s.PG.Database(ctx, j.DBName)
+		}
+		if err != nil {
+			note("%s: could not check whether the recovery from the trash moved %s back (%v); nothing was changed", l.Slug, j.TrashDB, err)
+			return false
+		}
+		if live == nil || live.Owner != l.OwnerRole {
+			note("%s: neither %s nor a database %s of the library is on the server; nothing was changed", l.Slug, j.TrashDB, j.DBName)
+			return false
+		}
+		if _, err := s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'active', trash_db_name = '', trashed_at = NULL, purge_after = NULL, updated_at = ? WHERE id = ? AND state = 'trashed'`,
+			store.NowT(), l.ID); err != nil {
+			note("%s: the database %s is back under its name, but its recovery from the trash could not be recorded (%v); nothing else was changed", l.Slug, j.DBName, err)
+			return false
+		}
+		st = StateActive
+		s.Events.Emit(ctx, events.Event{Type: events.LibraryRestoredFromTrash, LibraryID: l.ID,
+			Message: fmt.Sprintf("Finished the interrupted recovery of %q from the trash", l.DisplayName)})
+		note("%s: completed the recovery from the trash", l.Slug)
+	case l.State == StateActive || l.State == StateMaintenance:
+		// The recovery was recorded; its access or its schedule may be missing.
+	default:
+		return true
+	}
+	// Step 4 skips a library whose job stays pending, so the access is
+	// applied here. The schedule only after the state is recorded: SetPolicy
+	// enables it only for an active library or one in maintenance.
+	if _, err := s.applyAccess(ctx, l, st); err != nil {
+		note("%s: could not apply its access: %v", l.Slug, err)
+	}
+	if err := s.ensurePolicy(ctx, l.ID); err != nil {
+		note("%s: could not restore its backup schedule after the recovery from the trash (%v); the next start tries again", l.Slug, err)
+		return false
 	}
 	return true
 }

@@ -111,7 +111,8 @@ type Log struct {
 // New creates a Log.
 func New(db *store.DB) *Log { return &Log{db: db, log: slog.Default()} }
 
-// SetLogger sets where BestEffort reports the entries it could not write.
+// SetLogger sets where BestEffort, and Do after a failed change, report the
+// entries they could not write.
 func (l *Log) SetLogger(log *slog.Logger) { l.log = log }
 
 // BestEffort appends an entry that the action does not depend on (logins,
@@ -159,7 +160,7 @@ func (l *Log) Require(ctx context.Context, a Actor, action, targetType, targetID
 // change does not run without it; its result, ok or failed with the error,
 // is written after; change may add to details what the result should carry.
 // The error of change is returned; a result that cannot be written is
-// returned only when change succeeded.
+// returned only when change succeeded, and logged when it failed.
 func (l *Log) Do(ctx context.Context, a Actor, action, targetType, targetID string, details map[string]any, change func() error) error {
 	if err := l.Require(ctx, a, action, targetType, targetID, Accepted, details); err != nil {
 		return err
@@ -173,8 +174,11 @@ func (l *Log) Do(ctx context.Context, a Actor, action, targetType, targetID stri
 		}
 		result["error"] = err.Error()
 	}
-	if rerr := l.Record(ctx, a, action, targetType, targetID, outcome, result); rerr != nil && err == nil {
-		return fmt.Errorf("SQS-X041 the action was done, but its result could not be written to the audit log: %w", rerr)
+	if rerr := l.Record(ctx, a, action, targetType, targetID, outcome, result); rerr != nil {
+		if err == nil {
+			return fmt.Errorf("SQS-X041 the action was done, but its result could not be written to the audit log: %w", rerr)
+		}
+		l.log.Error("could not write an audit entry", "action", action, "target", targetType+":"+targetID, "outcome", outcome, "err", rerr)
 	}
 	return err
 }

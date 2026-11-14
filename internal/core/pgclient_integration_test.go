@@ -3,13 +3,19 @@
 package core_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/donutinit/sqsolve/internal/audit"
 	"github.com/donutinit/sqsolve/internal/core"
 	"github.com/donutinit/sqsolve/internal/pg"
+	"github.com/donutinit/sqsolve/internal/secrets"
 	"github.com/donutinit/sqsolve/internal/store"
 )
 
@@ -151,6 +157,331 @@ func TestAddMemberRollsBackOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.connect(c.PGRole, mp, l.DBName).Close(ctx)
+}
+
+// The triggers that make the audit log refuse the entries of the rewrite of
+// pg_hba.conf: all of them, or only its result "ok".
+const (
+	hbaAuditDown  = `CREATE TRIGGER hba_audit_down BEFORE INSERT ON audit_log WHEN NEW.action = 'postgres.hba' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`
+	hbaResultDown = `CREATE TRIGGER hba_result_down BEFORE INSERT ON audit_log WHEN NEW.action = 'postgres.hba' AND NEW.outcome = 'ok' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`
+)
+
+// reloaded waits up to 5 s for a connection of role to db over TCP to be
+// accepted (want true) or refused (want false): PostgreSQL applies a reload
+// asynchronously.
+func (e *env) reloaded(role string, pass secrets.String, db string, want bool) {
+	e.t.Helper()
+	var err error
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if err = e.reach(role, pass, db); (err == nil) == want || time.Now().After(deadline) {
+			break
+		}
+	}
+	if (err == nil) != want {
+		e.t.Fatalf("%s on %s: connection accepted %v, want %v: %v", role, db, err == nil, want, err)
+	}
+}
+
+// auditOf returns the entries of action about targetID, oldest first, that
+// pass keep (all of them when keep is nil), and their outcomes separated by
+// spaces.
+func (e *env) auditOf(targetID, action string, keep func(audit.Entry) bool) ([]audit.Entry, string) {
+	e.t.Helper()
+	list, err := e.svc.Audit.List(e.ctx, 0, 200, targetID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var es []audit.Entry
+	var outcomes []string
+	for i := len(list) - 1; i >= 0; i-- {
+		if en := list[i]; en.Action == action && (keep == nil || keep(en)) {
+			es = append(es, en)
+			outcomes = append(outcomes, en.Outcome)
+		}
+	}
+	return es, strings.Join(outcomes, " ")
+}
+
+// The rewrite of pg_hba.conf that follows a change of the
+// access to the maintenance database has its own pair of entries,
+// postgres.hba, after the one of the settings; when only its result cannot
+// be written the answer is SQS-X041 and the rewrite is in force.
+func TestAccessSettingAuditsItsHBARewrite(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, pass := e.createActive("acc")
+	e.firstBackup(l)
+	exec := func(q string) {
+		t.Helper()
+		if _, err := e.svc.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.reach(l.OwnerRole, pass, "postgres"); err != nil {
+		t.Fatalf("precondition: the owner role reaches the postgres database: %v", err)
+	}
+
+	st := e.svc.Settings(ctx)
+	st.MaintenanceDBAccess = false
+	if err := e.svc.SaveSettings(ctx, admin, st); err != nil {
+		t.Fatal(err)
+	}
+	list, err := e.svc.Audit.List(ctx, 0, 200, "runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trail []string
+	for i := len(list) - 1; i >= 0; i-- {
+		trail = append(trail, list[i].Action+":"+list[i].Outcome)
+	}
+	if got := strings.Join(trail, " "); !strings.HasSuffix(got, "settings.update:ok postgres.hba:accepted postgres.hba:ok") {
+		t.Fatalf("entries of the settings: %s", got)
+	}
+	hba, _ := e.auditOf("runtime", "postgres.hba", nil)
+	for _, en := range hba {
+		if en.Actor.Name != "diego" || en.TargetType != "settings" || en.Details["cause"] != "settings.update" ||
+			en.Details["maintenance_db_access"] != false || en.Details["require_tls"] != false {
+			t.Errorf("postgres.hba %s: %+v", en.Outcome, en)
+		}
+	}
+	e.reloaded(l.OwnerRole, pass, "postgres", false)
+	if err := e.reach(l.OwnerRole, pass, l.DBName); err != nil {
+		t.Fatalf("the owner role lost its own database: %v", err)
+	}
+
+	exec(hbaResultDown)
+	st.MaintenanceDBAccess = true
+	err = e.svc.SaveSettings(ctx, admin, st)
+	if err == nil || !strings.HasPrefix(err.Error(), "SQS-X041 the action was done, but its result could not be written to the audit log: ") {
+		t.Fatalf("rewrite whose result cannot be written: %v", err)
+	}
+	e.reloaded(l.OwnerRole, pass, "postgres", true)
+	if _, got := e.auditOf("runtime", "postgres.hba", nil); got != "accepted ok accepted" {
+		t.Fatalf("postgres.hba entries: %s", got)
+	}
+	exec(`DROP TRIGGER hba_result_down`)
+}
+
+// A change of the access to the maintenance database whose rewrite of
+// pg_hba.conf failed is put in force by saving the same settings again; once
+// it took effect, saving them again rewrites nothing.
+func TestFailedHBARewriteIsAppliedBySavingAgain(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, pass := e.createActive("hbaretry")
+	if err := e.reach(l.OwnerRole, pass, "postgres"); err != nil {
+		t.Fatalf("precondition: the owner role reaches the postgres database: %v", err)
+	}
+	// pg_hba.conf.prev is written first: the rewrite fails before the file
+	// changes (SQS-P041).
+	blocker := filepath.Join(e.svc.Cfg.PGConfDir(), "pg_hba.conf.prev.partial")
+	if err := os.Mkdir(blocker, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	st := e.svc.Settings(ctx)
+	st.MaintenanceDBAccess = false
+	err := e.svc.SaveSettings(ctx, admin, st)
+	if err == nil || !strings.HasPrefix(err.Error(), "SQS-P041 could not write pg_hba.conf: ") {
+		t.Fatalf("rewrite that cannot write the file: %v", err)
+	}
+	if p := e.svc.HBAProblem(); p == nil || p.Error() != err.Error() {
+		t.Errorf("problem after the failed rewrite: %v", p)
+	}
+	if err := e.reach(l.OwnerRole, pass, "postgres"); err != nil {
+		t.Fatalf("the postgres database closed without a rewrite: %v", err)
+	}
+
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.SaveSettings(ctx, admin, st); err != nil {
+		t.Fatalf("same settings saved again: %v", err)
+	}
+	e.reloaded(l.OwnerRole, pass, "postgres", false)
+	if err := e.reach(l.OwnerRole, pass, l.DBName); err != nil {
+		t.Fatalf("the owner role lost its own database: %v", err)
+	}
+	if p := e.svc.HBAProblem(); p != nil {
+		t.Errorf("problem after a rewrite that took effect: %v", p)
+	}
+
+	if err := e.svc.SaveSettings(ctx, admin, st); err != nil {
+		t.Fatal(err)
+	}
+	if _, got := e.auditOf("runtime", "postgres.hba", nil); got != "accepted failed accepted ok" {
+		t.Fatalf("postgres.hba entries: %s", got)
+	}
+}
+
+// The rewrite of pg_hba.conf that lets a new person in has
+// its own pair of entries, postgres.hba, after the one of the addition. A
+// rewrite that fails or whose entry is refused leaves the person added but
+// unable to connect until the next rewrite; without its accepted entry the
+// file is not touched, also when the addition itself could not be closed
+// (SQS-X041 wins).
+func TestMemberAddAuditsItsHBARewrite(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, _ := e.createActive("crew")
+	e.firstBackup(l)
+	exec := func(q string) {
+		t.Helper()
+		if _, err := e.svc.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hbaPath := filepath.Join(e.svc.Cfg.PGConfDir(), "pg_hba.conf")
+	readHBA := func() []byte {
+		t.Helper()
+		b, err := os.ReadFile(hbaPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	ofRole := func(role string) func(audit.Entry) bool {
+		return func(en audit.Entry) bool { return en.Details["role"] == role }
+	}
+	hbaOf := func(role string) ([]audit.Entry, string) { return e.auditOf(l.ID, "postgres.hba", ofRole(role)) }
+	password := func(c *core.Credential) secrets.String {
+		t.Helper()
+		p, err := e.svc.RevealPassword(ctx, admin, l.ID, c.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// added checks that the person's role exists and returns its password.
+	added := func(c *core.Credential, err error) secrets.String {
+		t.Helper()
+		if c == nil {
+			t.Fatalf("no credential: %v", err)
+		}
+		if ok, err := e.svc.PG.RoleExists(ctx, c.PGRole); err != nil || !ok {
+			t.Fatalf("role %s: %v %v", c.PGRole, ok, err)
+		}
+		return password(c)
+	}
+	refused := func(c *core.Credential, pass secrets.String) {
+		t.Helper()
+		if err := e.reach(c.PGRole, pass, l.DBName); err == nil {
+			t.Fatalf("%s connects without a rewrite of pg_hba.conf", c.PGRole)
+		}
+	}
+
+	// Phase 1: the rewrite and its entries.
+	ana, err := e.svc.AddMember(ctx, admin, l.ID, "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hba, got := hbaOf(ana.PGRole)
+	if got != "accepted ok" {
+		t.Fatalf("postgres.hba entries of ana: %q", got)
+	}
+	memberAdd, _ := e.auditOf(l.ID, "library.member_add", ofRole(ana.PGRole))
+	if len(memberAdd) != 2 || memberAdd[1].Outcome != audit.OK {
+		t.Fatalf("library.member_add of ana: %+v", memberAdd)
+	}
+	for _, en := range hba {
+		if en.Actor.Name != "diego" || en.TargetType != "library" || en.TargetID != l.ID || en.Details["cause"] != "library.member_add" ||
+			en.Details["role"] != ana.PGRole || en.Seq <= memberAdd[1].Seq {
+			t.Errorf("postgres.hba %s: %+v", en.Outcome, en)
+		}
+	}
+	e.reloaded(ana.PGRole, password(ana), l.DBName, true)
+
+	// Phase 2: the rewrite fails before pg_hba.conf is touched (SQS-P041).
+	blocker := filepath.Join(e.svc.Cfg.PGConfDir(), "pg_hba.conf.prev.partial")
+	if err := os.Mkdir(blocker, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bea, err := e.svc.AddMember(ctx, admin, l.ID, "bea")
+	beaPass := added(bea, err)
+	if err == nil || !strings.HasPrefix(err.Error(), "SQS-P041 could not write pg_hba.conf: ") {
+		t.Fatalf("rewrite that cannot write the file: %v", err)
+	}
+	if hba, got := hbaOf(bea.PGRole); got != "accepted failed" || hba[1].Details["error"] != err.Error() {
+		t.Fatalf("postgres.hba entries of bea: %q %+v", got, hba)
+	}
+	if _, got := e.auditOf(l.ID, "library.member_add", ofRole(bea.PGRole)); got != "accepted ok" {
+		t.Fatalf("library.member_add of bea: %q", got)
+	}
+	refused(bea, beaPass)
+	if p := e.svc.HBAProblem(); p == nil || p.Error() != err.Error() {
+		t.Errorf("problem after the failed rewrite: %v", p)
+	}
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.SyncHBA(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e.reloaded(bea.PGRole, beaPass, l.DBName, true)
+	if p := e.svc.HBAProblem(); p != nil {
+		t.Errorf("problem after a rewrite that took effect: %v", p)
+	}
+
+	// Phase 3: the entry of the rewrite is refused (SQS-X040).
+	exec(hbaAuditDown)
+	before := readHBA()
+	cai, err := e.svc.AddMember(ctx, admin, l.ID, "cai")
+	caiPass := added(cai, err)
+	if !errors.Is(err, audit.ErrUnavailable) || !strings.HasPrefix(err.Error(), "SQS-X040 the audit log could not be written, so the action was not done: ") {
+		t.Fatalf("rewrite without its entry: %v", err)
+	}
+	if !bytes.Equal(readHBA(), before) {
+		t.Fatal("pg_hba.conf rewritten without its entry")
+	}
+	if hba, _ := hbaOf(cai.PGRole); len(hba) != 0 {
+		t.Fatalf("postgres.hba entries of cai: %+v", hba)
+	}
+	refused(cai, caiPass)
+	if p := e.svc.HBAProblem(); !errors.Is(p, audit.ErrUnavailable) || p.Error() != err.Error() {
+		t.Errorf("problem after the refused rewrite: %v", p)
+	}
+	exec(`DROP TRIGGER hba_audit_down`)
+	if err := e.svc.SyncHBA(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e.reloaded(cai.PGRole, caiPass, l.DBName, true)
+	if p := e.svc.HBAProblem(); p != nil {
+		t.Errorf("problem after a rewrite that took effect: %v", p)
+	}
+
+	// Phase 4: only the result of the rewrite is refused (SQS-X041).
+	exec(hbaResultDown)
+	dan, err := e.svc.AddMember(ctx, admin, l.ID, "dan")
+	danPass := added(dan, err)
+	if err == nil || !strings.HasPrefix(err.Error(), "SQS-X041 the action was done, but its result could not be written to the audit log: ") {
+		t.Fatalf("rewrite whose result cannot be written: %v", err)
+	}
+	e.reloaded(dan.PGRole, danPass, l.DBName, true)
+	if _, got := hbaOf(dan.PGRole); got != "accepted" {
+		t.Fatalf("postgres.hba entries of dan: %q", got)
+	}
+	exec(`DROP TRIGGER hba_result_down`)
+
+	// Phase 5: the addition could not be closed and the rewrite is refused.
+	exec(`CREATE TRIGGER member_and_hba_down BEFORE INSERT ON audit_log WHEN NEW.action = 'postgres.hba' OR
+		(NEW.action = 'library.member_add' AND NEW.outcome = 'ok') BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`)
+	before = readHBA()
+	eva, err := e.svc.AddMember(ctx, admin, l.ID, "eva")
+	evaPass := added(eva, err)
+	if err == nil || !strings.HasPrefix(err.Error(), "SQS-X041 the action was done, but its result could not be written to the audit log: ") {
+		t.Fatalf("addition whose result cannot be written: %v", err)
+	}
+	if !bytes.Equal(readHBA(), before) {
+		t.Fatal("pg_hba.conf rewritten without its entry")
+	}
+	if hba, _ := hbaOf(eva.PGRole); len(hba) != 0 {
+		t.Fatalf("postgres.hba entries of eva: %+v", hba)
+	}
+	refused(eva, evaPass)
+	exec(`DROP TRIGGER member_and_hba_down`)
+	if err := e.svc.SyncHBA(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e.reloaded(eva.PGRole, evaPass, l.DBName, true)
 }
 
 // TestReconcileWithoutPostgreSQL: when the existence of a database cannot be

@@ -10,8 +10,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -43,14 +45,15 @@ func findByArg(arg string) int {
 	return 0
 }
 
-// alive reports whether pid runs; zombies count as dead.
+// alive reports whether pid runs; zombies (Z) and processes being reaped
+// (X) count as dead.
 func alive(pid int) bool {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return false
 	}
 	i := strings.LastIndexByte(string(b), ')')
-	return i < 0 || i+2 >= len(b) || b[i+2] != 'Z'
+	return i < 0 || i+2 >= len(b) || (b[i+2] != 'Z' && b[i+2] != 'X')
 }
 
 func TestChildDiesWithSqsolve(t *testing.T) {
@@ -83,18 +86,23 @@ func TestChildDiesWithSqsolve(t *testing.T) {
 	t.Cleanup(func() { killOwn(child, start) })
 	helper.Process.Kill()
 	helper.Wait()
-	for i := 0; i < 50; i++ {
-		if !alive(child) {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
+	if start == "" {
+		t.Fatal("could not read the start time of the fake pg_dump")
 	}
-	t.Fatal("pg_dump kept running after sqsolve died")
+	// Read once, with no waiting: the kernel sends the Pdeathsig SIGKILL
+	// while the thread that started the child exits, and the helper can only
+	// be reaped once all its threads have exited.
+	if ok, state := killed(child, start); !ok {
+		t.Fatalf("pg_dump kept running after sqsolve died (%s)", state)
+	}
 }
 
-// A child of the program that ignores SIGTERM must not outlive Run: once
+// A child of the program that ignores SIGTERM must not survive Run: once
 // the leader exits, or after the grace period if the leader ignores SIGTERM
 // too, the whole group gets SIGKILL while the leader is still unreaped.
+// When Run returns the member must be killed (see killed), not gone: it may
+// still be finishing its exit, or wait as a zombie until the process that
+// adopted it (PID 1 or a subreaper) reaps it, which can happen at any moment.
 func TestCancelKillsTheWholeGroup(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("reads /proc")
@@ -144,11 +152,54 @@ wait`
 			if took < tc.min || took > 5*time.Second {
 				t.Fatalf("Run returned %s after the cancel", took)
 			}
-			for i := 0; i < 20 && alive(pid); i++ {
-				time.Sleep(50 * time.Millisecond)
+			// Read once, with no waiting: Run sent SIGKILL before it returned.
+			if ok, state := killed(pid, start); !ok {
+				t.Fatalf("a member of the group that ignores SIGTERM survived Run (%s)", state)
 			}
-			if alive(pid) {
-				t.Fatal("a member of the group that ignores SIGTERM survived Run")
+		})
+	}
+}
+
+// exitWon is a cancelled context whose Done never fires. It stands for the
+// first select of supervise finding both the cancel and the exit of the
+// leader ready and taking the exit, which select may do: the SIGTERM of the
+// cancel can make the leader exit before supervise reaches that select.
+type exitWon struct{ context.Context }
+
+func (exitWon) Done() <-chan struct{} { return nil }
+
+// When the exit of the leader wins over the cancel, the group still gets
+// SIGKILL; a leader that exits with no cancel gets nothing. The signals are
+// recorded, not sent: the leader is a /bin/true this test starts and reaps.
+func TestSuperviseKillsTheGroupWhenTheExitWinsOverTheCancel(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("waiting without reaping is Linux only")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+		want []syscall.Signal
+	}{
+		{"cancelled", exitWon{cancelled}, []syscall.Signal{syscall.SIGKILL}},
+		{"not cancelled", context.Background(), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("/bin/true")
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			var sent []syscall.Signal
+			supervise(tc.ctx, cmd.Process.Pid, time.Hour, func(sig syscall.Signal) error {
+				sent = append(sent, sig)
+				return nil
+			})
+			if err := cmd.Wait(); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(sent, tc.want) {
+				t.Fatalf("signals sent to the group: %v, want %v", sent, tc.want)
 			}
 		})
 	}

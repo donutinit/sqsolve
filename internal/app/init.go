@@ -64,6 +64,12 @@ func dataDirMode(root, pgdata string) error {
 	return nil
 }
 
+// writeErr is a file init could not write (a full disk, a refused mode on
+// the new .partial file).
+func writeErr(path string, err error) error {
+	return fmt.Errorf("SQS-C055 could not write %s: %w", path, err)
+}
+
 // Init prepares the volumes. It runs as root in the sqsolve-init container,
 // without network, before PostgreSQL starts. It is idempotent.
 func Init(c *config.Config, out io.Writer) error {
@@ -121,6 +127,12 @@ func Init(c *config.Config, out io.Writer) error {
 			return false, nil
 		}
 		if err := fsx.WriteFileAtomic(path, data, mode); err != nil {
+			return false, writeErr(path, err)
+		}
+		// A file written in this run gets the check of one that was already
+		// there: a volume that does not keep the mode stops this run, not
+		// the next one.
+		if err := setMode(path, mode); err != nil {
 			return false, err
 		}
 		chown(path, uid, gid)
@@ -262,7 +274,7 @@ func Init(c *config.Config, out io.Writer) error {
 	pgc := pgconf.PostgresConf(pgconf.Params{DataDir: c.PGDataDir, ConfDir: conf, SocketDir: c.PGSocket, Port: c.PGPort,
 		Listen: c.PGListen, MaxConnections: c.PGMaxConnections, MemoryMB: c.PGMemoryMB, SSL: true})
 	if err := fsx.WriteFileAtomic(filepath.Join(conf, "postgresql.conf"), []byte(pgc), 0o640); err != nil {
-		return err
+		return writeErr(filepath.Join(conf, "postgresql.conf"), err)
 	}
 	chown(filepath.Join(conf, "postgresql.conf"), c.UID, c.PGGID)
 	hba, _ := pgconf.HBA(pgconf.HBAOptions{})

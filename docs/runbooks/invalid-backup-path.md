@@ -32,7 +32,26 @@ version before 1.2.2, or a symlink placed on the backups volume.
    ```
 
    Expected: `Backup <id> removed from the catalog; no file was touched.` Any other answer:
-   `SQS-B044` means the path of that row is valid (use the panel instead); `SQS-X040` means the
-   audit log cannot be written and nothing changed.
+   `SQS-B044` means the path of that row is valid (use the panel instead), or could not be
+   checked (`SQS-B045`, below); `SQS-X040` means the audit log cannot be written and nothing
+   changed.
 6. Run Settings > Maintenance > "Check the catalog". Expected: no new `backup.path_invalid`
    event.
+
+## A path that could not be checked (`SQS-B045`)
+
+When: an error `backup.path_unchecked` event ("The path of N backups in the catalog could not be
+checked"), a backup page that shows `SQS-B045`, or a job that stops with it.
+
+What it means: this is not an invalid path. A disk error (an I/O error, a folder sqsolve may not
+enter, a stale mount, a file where a folder should be) stopped the check of where the backup file
+is, and the backup may be intact. While it lasts sqsolve does not read, verify, restore, download
+or delete that backup, does not count it as verified, and retention leaves it alone. The row is
+not rewritten.
+
+1. Read the first error in the event (Activity > Events): it names the path and the cause.
+2. Fix the volume: the mount, the owner and mode of the folders (`docs/12-deployment.md`,
+   "Permissions and ACLs"), or the disk.
+3. Do not remove the row: `sqsolve catalog forget` answers `SQS-B044` for it.
+4. Run Settings > Maintenance > "Check the catalog". Expected: no new `backup.path_unchecked`
+   event, and the backup counts again without any other step.

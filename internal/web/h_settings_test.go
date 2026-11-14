@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -38,13 +39,15 @@ func TestSettingsGeneralForm(t *testing.T) {
 	boss, tok := jobsLogin(t, srv, "boss", jobsAdminPass)
 	form := url.Values{"csrf": {tok}, "name": {"  Studio B  "}, "host": {"nas.studio"}, "init_window": {"45"}, "trash_days": {"10"},
 		"prev_days": {"3"}, "stale_hours": {"36"}, "import_max_mb": {"2048"}, "maintenance_db": {"on"}, "experimental_exports": {"on"},
-		"default_cron": {"*/15 * * * *"}, "keep_last": {"4"}, "keep_daily": {"5"}, "keep_weekly": {"6"}, "keep_monthly": {"7"}}
+		"default_mode": {"activity"}, "default_check_minutes": {"15"}, "default_cron": {"0 2 * * *"},
+		"keep_last": {"4"}, "keep_daily": {"5"}, "keep_weekly": {"6"}, "keep_monthly": {"7"}}
 	if st, loc, msg := fxPost(boss, "/settings/general", form); st != http.StatusSeeOther || loc != "/settings" || msg != "Settings saved." {
 		t.Fatalf("save: %d %s %q", st, loc, msg)
 	}
 	got := a.Svc.Settings(ctx)
 	if got.InstanceName != "Studio B" || got.AdvertisedHost != "nas.studio" || got.InitWindowMinutes != 45 || got.TrashDays != 10 || got.PrevDays != 3 ||
 		got.StaleHours != 36 || got.ImportMaxMB != 2048 || !got.ExperimentalExports || got.RequireTLS || !got.MaintenanceDBAccess || got.TOTPRequiredAdmins ||
+		got.DefaultPolicy.Mode != core.ModeActivity || got.DefaultPolicy.CheckMinutes != 15 || got.DefaultPolicy.Cron != "*/15 * * * *" ||
 		got.DefaultPolicy.KeepLast != 4 || got.DefaultPolicy.KeepDaily != 5 ||
 		got.DefaultPolicy.KeepWeekly != 6 || got.DefaultPolicy.KeepMonthly != 7 {
 		t.Fatalf("saved settings %+v", got)
@@ -54,7 +57,7 @@ func TestSettingsGeneralForm(t *testing.T) {
 	}
 	page := boss.page("/settings")
 	for _, want := range []string{`name="name" value="Studio B"`, `name="host" value="nas.studio"`, `name="init_window" value="45"`,
-		`name="experimental_exports" checked`, `name="keep_monthly" value="7"`} {
+		`name="experimental_exports" checked`, `name="keep_monthly" value="7"`, `name="default_mode" value="activity" checked`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("general tab lacks %s", want)
 		}
@@ -68,6 +71,8 @@ func TestSettingsGeneralForm(t *testing.T) {
 		{"init_window", "2", "SQS-C031 the initialization window must be between 5 and 1440 minutes"},
 		{"trash_days", "4000", "SQS-C032 retention periods must be between 1 and 3650 days"},
 		{"prev_days", "0", "SQS-C032 retention periods must be between 1 and 3650 days"},
+		{"stale_hours", "3000000", "SQS-C033 the hours without a backup before the warning must be between 1 and 87600"},
+		{"import_max_mb", "9000000000000", "SQS-C034 the maximum upload must be between 1 and 1048576 MB"},
 		{"host", "nas.studio:5432", "SQS-C030 invalid advertised address: type only the IP or the name, without a port"},
 		{"keep_last", "0", "SQS-B031 retention must keep at least one backup"},
 	} {
@@ -113,6 +118,138 @@ func TestSettingsGeneralForm(t *testing.T) {
 	}
 	if got := a.Svc.Settings(ctx); got.InstanceName != "Studio B" {
 		t.Fatalf("a refused request changed the settings: %q", got.InstanceName)
+	}
+}
+
+// The default policy for new libraries takes the schedule
+// mode as the Schedule tab of a library does, activity-based with its
+// interval or a cron expression in the time zone of the policy. In activity
+// mode the cron field is not read, saving never puts the default policy back
+// to its factory values, a refused form changes nothing and leaves no audit
+// entry, and a request without the mode keeps the stored one.
+func TestSettingsDefaultPolicySchedule(t *testing.T) {
+	a, srv, _ := jobsPanel(t)
+	ctx := context.Background()
+	boss, tok := jobsLogin(t, srv, "boss", jobsAdminPass)
+	saves := 0
+	post := func(fields ...string) string {
+		t.Helper()
+		form := url.Values{"csrf": {tok}, "maintenance_db": {"on"}}
+		for i := 0; i+1 < len(fields); i += 2 {
+			form.Set(fields[i], fields[i+1])
+		}
+		_, loc, msg := fxPost(boss, "/settings/general", form)
+		if loc != "/settings" {
+			t.Fatalf("%q: sent to %s", fields, loc)
+		}
+		return msg
+	}
+	save := func(fields ...string) {
+		t.Helper()
+		if msg := post(fields...); msg != "Settings saved." {
+			t.Fatalf("%q: %q", fields, msg)
+		}
+		saves++
+	}
+	policy := func() core.Policy { return a.Svc.Settings(ctx).DefaultPolicy }
+	wantPolicy := func(what string, want core.Policy) {
+		t.Helper()
+		if got := policy(); got != want {
+			t.Fatalf("%s: default policy %+v, want %+v", what, got, want)
+		}
+	}
+	pageHas := func(what string, want ...string) {
+		t.Helper()
+		page := boss.page("/settings")
+		for _, w := range want {
+			if !strings.Contains(page, w) {
+				t.Errorf("%s: the general tab lacks %s", what, w)
+			}
+		}
+	}
+
+	page := boss.page("/settings")
+	for _, w := range []string{`name="default_mode" value="activity" checked`, `<option value="5"`, `<option value="10"`,
+		`<option value="15" selected>`, `<option value="30"`, `<option value="60"`, `name="default_cron" value="0 2 * * *"`, "in the time zone UTC"} {
+		if !strings.Contains(page, w) {
+			t.Errorf("factory page lacks %s", w)
+		}
+	}
+	for _, w := range []string{`value="cron" checked`, "Schedule (cron)"} {
+		if strings.Contains(page, w) {
+			t.Errorf("factory page has %s", w)
+		}
+	}
+
+	save("default_mode", "cron", "default_cron", " 30 1 * * * ", "keep_last", "4", "keep_daily", "5", "keep_weekly", "6", "keep_monthly", "7")
+	cron := core.Policy{Enabled: true, Mode: core.ModeCron, CheckMinutes: 15, Cron: "30 1 * * *", Timezone: "UTC",
+		KeepLast: 4, KeepDaily: 5, KeepWeekly: 6, KeepMonthly: 7, MinVerified: 1}
+	wantPolicy("cron", cron)
+	pageHas("cron", `name="default_mode" value="cron" checked`, `name="default_cron" value="30 1 * * *"`)
+	l := fxLibrary(t, a, "apolo", core.StateActive)
+	if p, err := a.Svc.Policy(ctx, l.ID); err != nil || p.Mode != core.ModeCron || p.Cron != "30 1 * * *" ||
+		p.KeepLast != 4 || p.KeepDaily != 5 || p.KeepWeekly != 6 || p.KeepMonthly != 7 {
+		t.Fatalf("policy of a library without its own: %+v %v", p, err)
+	}
+
+	save("default_mode", "activity", "default_check_minutes", "30", "default_cron", "not an expression")
+	activity := cron
+	activity.Mode, activity.CheckMinutes, activity.Cron = core.ModeActivity, 30, "*/30 * * * *"
+	wantPolicy("activity", activity)
+	pageHas("activity", `name="default_mode" value="activity" checked`, `<option value="30" selected>`, `name="default_cron" value="0 2 * * *"`)
+
+	// Up to 1.2.3 an empty cron field in activity mode put the default
+	// policy back to its factory values, these retention numbers included.
+	save("default_mode", "activity", "default_cron", "", "keep_last", "8", "keep_daily", "5", "keep_weekly", "6", "keep_monthly", "7")
+	activity.KeepLast = 8
+	wantPolicy("activity with an empty cron field", activity)
+
+	for _, c := range []struct {
+		fields []string
+		msg    string
+	}{
+		{[]string{"default_mode", "cron", "default_cron", ""},
+			`SQS-J020 invalid schedule expression: "" (use 5 fields: minute hour day month day-of-week)`},
+		{[]string{"default_mode", "cron", "default_cron", "61 * * * *"},
+			`SQS-J020 invalid schedule expression: "61 * * * *" (use 5 fields: minute hour day month day-of-week)`},
+		{[]string{"default_mode", "activity", "default_check_minutes", "7"},
+			"SQS-B090 activity-based mode checks every 5, 10, 15, 30 or 60 minutes"},
+		{[]string{"default_mode", "weekly"}, "SQS-B091 unknown schedule mode"},
+	} {
+		if msg := post(c.fields...); msg != c.msg {
+			t.Errorf("%q: %q, want %q", c.fields, msg, c.msg)
+		}
+		wantPolicy(fmt.Sprintf("refused %q", c.fields), activity)
+	}
+
+	// Without the mode, the stored one stays, as a number field that does not
+	// parse keeps its value.
+	save("default_check_minutes", "10")
+	activity.CheckMinutes, activity.Cron = 10, "*/10 * * * *"
+	wantPolicy("activity without the mode", activity)
+	save("default_check_minutes", "soon")
+	wantPolicy("an interval that is not a number", activity)
+	save("default_mode", "cron", "default_cron", "30 1 * * *")
+	save("default_cron", "0 5 * * *")
+	cron = activity
+	cron.Mode, cron.Cron = core.ModeCron, "0 5 * * *"
+	wantPolicy("cron without the mode", cron)
+
+	if es := auditEntries(t, a, "settings.update"); len(es) != saves {
+		t.Fatalf("%d settings.update entries for %d saves", len(es), saves)
+	}
+
+	op, _ := jobsLogin(t, srv, "op", jobsOpPass)
+	page = op.page("/settings")
+	start := strings.Index(page, "<legend>Default policy for new libraries</legend>")
+	open := strings.LastIndex(page[:max(start, 0)], "<fieldset")
+	end := strings.Index(page[max(start, 0):], "</fieldset>")
+	if start < 0 || open < 0 || end < 0 || !strings.HasPrefix(page[open:], "<fieldset disabled>") ||
+		!strings.Contains(page[start:start+end], `name="default_mode"`) {
+		t.Error("an operator gets an editable default policy")
+	}
+	if regexp.MustCompile(`<button[^>]*type="submit"[^>]*>Save</button>`).MatchString(page) {
+		t.Error("an operator gets the Save button of the General form")
 	}
 }
 
@@ -404,6 +541,39 @@ func TestMaintenanceHBAWritesItsResult(t *testing.T) {
 	}
 	if b, err := os.ReadFile(filepath.Join(a.Cfg.PGConfDir(), "pg_hba.conf")); err != nil || !strings.Contains(string(b), "sqsolve") {
 		t.Fatalf("pg_hba.conf not written: %v", err)
+	}
+}
+
+// Turning on "TLS only" in the General form rewrites
+// pg_hba.conf under an audit entry of its own, postgres.hba, with whoever
+// saved: "accepted" first, then the result, "failed" with the error here
+// because there is no PostgreSQL. The notice is that error and the setting
+// stays stored.
+func TestSettingsAccessChangeAuditsItsHBARewrite(t *testing.T) {
+	a, srv, _ := jobsPanel(t)
+	ctx := context.Background()
+	boss, tok := jobsLogin(t, srv, "boss", jobsAdminPass)
+	form := url.Values{"csrf": {tok}, "name": {"  Studio B  "}, "host": {"nas.studio"}, "init_window": {"45"}, "trash_days": {"10"},
+		"prev_days": {"3"}, "stale_hours": {"36"}, "import_max_mb": {"2048"}, "maintenance_db": {"on"}, "experimental_exports": {"on"},
+		"default_mode": {"activity"}, "default_check_minutes": {"15"}, "default_cron": {"0 2 * * *"},
+		"keep_last": {"4"}, "keep_daily": {"5"}, "keep_weekly": {"6"}, "keep_monthly": {"7"}, "require_tls": {"on"}}
+	st, loc, msg := fxPost(boss, "/settings/general", form)
+	if st != http.StatusSeeOther || loc != "/settings" || !strings.HasPrefix(msg, "SQS-P001 PostgreSQL is not available") {
+		t.Fatalf("TLS only without PostgreSQL: %d %s %q", st, loc, msg)
+	}
+	if !a.Svc.Settings(ctx).RequireTLS {
+		t.Fatal("TLS only was not stored")
+	}
+	es := auditEntries(t, a, "postgres.hba")
+	if len(es) != 2 || es[1].Outcome != audit.Accepted || es[0].Outcome != audit.Failed || es[0].Details["error"] != msg {
+		t.Fatalf("postgres.hba audit %+v", es)
+	}
+	if acc := es[1]; acc.Actor.Type != "user" || acc.Actor.Name != "boss" || acc.TargetType != "settings" || acc.TargetID != "runtime" ||
+		acc.Details["cause"] != "settings.update" || acc.Details["require_tls"] != true {
+		t.Fatalf("postgres.hba accepted %+v", acc)
+	}
+	if page := boss.page("/settings"); !strings.Contains(page, `name="require_tls" checked`) {
+		t.Error("the general tab does not show TLS only as on")
 	}
 }
 

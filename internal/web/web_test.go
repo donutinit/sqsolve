@@ -19,8 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/donutinit/sqsolve/internal/api"
 	"github.com/donutinit/sqsolve/internal/app"
 	"github.com/donutinit/sqsolve/internal/audit"
@@ -171,13 +169,9 @@ func TestPanelEndToEnd(t *testing.T) {
 	}
 	libPath := loc
 	libID := strings.TrimPrefix(libPath, "/libraries/")
-	var l *core.Library
-	for i := 0; i < 50; i++ {
-		l, _ = a.Svc.Library(ctx, libID)
-		if l.State == core.StateAwaitingInit {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
+	l := waitCreated(t, a, libID)
+	if l.State != core.StateAwaitingInit {
+		t.Fatalf("library after its creation job: %s", l.State)
 	}
 	if !strings.Contains(b.page(libPath), "Initialize the library from Resolve") {
 		t.Fatal("awaiting page without instructions")
@@ -326,23 +320,10 @@ func TestPanelEndToEnd(t *testing.T) {
 	// A database created in Resolve with another name is pointed out.
 	_, loc2, _ := b.do("POST", "/libraries/new", url.Values{"csrf": {tok}, "name": {"Commercial"}, "slug": {"commercial"}, "strategy": {"resolve"}})
 	lib2 := strings.TrimPrefix(loc2, "/libraries/")
-	for i := 0; i < 50; i++ {
-		if l2, _ := a.Svc.Library(ctx, lib2); l2 != nil && l2.State == core.StateAwaitingInit {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	waitCreated(t, a, lib2)
 	_, _, reveal2 := b.do("POST", loc2+"/password/reveal", url.Values{"csrf": {tok}})
 	pw2 := regexp.MustCompile(`id="r-pass">([^<]+)<`).FindStringSubmatch(reveal2)
-	// pg_hba.conf was just reloaded for the new role; the postmaster applies
-	// the reload asynchronously, so give it a moment under load.
-	var conn2 *pgx.Conn
-	for i := 0; i < 30; i++ {
-		if conn2, err = c.ConnectTCP(ctx, "commercial", secrets.New(pw2[1]), "postgres"); err == nil {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	conn2, err := c.ConnectTCP(ctx, "commercial", secrets.New(pw2[1]), "postgres")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,4 +408,22 @@ func waitJob(t *testing.T, a *app.App, id string) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatalf("job %s timed out", id)
+}
+
+// waitCreated waits for the job that creates library id to succeed and
+// returns the library. Its state is awaiting_init one step before that job
+// rewrites pg_hba.conf for the owner, so the state alone does not say that a
+// workstation can connect.
+func waitCreated(t *testing.T, a *app.App, id string) *core.Library {
+	t.Helper()
+	js, err := a.Jobs.List(context.Background(), jobs.Filter{Type: core.JobLibraryCreate, LibraryID: id})
+	if err != nil || len(js) != 1 {
+		t.Fatalf("creation job of library %s: %v (%d jobs)", id, err, len(js))
+	}
+	waitJob(t, a, js[0].ID)
+	l, err := a.Svc.Library(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
 }

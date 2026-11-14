@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/donutinit/sqsolve/internal/audit"
+	"github.com/donutinit/sqsolve/internal/auth"
 	"github.com/donutinit/sqsolve/internal/core"
 	"github.com/donutinit/sqsolve/internal/jobs"
 )
@@ -29,6 +30,21 @@ var exportPaths = []string{
 	"/api/v1/backups/B1/export/grades/albums/" + someUUID,
 }
 
+// exportHidden is the detail of SQS-E005 for a caller without the
+// diagnostics permission when the connection to PostgreSQL fails.
+const exportHidden = "SQS-E005 the library is not available for export: the connection to PostgreSQL failed (the cause is in the sqsolve log)"
+
+// noInternals checks that a reply names nothing of how sqsolve reaches
+// PostgreSQL: the socket path, the role, the driver's text or a database.
+func noInternals(t *testing.T, e *apiEnv, what string, r reply) {
+	t.Helper()
+	for _, internal := range []string{e.a.Cfg.PGSocket, ".s.PGSQL", "sqsolve_admin", "failed to connect", "sqsolve_export", "database="} {
+		if strings.Contains(r.body, internal) {
+			t.Errorf("%s names %q: %s", what, internal, r.body)
+		}
+	}
+}
+
 // With the experimental export off (the default) every export route answers
 // 409 with SQS-E002 before PostgreSQL is asked anything; closing a backup
 // that was never prepared has nothing to do.
@@ -47,8 +63,10 @@ func TestAPIExportsDisabled(t *testing.T) {
 }
 
 // With the export on, the library must be active or in maintenance (503
-// with SQS-E005 and its state) and its database reachable. Listing needs
-// read; downloading needs the export scope.
+// with SQS-E005 and its state) and its database reachable. When it is not
+// reachable only a caller with the diagnostics permission (an administrator's
+// session or admin token) reads the driver's text. Listing needs read;
+// downloading needs the export scope.
 func TestAPIExportsNeedALiveLibrary(t *testing.T) {
 	e := apiServer(t)
 	e.enableExports(t)
@@ -57,11 +75,25 @@ func TestAPIExportsNeedALiveLibrary(t *testing.T) {
 	export := e.token(t, "export")
 	wantProblem(t, "trashed library", e.call(t, "GET", "/api/v1/libraries/L2/projects", e.read, "", false), 503,
 		"SQS-E005 the library is not available for export: it is in state In the trash")
+	const unreachable = "SQS-E005 the library is not available for export: failed to connect to `user=sqsolve_admin database=lib`: "
 	for _, p := range exportPaths[:5] {
 		// apiServer has no PostgreSQL.
-		wantProblemPrefix(t, p, e.call(t, "GET", p, export, "", false), 503, "SQS-E005 the library is not available for export: ")
+		r := e.call(t, "GET", p, export, "", false)
+		wantProblem(t, p, r, 503, exportHidden)
+		noInternals(t, e, p, r)
+		wantProblemPrefix(t, p+" with an admin token", e.call(t, "GET", p, e.admin, "", false), 503, unreachable)
 		wantProblem(t, p+" of an unknown library", e.call(t, "GET", strings.Replace(p, "/L1/", "/NOPE/", 1), export, "", false), 404, "SQS-L002 library not found")
 	}
+	for _, p := range exportPaths[:2] {
+		r := e.call(t, "GET", p, e.read, "", false)
+		wantProblem(t, p+" with a read token", r, 503, exportHidden)
+		noInternals(t, e, p+" with a read token", r)
+	}
+	op := e.as(t, "op", auth.RoleOperator)
+	r := op.call(t, "GET", exportPaths[0], "cookie", "", false)
+	wantProblem(t, "an operator's session", r, 503, exportHidden)
+	noInternals(t, e, "an operator's session", r)
+	wantProblemPrefix(t, "an administrator's session", e.call(t, "GET", exportPaths[0], "cookie", "", false), 503, unreachable)
 	for _, p := range exportPaths[2:5] {
 		wantProblem(t, p+" with a read token", e.call(t, "GET", p, e.read, "", false), 403, a030)
 		wantProblem(t, p+" with a backup token", e.call(t, "GET", p, e.token(t, "backup"), "", false), 403, a030)
@@ -145,7 +177,8 @@ func TestAPIBackupExportPrepare(t *testing.T) {
 }
 
 // A ready workspace is read in PostgreSQL: when its database cannot be
-// reached the status and the downloads answer 503 with SQS-E005. Closing
+// reached the status and the downloads answer 503 with SQS-E005, and only a
+// caller with the diagnostics permission reads the driver's text. Closing
 // drops that database after an accepted entry, so a PostgreSQL failure
 // leaves the workspace and a failed entry, and with the audit log down
 // nothing is tried.
@@ -160,8 +193,15 @@ func TestAPIBackupExportReadyWorkspace(t *testing.T) {
 	}
 	e.exec(t, `UPDATE export_workspaces SET state = 'ready'`)
 	for _, path := range exportPaths[5:] {
-		wantProblemPrefix(t, path, e.call(t, "GET", path, export, "", false), 503, "SQS-E005 the library is not available for export: ")
+		r := e.call(t, "GET", path, export, "", false)
+		wantProblem(t, path, r, 503, exportHidden)
+		noInternals(t, e, path, r)
+		wantProblemPrefix(t, path+" with an admin token", e.call(t, "GET", path, e.admin, "", false), 503,
+			"SQS-E005 the library is not available for export: failed to connect to `user=sqsolve_admin database=sqsolve_export_")
 	}
+	r := e.call(t, "GET", exportPaths[5], e.read, "", false)
+	wantProblem(t, exportPaths[5]+" with a read token", r, 503, exportHidden)
+	noInternals(t, e, exportPaths[5]+" with a read token", r)
 	wantProblemPrefix(t, "close without PostgreSQL", e.call(t, "DELETE", "/api/v1/backups/B1/export", export, "", false), 503, "SQS-P001 PostgreSQL is not available")
 	var accepted, failed bool
 	for _, en := range e.entries(t, "B1") {

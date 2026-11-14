@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -125,7 +126,7 @@ func (c *Client) Bootstrap(ctx context.Context) error {
 	}
 	var exists bool
 	if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`, AdminRole).Scan(&exists); err != nil {
-		return err
+		return fmt.Errorf("SQS-P002 preparing %s: %w", AdminRole, WrapTimeout(err))
 	}
 	role := MustIdent(AdminRole)
 	attrs := "LOGIN NOSUPERUSER CREATEDB CREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD " + lit
@@ -144,17 +145,58 @@ func (c *Client) Bootstrap(ctx context.Context) error {
 	}
 	for _, s := range stmts {
 		if _, err := conn.Exec(ctx, s); err != nil {
-			return fmt.Errorf("SQS-P002 preparing %s: %w", AdminRole, redact(err, lit))
+			return fmt.Errorf("SQS-P002 preparing %s: %w", AdminRole, redact(WrapTimeout(err), lit))
 		}
 	}
 	return nil
 }
 
-func redact(err error, secret string) error {
-	if err == nil {
+// redactedError is the error of a statement that carried a secret, such as
+// the SCRAM verifier of CREATE ROLE or ALTER ROLE ... PASSWORD. Its text has
+// the secret replaced. The error it was made from is kept only to answer
+// errors.Is (ErrUnavailable, the timeouts, a cancelled context) and is never
+// printed or handed out, because its own text is not redacted: that is why Is
+// walks it here instead of Unwrap returning it. Unwrap gives errors.As and
+// IsCode a copy of the PostgreSQL error with the secret replaced in its text.
+type redactedError struct {
+	msg   string
+	cause error
+	pgErr *pgconn.PgError
+}
+
+func (e *redactedError) Error() string { return e.msg }
+
+// Format prints the redacted text with every verb, so none reaches the fields.
+func (e *redactedError) Format(f fmt.State, verb rune) {
+	fmt.Fprintf(f, fmt.FormatString(f, verb), e.msg)
+}
+
+func (e *redactedError) Is(target error) bool { return errors.Is(e.cause, target) }
+
+func (e *redactedError) Unwrap() error {
+	if e.pgErr == nil {
 		return nil
 	}
-	return errors.New(strings.ReplaceAll(err.Error(), secret, "[redacted]"))
+	return e.pgErr
+}
+
+// redact returns err with secret replaced in its text and in the text of the
+// PostgreSQL error it carries; errors.Is and errors.As keep working on the
+// result. An empty secret hides nothing: err is returned as it is.
+func redact(err error, secret string) error {
+	if err == nil || secret == "" {
+		return err
+	}
+	clean := func(s string) string { return strings.ReplaceAll(s, secret, "[redacted]") }
+	e := &redactedError{msg: clean(err.Error()), cause: err}
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		cp := *pe
+		cp.Message, cp.Detail, cp.Hint = clean(pe.Message), clean(pe.Detail), clean(pe.Hint)
+		cp.InternalQuery, cp.Where = clean(pe.InternalQuery), clean(pe.Where)
+		e.pgErr = &cp
+	}
+	return e
 }
 
 // Open creates the admin pool.
@@ -217,7 +259,8 @@ func (c *Client) Ping(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := p.Ping(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+		// %w: pg.Public must find the driver's error (docs 08 §5).
+		return fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	return nil
 }
@@ -242,7 +285,7 @@ func (c *Client) Superuser(ctx context.Context, db string) (*pgx.Conn, error) {
 	}
 	conn, err := pgx.ConnectConfig(ctx, cc)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	return conn, nil
 }
@@ -261,4 +304,47 @@ func (c *Client) ConnArgs(db string) []string {
 func IsCode(err error, code string) bool {
 	var pe *pgconn.PgError
 	return errors.As(err, &pe) && pe.Code == code
+}
+
+// connHidden stands in for the driver's text of a failed connection.
+const connHidden = "the connection to PostgreSQL failed (the cause is in the sqsolve log)"
+
+// Public returns the text of err for a reader who must not learn how sqsolve
+// reaches PostgreSQL. A connection error of the driver names the socket path,
+// the role and the database (pgconn.ConnectError, pgconn.ParseConfigError),
+// and a socket that breaks later names the socket path (net.OpError): the
+// text ends where the first of them begins, and hidden is true. Any other
+// error comes back whole, also one PostgreSQL raised inside an open session.
+// The match is by type, so the driver's error must still be in the chain:
+// wrap it with %w, never with %v (docs 08 §5).
+func Public(err error) (text string, hidden bool) {
+	if err == nil {
+		return "", false
+	}
+	text = err.Error()
+	var (
+		connect *pgconn.ConnectError
+		parse   *pgconn.ParseConfigError
+		socket  *net.OpError
+		inner   error
+	)
+	switch {
+	case errors.As(err, &connect):
+		inner = connect
+	case errors.As(err, &parse):
+		inner = parse
+	case errors.As(err, &socket):
+		inner = socket
+	default:
+		return text, false
+	}
+	// Wrappers put the cause last ("...: %w"), so what precedes the driver's
+	// text is sqsolve's own. Without it, or when a wrapper rewrote the text,
+	// nothing is known to be safe.
+	if i := strings.Index(text, inner.Error()); i > 0 {
+		if head := strings.TrimRight(text[:i], ": \t\n"); head != "" {
+			return head + ": " + connHidden, true
+		}
+	}
+	return connHidden, true
 }

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/donutinit/sqsolve/internal/core"
 	"github.com/donutinit/sqsolve/internal/drp"
 	"github.com/donutinit/sqsolve/internal/jobs"
@@ -71,5 +73,42 @@ func TestExportFromBackup(t *testing.T) {
 	}
 	if db, _ := e.svc.PG.Database(ctx, ws.DBName); db != nil {
 		t.Fatal("expired workspace database still there")
+	}
+}
+
+// TestExportPreparationStoresThePublicError: a preparation that fails
+// because PostgreSQL stopped stores in its workspace, which every viewer
+// reads (GET /api/v1/backups/{id}/export, the export page), the public text
+// of the failed connection instead of the driver's (docs 08 §5).
+func TestExportPreparationStoresThePublicError(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, _ := e.createActive("prepfail")
+	b := e.firstBackup(l)
+	st := e.svc.Settings(ctx)
+	st.ExperimentalExports = true
+	if err := e.svc.SaveSettings(ctx, admin, st); err != nil {
+		t.Fatal(err)
+	}
+	e.c.Stop()
+	// Once the pool holds no connection from before the stop, every
+	// statement dials the socket and fails with the driver's connection error.
+	for i := 0; ; i++ {
+		_, err := e.svc.PG.Server(ctx)
+		if errors.As(err, new(*pgconn.ConnectError)) {
+			break
+		}
+		if i == 20 {
+			t.Fatalf("the pool still answers with connections from before the stop: %v", err)
+		}
+	}
+	_, j, err := e.svc.PrepareBackupExport(ctx, admin, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(j, jobs.Failed)
+	ws, _ := e.svc.BackupExportWorkspace(ctx, b.ID)
+	if ws == nil || ws.State != core.WorkspaceFailed || ws.Error != "the connection to PostgreSQL failed (the cause is in the sqsolve log)" {
+		t.Fatalf("workspace after a preparation that could not reach PostgreSQL: %+v", ws)
 	}
 }

@@ -12,6 +12,11 @@ import (
 // VerifyL1 runs the level 1 verification of a backup.
 func (s *Service) VerifyL1(ctx context.Context, id string) error { return s.verifyL1(ctx, id) }
 
+// BackupClosedDB runs backupClosedDB, the backup of a database closed to workstations.
+func (s *Service) BackupClosedDB(ctx context.Context, l *Library, name string) (*Backup, error) {
+	return s.backupClosedDB(ctx, l, name)
+}
+
 // SetMarkAndSnapshotHook runs f between reading the activity mark of a
 // backup and exporting its snapshot. The returned function removes it.
 func SetMarkAndSnapshotHook(f func()) (restore func()) {
@@ -63,6 +68,13 @@ func SetFault(point string, err error) (restore func()) {
 		}
 		return nil
 	}
+	hookFault.Store(&f)
+	return func() { hookFault.Store(nil) }
+}
+
+// SetFaultHook runs f at every fault point; a non-nil result is the error of
+// the call at that point. The returned function removes it.
+func SetFaultHook(f func(point string) error) (restore func()) {
 	hookFault.Store(&f)
 	return func() { hookFault.Store(nil) }
 }

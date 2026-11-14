@@ -278,9 +278,10 @@ func TestAdminLockTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close(ctx)
+	const lockTimeout = "SQS-P050 PostgreSQL gave up waiting for a lock that another session holds (lock_timeout); try again when that session finishes"
 	start := time.Now()
 	_, err = pg.CountRows(ctx, conn, []string{"t"}, true)
-	if !errors.Is(err, pg.ErrLockTimeout) || !strings.Contains(err.Error(), "SQS-P050") || !pg.IsCode(err, "55P03") {
+	if !errors.Is(err, pg.ErrLockTimeout) || !strings.Contains(err.Error(), lockTimeout) || !pg.IsCode(err, "55P03") {
 		t.Fatalf("count behind a lock: %v", err)
 	}
 	if time.Since(start) > 5*time.Second {
@@ -293,11 +294,11 @@ func TestAdminLockTimeout(t *testing.T) {
 	if _, err := su.Exec(ctx, "BEGIN; ALTER DATABASE locked CONNECTION LIMIT 7"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cl.SetAllowConnections(ctx, "locked", false); !errors.Is(err, pg.ErrLockTimeout) || !strings.Contains(err.Error(), "SQS-P050") {
+	if err := cl.SetAllowConnections(ctx, "locked", false); !errors.Is(err, pg.ErrLockTimeout) || !strings.Contains(err.Error(), lockTimeout) {
 		t.Fatalf("ALTER DATABASE behind a lock: %v", err)
 	}
 	start = time.Now()
-	if err := cl.DropDatabase(ctx, "locked"); !errors.Is(err, pg.ErrLockTimeout) || !strings.Contains(err.Error(), "SQS-P050") {
+	if err := cl.DropDatabase(ctx, "locked"); !errors.Is(err, pg.ErrLockTimeout) || !strings.Contains(err.Error(), lockTimeout) {
 		t.Fatalf("DROP DATABASE behind a lock: %v", err)
 	}
 	if time.Since(start) > 10*time.Second {
@@ -306,6 +307,56 @@ func TestAdminLockTimeout(t *testing.T) {
 	su.Exec(ctx, "ROLLBACK")
 	if err := cl.DropDatabase(ctx, "locked"); err != nil {
 		t.Fatalf("drop once the lock is gone: %v", err)
+	}
+}
+
+// TestPasswordStatementsBehindALock: a password change and Bootstrap that
+// wait behind another transaction on the same role fail with the lock
+// timeout, and their error keeps the PostgreSQL error without the verifier.
+func TestPasswordStatementsBehindALock(t *testing.T) {
+	ctx := context.Background()
+	c, cl := setup(t)
+	cl.LockTimeout = 300 * time.Millisecond
+	if err := cl.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := pg.ScramVerifier(secrets.GeneratePassword(24))
+	if err := cl.CreateLibraryRole(ctx, "held", pg.RoleOptions{Verifier: v, Login: true, ConnLimit: -1}); err != nil {
+		t.Fatal(hidden(err.Error(), v))
+	}
+	su := superuser(t, c, "postgres")
+	const timeout = "ERROR: canceling statement due to lock timeout (SQLSTATE 55P03)"
+
+	// ALTER ROLE ... PASSWORD behind a transaction that changed the role.
+	if _, err := su.Exec(ctx, "BEGIN; ALTER ROLE held CONNECTION LIMIT 7"); err != nil {
+		t.Fatal(err)
+	}
+	nv, _ := pg.ScramVerifier(secrets.GeneratePassword(24))
+	err := cl.SetRolePassword(ctx, "held", nv)
+	if !errors.Is(err, pg.ErrLockTimeout) || !pg.IsCode(err, "55P03") || err.Error() != pg.ErrLockTimeout.Error()+": "+timeout {
+		t.Fatalf("password change behind a lock: %s", hidden(fmt.Sprint(err), nv))
+	}
+	if _, err := su.Exec(ctx, "ROLLBACK"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.SetRolePassword(ctx, "held", nv); err != nil {
+		t.Fatalf("password change once the lock is gone: %s", hidden(err.Error(), nv))
+	}
+
+	// Bootstrap behind a transaction that changed sqsolve_admin: SQS-P050
+	// inside SQS-P002, like every other pgx connection.
+	if _, err := su.Exec(ctx, "BEGIN; ALTER ROLE sqsolve_admin CONNECTION LIMIT -1"); err != nil {
+		t.Fatal(err)
+	}
+	err = cl.Bootstrap(ctx)
+	if err == nil || err.Error() != "SQS-P002 preparing sqsolve_admin: "+pg.ErrLockTimeout.Error()+": "+timeout || !errors.Is(err, pg.ErrLockTimeout) || !pg.IsCode(err, "55P03") {
+		t.Fatalf("bootstrap behind a lock: %v", err)
+	}
+	if _, err := su.Exec(ctx, "ROLLBACK"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.Bootstrap(ctx); err != nil {
+		t.Fatalf("bootstrap once the lock is gone: %v", err)
 	}
 }
 
@@ -321,7 +372,8 @@ func TestAdminStatementTimeout(t *testing.T) {
 	p, _ := cl.Pool()
 	_, err := p.Exec(ctx, "SELECT pg_sleep(3)")
 	err = pg.WrapTimeout(err)
-	if !errors.Is(err, pg.ErrStatementTimeout) || !strings.Contains(err.Error(), "SQS-P051") || !pg.IsCode(err, "57014") {
+	if !errors.Is(err, pg.ErrStatementTimeout) || !pg.IsCode(err, "57014") ||
+		!strings.Contains(err.Error(), "SQS-P051 PostgreSQL cancelled a statement that ran for longer than sqsolve allows (statement_timeout)") {
 		t.Fatalf("long statement: %v", err)
 	}
 	// Defaults apply when the fields are not set.
@@ -355,8 +407,9 @@ func TestCreateLibraryRoleIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = cl.CreateLibraryRole(ctx, "once", pg.RoleOptions{Verifier: v, Login: true, ConnLimit: -1})
-	if err == nil || !strings.HasPrefix(err.Error(), "SQS-P020 creating role once") || strings.Contains(err.Error(), v) {
-		t.Fatalf("duplicate role: %v", err)
+	if err == nil || !strings.HasPrefix(err.Error(), "SQS-P020 creating role once") || !strings.Contains(err.Error(), `role "once" already exists`) ||
+		strings.Contains(err.Error(), v) || !pg.IsCode(err, "42710") {
+		t.Fatalf("duplicate role: %s", hidden(fmt.Sprint(err), v))
 	}
 	p, _ := cl.Pool()
 	var inherit, set bool
@@ -364,5 +417,54 @@ func TestCreateLibraryRoleIsAtomic(t *testing.T) {
 		JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member
 		WHERE r.rolname = 'once' AND u.rolname = $1 AND m.inherit_option`, pg.AdminRole).Scan(&inherit, &set); err != nil || !inherit || !set {
 		t.Fatalf("membership of sqsolve_admin: %v %v %v", inherit, set, err)
+	}
+}
+
+// TestPublicWithARealServer: pg.Public cuts the driver's text out of the
+// errors a real server gives, also the two shapes no unit test can build: a
+// connection the server refuses (the driver's error wraps PostgreSQL's) and a
+// session whose server stops (a socket error).
+func TestPublicWithARealServer(t *testing.T) {
+	ctx := context.Background()
+	c, cl := setup(t)
+	clean := func(what string, err error) string {
+		t.Helper()
+		text, _ := pg.Public(fmt.Errorf("SQS-E005 reading SM_Project: %w", err))
+		for _, internal := range []string{c.SocketDir, ".s.PGSQL", pg.AdminRole, "ghost_db"} {
+			if strings.Contains(text, internal) {
+				t.Errorf("%s: the text names %q: %s", what, internal, text)
+			}
+		}
+		return text
+	}
+	const want = "SQS-E005 reading SM_Project: " + hiddenText
+
+	// A refused connection: the server names the database in its message.
+	_, err := cl.ConnectDB(ctx, "ghost_db")
+	if !pg.IsCode(err, "3D000") || !strings.Contains(fmt.Sprint(err), "user=sqsolve_admin database=ghost_db") {
+		t.Fatalf("connection to a missing database: %v", err)
+	}
+	if got := clean("a refused connection", err); got != want {
+		t.Errorf("a refused connection: %q, want %q", got, want)
+	}
+
+	// A session that loses its server. The text depends on what the driver
+	// meets first (a broken socket or the server's goodbye), so only what it
+	// must not name is checked.
+	conn, err := cl.ConnectDB(ctx, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	c.Stop()
+	if _, err = conn.Exec(ctx, "SELECT 1"); err == nil {
+		t.Fatal("a statement ran on a stopped server")
+	}
+	t.Logf("a session that lost its server: %s", clean("a session that lost its server", err))
+
+	// A stopped server.
+	_, err = cl.ConnectDB(ctx, "postgres")
+	if got := clean("a stopped server", err); got != want {
+		t.Errorf("a stopped server: %q, want %q", got, want)
 	}
 }

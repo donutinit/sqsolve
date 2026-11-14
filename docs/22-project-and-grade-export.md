@@ -218,6 +218,12 @@ download whose entry cannot be written is not served (ADR 0026).
 | `SQS-E006` | An unexpected value or format |
 | `SQS-E007` | The backup is not prepared for export (the temporary database is missing or expired) |
 
+When `SQS-E005` comes from a failed connection to PostgreSQL, the detail ends in "the connection
+to PostgreSQL failed (the cause is in the sqsolve log)"; the driver's text goes to the process
+log and is shown only to whoever has the `diagnostics` permission (`08-security.md` §5). A
+preparation that fails because the connection to PostgreSQL failed stores that public text as
+the error of its workspace, which the page and `GET /backups/{id}/export` show to every reader.
+
 ## 9. Limits and risks
 
 - The read runs as `sqsolve_admin` inside a `READ ONLY` transaction with a `statement_timeout` of

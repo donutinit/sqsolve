@@ -110,3 +110,30 @@ func TestVacuumOptimizesLiveLibraries(t *testing.T) {
 		t.Fatalf("progress %d", j.Progress)
 	}
 }
+
+// uncheckable makes the path of b fail its check with an error that is not
+// "does not exist", as a disk error would (SQS-B045): the year folder of b
+// is moved out of libraries/ and a regular file takes its name, so every
+// lstat below it answers "not a directory". Every backup of that library and
+// year is then blocked, and no new backup can be written there. The returned
+// function puts the folder back.
+func (e *env) uncheckable(b *core.Backup) (restore func()) {
+	e.t.Helper()
+	year := filepath.Join(e.svc.Cfg.BackupDir, filepath.Dir(filepath.Dir(b.FilePath)))
+	aside := filepath.Join(e.svc.Cfg.BackupDir, "aside-"+b.ID)
+	if err := os.Rename(year, aside); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(year, nil, 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+	return func() {
+		e.t.Helper()
+		if err := os.Remove(year); err != nil {
+			e.t.Fatal(err)
+		}
+		if err := os.Rename(aside, year); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+}

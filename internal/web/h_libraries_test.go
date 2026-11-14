@@ -194,6 +194,49 @@ func TestLibraryScheduleForm(t *testing.T) {
 	}
 }
 
+// The Schedule tab of a library without a policy of its own (one the
+// catalog rebuild registered) shows the default policy and says that
+// retention deletes none of its backups, to whoever can see the tab, with
+// what that policy would do once saved; after the save it shows the effect
+// of the saved policy.
+func TestScheduleTabOfALibraryWithoutItsOwnPolicy(t *testing.T) {
+	a, srv, _ := jobsPanel(t)
+	ctx := context.Background()
+	fxViewer(t, a)
+	st := a.Svc.Settings(ctx)
+	st.DefaultPolicy.KeepLast, st.DefaultPolicy.KeepDaily, st.DefaultPolicy.KeepWeekly, st.DefaultPolicy.KeepMonthly = 1, 0, 0, 0
+	if err := a.Svc.SaveSettings(ctx, audit.System, st); err != nil {
+		t.Fatal(err)
+	}
+	l := fxLibrary(t, a, "rebuilt", core.StatePurged)
+	now := time.Now()
+	for i := 3; i >= 1; i-- {
+		fxBackup(t, a, l.ID, core.BackupOK, core.VerifyL1OK, now.Add(-time.Duration(i)*time.Hour))
+	}
+	none := `<p>This library has no policy of its own, so retention deletes none of its backups. ` +
+		`Saved as shown, the policy would keep <strong>1</strong> backups and delete <strong>2</strong> on the next pass.</p>`
+	effect := `<p><strong>1</strong> backups are kept and <strong>2</strong> would be deleted on the next pass.</p>`
+	back := "/libraries/" + l.ID + "?tab=schedule"
+	boss, tok := jobsLogin(t, srv, "boss", jobsAdminPass)
+	eve, _ := jobsLogin(t, srv, "eve", fxViewerPass)
+	for who, page := range map[string]string{"boss": boss.page(back), "eve": eve.page(back)} {
+		if !strings.Contains(page, none) || strings.Contains(page, effect) {
+			t.Errorf("%s: the tab of a library without a policy of its own does not say retention deletes none of its backups", who)
+		}
+	}
+	if page := boss.page(back); !strings.Contains(page, `name="keep_last" min="0" max="1000" value="1"`) {
+		t.Error("the form does not show the default policy")
+	}
+	_, loc, msg := fxPost(boss, "/libraries/"+l.ID+"/policy", url.Values{"csrf": {tok}, "enabled": {"on"}, "preset": {"cron"}, "cron": {"30 1 * * *"},
+		"keep_last": {"1"}, "keep_daily": {"0"}, "keep_weekly": {"0"}, "keep_monthly": {"0"}, "min_verified": {"1"}})
+	if loc != back || msg != "Schedule saved." {
+		t.Fatalf("save: %s %q", loc, msg)
+	}
+	if page := boss.page(back); strings.Contains(page, "no policy of its own") || !strings.Contains(page, effect) {
+		t.Error("the tab of a library with its own policy does not show its effect")
+	}
+}
+
 // Delete, recover from the trash, purge, revert and recreate are typed
 // confirmations that queue their job with its "accepted" audit entry: a
 // wrong identifier or state is refused with its code where the form is,
@@ -475,4 +518,103 @@ func TestLibraryPagesOfMissingRecords(t *testing.T) {
 	if _, loc, msg := fxPost(boss, "/libraries/"+l.ID+"/password/reveal", url.Values{"csrf": {tok}}); loc != "/libraries/"+l.ID || msg != "SQS-L030 credential not found" {
 		t.Fatalf("reveal without a credential: %s %q", loc, msg)
 	}
+}
+
+// K-03, ADR 0029: delete, recover and purge pressed again while their job is
+// queued open the same job, with no notice, no other job and no other entry.
+func TestDangerZoneSecondRequestOpensTheSameJob(t *testing.T) {
+	a, srv, _ := jobsPanel(t)
+	active := fxLibrary(t, a, "apolo", core.StateActive)
+	trashed := fxLibrary(t, a, "zeus", core.StateTrashed)
+	boss, tok := jobsLogin(t, srv, "boss", jobsAdminPass)
+	for _, c := range []struct {
+		lib             *core.Library
+		action, confirm string
+	}{
+		{active, "delete", "apolo"},
+		{trashed, "untrash", ""},
+		{trashed, "purge", "zeus"},
+	} {
+		var locs []string
+		for range 2 {
+			st, loc, msg := fxPost(boss, "/libraries/"+c.lib.ID+"/"+c.action, url.Values{"csrf": {tok}, "confirm": {c.confirm}})
+			if st != http.StatusSeeOther || !strings.HasPrefix(loc, "/jobs/") || msg != "" {
+				t.Fatalf("%s: %d %s %q", c.action, st, loc, msg)
+			}
+			locs = append(locs, loc)
+		}
+		if locs[0] != locs[1] {
+			t.Errorf("%s queued two jobs: %v", c.action, locs)
+		}
+	}
+	if n := jobCount(t, a); n != 3 {
+		t.Fatalf("%d jobs", n)
+	}
+	for _, action := range []string{"library.delete", "library.untrash", "library.purge"} {
+		if es := auditEntries(t, a, action); len(es) != 1 || es[0].Outcome != audit.Accepted {
+			t.Errorf("%s entries %+v", action, es)
+		}
+	}
+}
+
+// While the job that creates a library is queued or running, the Connection
+// tab says that the library is being prepared and reloads itself, also once
+// that job has made the library awaiting_init (E1) or active (E0): its next
+// step writes the pg_hba.conf lines of the library, and a workstation that
+// connects before is refused. The tab shows neither the values to connect
+// with nor "Reveal password" then. Once the job has ended the tab is as
+// before, and a job of another type changes nothing.
+func TestLibraryIsPreparedUntilItsCreationJobEnds(t *testing.T) {
+	a, srv, admin := jobsPanel(t)
+	ctx := context.Background()
+	boss, _ := jobsLogin(t, srv, "boss", jobsAdminPass)
+	const preparing = `<section class="card"><p>Preparing the library. This page refreshes by itself.</p>`
+	created := func(slug string, st core.State) (*core.Library, string) {
+		t.Helper()
+		l := fxLibrary(t, a, slug, st)
+		j, err := a.Jobs.Enqueue(ctx, core.JobLibraryCreate, l.ID, map[string]string{"library_id": l.ID}, admin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return l, j.ID
+	}
+	// tab checks the Connection tab of l: being prepared with refresh, or
+	// the card of its state with "Reveal password".
+	tab := func(when string, l *core.Library, refresh, card string) {
+		t.Helper()
+		page := boss.page("/libraries/" + l.ID)
+		prepared := strings.Contains(page, preparing+refresh+`</section>`)
+		shown := strings.Contains(page, card) && strings.Contains(page, `action="/libraries/`+l.ID+`/password/reveal"`)
+		if refresh != "" && (!prepared || strings.Contains(page, card) || strings.Contains(page, "/password/reveal")) {
+			t.Errorf("%s, %s: not shown as being prepared with %s", when, l.Slug, refresh)
+		}
+		if refresh == "" && (strings.Contains(page, preparing) || !shown) {
+			t.Errorf("%s, %s: %q with its password not shown", when, l.Slug, card)
+		}
+	}
+	const reload = `<div data-autorefresh="3"></div>`
+	const initialize, connect = "Initialize the library from Resolve", "Connect a workstation"
+	hera, heraJob := created("hera", core.StateAwaitingInit)
+	eos, eosJob := created("eos", core.StateActive)
+	// Before the window opens the tab reloads when the state changes, as
+	// it always did.
+	nyx, _ := created("nyx", core.StateProvisioning)
+	zeus := fxLibrary(t, a, "zeus", core.StateAwaitingInit)
+	if _, err := a.Jobs.Enqueue(ctx, core.JobLibraryDelete, zeus.ID, nil, admin); err != nil {
+		t.Fatal(err)
+	}
+	tab("queued", hera, reload, initialize)
+	tab("queued", eos, reload, connect)
+	tab("queued", nyx, `<div data-autorefresh="3" data-watch="/api/v1/libraries/`+nyx.ID+`" data-watch-state="provisioning"></div>`, initialize)
+	tab("a delete queued", zeus, "", initialize)
+	for _, id := range []string{heraJob, eosJob} {
+		fxSet(t, a, "jobs", id, "state = 'running', started_at = ?", store.NowT())
+	}
+	tab("running", hera, reload, initialize)
+	tab("running", eos, reload, connect)
+	for _, id := range []string{heraJob, eosJob} {
+		fxSet(t, a, "jobs", id, "state = 'succeeded', finished_at = ?", store.NowT())
+	}
+	tab("succeeded", hera, "", initialize)
+	tab("succeeded", eos, "", connect)
 }

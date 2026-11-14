@@ -19,6 +19,7 @@ import (
 	"github.com/donutinit/sqsolve/internal/events"
 	"github.com/donutinit/sqsolve/internal/jobs"
 	"github.com/donutinit/sqsolve/internal/pg"
+	"github.com/donutinit/sqsolve/internal/secrets"
 	"github.com/donutinit/sqsolve/internal/store"
 )
 
@@ -898,5 +899,431 @@ func TestSwapJournaledBeforeTheLockWithItsDatabaseGone(t *testing.T) {
 	}
 	if e.db(restored) != nil {
 		t.Fatal("the leftover copy was not swept")
+	}
+}
+
+// --- A catalog write that fails after the rename of a delete or a recovery ---
+
+// catalogExec runs a statement on the catalog, such as a trigger that refuses
+// a write.
+func (e *env) catalogExec(q string) {
+	e.t.Helper()
+	if _, err := e.svc.DB.ExecContext(e.ctx, q); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// trashedWithPassword is a library moved to the trash with its database, and
+// the password of its owner role.
+func (e *env) trashedWithPassword(slug string) (*core.Library, secrets.String) {
+	e.t.Helper()
+	l, pass := e.createActive(slug)
+	e.firstBackup(l)
+	e.idle()
+	j, err := e.svc.Trash(e.ctx, admin, l.ID, l.Slug)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.wait(j, jobs.Succeeded)
+	l = e.lib(l.ID)
+	if l.State != core.StateTrashed || l.TrashDB == "" || e.db(l.TrashDB) == nil {
+		e.t.Fatalf("%s: state %s, trash %q", slug, l.State, l.TrashDB)
+	}
+	return l, pass
+}
+
+// backupScheduleEnabled reports whether the backup schedule of a library runs.
+func (e *env) backupScheduleEnabled(id string) bool {
+	e.t.Helper()
+	sc, err := e.svc.Sched.Get(e.ctx, core.ScheduleBackup, id)
+	if err != nil || sc == nil {
+		e.t.Fatalf("backup schedule of %s: %+v %v", id, sc, err)
+	}
+	return sc.Enabled
+}
+
+// A delete whose catalog write fails once its database is under the trash
+// name fails with SQS-L056, keeps the lock and stays pending reconciliation:
+// the next start does not report the library missing while its data sits
+// under a name the catalog does not record, and once the write works it
+// records the move, with the purge date in a library.trashed event.
+func TestTrashThatCannotBeRecordedIsFinishedAtTheNextStart(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, pass := e.createActive("cw_trash")
+	e.firstBackup(l)
+	e.idle()
+	e.catalogExec(`CREATE TRIGGER refuse_trashed BEFORE UPDATE OF state ON libraries WHEN NEW.state = 'trashed' BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
+	j, err := e.svc.Trash(ctx, admin, l.ID, l.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.failsWith(j, "SQS-L056", "disk full")
+	owned, err := e.svc.PG.DatabasesOwnedBy(ctx, l.OwnerRole)
+	if err != nil || len(owned) != 1 || !strings.HasPrefix(owned[0], "cw_trash__trash_") {
+		t.Fatalf("databases of the role: %v %v", owned, err)
+	}
+	trash := owned[0]
+	if !strings.HasPrefix(got.ErrorDetail, "SQS-L056 the library could not be recorded in the trash: ") ||
+		!strings.HasSuffix(got.ErrorDetail, ". Its database is kept as "+trash+"; reconciliation finishes it at the next start of sqsolve") {
+		t.Fatalf("job error %q", got.ErrorDetail)
+	}
+	if e.pendingFlag(got.ID) != 1 || e.lib(l.ID).State != core.StateActive || e.canLogin(l.OwnerRole) || e.db(l.DBName) != nil {
+		t.Fatalf("after the job: pending %d, state %s, login %v", e.pendingFlag(got.ID), e.lib(l.ID).State, e.canLogin(l.OwnerRole))
+	}
+
+	notes := e.start()
+	if !strings.Contains(notes, "cw_trash: the database was moved to the trash as "+trash+", but this could not be recorded (") || e.pendingFlag(got.ID) != 1 {
+		t.Fatalf("first start, pending %d:\n%s", e.pendingFlag(got.ID), notes)
+	}
+	if ev, _ := e.svc.Events.Latest(ctx, "library.missing", l.ID); ev != nil {
+		t.Fatalf("reported missing: %s", ev.Message)
+	}
+	if st := e.lib(l.ID).State; st != core.StateActive {
+		t.Fatalf("state %s after the first start", st)
+	}
+
+	e.catalogExec(`DROP TRIGGER refuse_trashed`)
+	notes = e.start()
+	after := e.lib(l.ID)
+	if after.State != core.StateTrashed || after.TrashDB != trash || after.PurgeAfter == nil || e.pendingFlag(got.ID) != 0 ||
+		!strings.Contains(notes, "cw_trash: completed the move to the trash") {
+		t.Fatalf("next start: %+v, pending %d\n%s", after, e.pendingFlag(got.ID), notes)
+	}
+	if ev, _ := e.svc.Events.Latest(ctx, "library.missing", l.ID); ev != nil {
+		t.Fatalf("reported missing: %s", ev.Message)
+	}
+	ev, _ := e.svc.Events.Latest(ctx, "library.trashed", l.ID)
+	want := fmt.Sprintf("Finished the interrupted move of %q to the trash; it will be permanently deleted on %s", "Test cw_trash", after.PurgeAfter.UTC().Format("2006-01-02"))
+	if ev == nil || ev.Severity != events.Warning || ev.Message != want {
+		t.Fatalf("event %+v, want %q", ev, want)
+	}
+
+	uj, err := e.svc.RestoreFromTrash(ctx, admin, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(uj, jobs.Succeeded)
+	e.reloaded(l.OwnerRole, pass, l.DBName, true)
+	if n := e.count(l.OwnerRole, pass, l.DBName, "SM_Project"); n != 50 {
+		t.Fatalf("%d rows", n)
+	}
+}
+
+// A delete of a library without a database whose catalog write fails has
+// moved nothing: it fails with SQS-L056, gives the access back and is not
+// left to reconciliation, and the library can be deleted again.
+func TestTrashWithoutADatabaseThatCannotBeRecordedGivesTheAccessBack(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, _ := e.createActive("cw_missing")
+	e.firstBackup(l)
+	e.lose(l, false)
+	e.catalogExec(`CREATE TRIGGER refuse_trashed BEFORE UPDATE OF state ON libraries WHEN NEW.state = 'trashed' BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
+	j, err := e.svc.Trash(ctx, admin, l.ID, l.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.failsWith(j, "SQS-L056", "SQS-L056 the library could not be recorded in the trash: ")
+	if !strings.Contains(got.ErrorDetail, "disk full") || strings.Contains(got.ErrorDetail, "reconciliation") {
+		t.Fatalf("job error %q", got.ErrorDetail)
+	}
+	if e.pendingFlag(got.ID) != 0 || e.lib(l.ID).State != core.StateMissing || !e.canLogin(l.OwnerRole) {
+		t.Fatalf("pending %d, state %s, login %v", e.pendingFlag(got.ID), e.lib(l.ID).State, e.canLogin(l.OwnerRole))
+	}
+	e.catalogExec(`DROP TRIGGER refuse_trashed`)
+	j, err = e.svc.Trash(ctx, admin, l.ID, l.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(j, jobs.Succeeded)
+	if after := e.lib(l.ID); after.State != core.StateTrashed || after.TrashDB != "" {
+		t.Fatalf("after the second delete: %s %q", after.State, after.TrashDB)
+	}
+}
+
+// A recovery from the trash whose catalog write fails once the database is
+// back under its name fails with SQS-L058 and stays pending reconciliation; a
+// start that cannot record it either changes nothing, and the next one
+// records the library active with its access and its backup schedule.
+func TestRecoveryThatCannotBeRecordedIsFinishedAtTheNextStart(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, pass := e.trashedWithPassword("cw_untrash")
+	e.catalogExec(`CREATE TRIGGER refuse_recover BEFORE UPDATE OF state ON libraries WHEN OLD.state = 'trashed' AND NEW.state = 'active' BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
+	j, err := e.svc.RestoreFromTrash(ctx, admin, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.failsWith(j, "SQS-L058", "SQS-L058 the recovery from the trash stopped before it finished: ")
+	if !strings.Contains(got.ErrorDetail, "disk full") || !strings.HasSuffix(got.ErrorDetail, ". reconciliation finishes it at the next start of sqsolve") {
+		t.Fatalf("job error %q", got.ErrorDetail)
+	}
+	if e.pendingFlag(got.ID) != 1 || e.lib(l.ID).State != core.StateTrashed || e.db(l.DBName) == nil || e.db(l.TrashDB) != nil {
+		t.Fatalf("after the job: pending %d, state %s", e.pendingFlag(got.ID), e.lib(l.ID).State)
+	}
+
+	notes := e.start()
+	if !strings.Contains(notes, "cw_untrash: the database "+l.DBName+" is back under its name, but its recovery from the trash could not be recorded (") ||
+		e.pendingFlag(got.ID) != 1 || e.lib(l.ID).State != core.StateTrashed {
+		t.Fatalf("first start, pending %d:\n%s", e.pendingFlag(got.ID), notes)
+	}
+	ev, _ := e.svc.Events.Latest(ctx, "library.reconcile_pending", l.ID)
+	if ev == nil || !strings.Contains(ev.Message, `the interrupted job "Restore from trash" of "Test cw_untrash"`) {
+		t.Fatalf("warning about the pending recovery: %+v", ev)
+	}
+
+	e.catalogExec(`DROP TRIGGER refuse_recover`)
+	notes = e.start()
+	after := e.lib(l.ID)
+	if after.State != core.StateActive || after.TrashDB != "" || after.PurgeAfter != nil || after.TrashedAt != nil || e.pendingFlag(got.ID) != 0 ||
+		!strings.Contains(notes, "cw_untrash: completed the recovery from the trash") {
+		t.Fatalf("next start: %+v, pending %d\n%s", after, e.pendingFlag(got.ID), notes)
+	}
+	if !e.backupScheduleEnabled(l.ID) {
+		t.Fatal("the backup schedule stays disabled")
+	}
+	ev, _ = e.svc.Events.Latest(ctx, "library.restored_from_trash", l.ID)
+	if ev == nil || ev.Message != `Finished the interrupted recovery of "Test cw_untrash" from the trash` {
+		t.Fatalf("event %+v", ev)
+	}
+	e.reloaded(l.OwnerRole, pass, l.DBName, true)
+	if n := e.count(l.OwnerRole, pass, l.DBName, "SM_Project"); n != 50 {
+		t.Fatalf("%d rows", n)
+	}
+}
+
+// A recovery from the trash cut after its journal is settled at the next
+// start: one whose database is back under the library's name is completed,
+// one cut before the rename leaves the library in the trash, where it can be
+// recovered again, and one whose databases are both gone is left pending.
+func TestInterruptedRecoveryFromTheTrash(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	journal := func(l *core.Library) string {
+		return fmt.Sprintf(`{"untrash_from":%q,"untrash_to":%q}`, l.TrashDB, l.DBName)
+	}
+	a, pass := e.trashedWithPassword("cut_after")
+	if err := e.svc.PG.RenameDatabase(ctx, a.TrashDB, a.DBName); err != nil {
+		t.Fatal(err)
+	}
+	e.interruptedJob("JU1", core.JobLibraryUntrash, a.ID, "move", journal(a))
+	b, _ := e.trashedWithPassword("cut_before")
+	e.interruptedJob("JU2", core.JobLibraryUntrash, b.ID, "move", journal(b))
+	c, _ := e.trashedWithPassword("cut_gone")
+	if err := e.svc.PG.DropDatabase(ctx, c.TrashDB); err != nil {
+		t.Fatal(err)
+	}
+	e.interruptedJob("JU3", core.JobLibraryUntrash, c.ID, "move", journal(c))
+
+	notes := e.start()
+	if got := e.lib(a.ID); got.State != core.StateActive || got.TrashDB != "" || e.pendingFlag("JU1") != 0 || !e.backupScheduleEnabled(a.ID) ||
+		!strings.Contains(notes, "cut_after: completed the recovery from the trash") {
+		t.Fatalf("cut after the rename: %+v, pending %d\n%s", got, e.pendingFlag("JU1"), notes)
+	}
+	e.reloaded(a.OwnerRole, pass, a.DBName, true)
+	if got := e.lib(b.ID); got.State != core.StateTrashed || got.TrashDB != b.TrashDB || e.db(b.TrashDB) == nil || e.pendingFlag("JU2") != 0 ||
+		!strings.Contains(notes, "cut_before: the recovery from the trash stopped before moving "+b.TrashDB+" back; the library stays in the trash") {
+		t.Fatalf("cut before the rename: %+v, pending %d\n%s", got, e.pendingFlag("JU2"), notes)
+	}
+	if got := e.lib(c.ID); got.State != core.StateTrashed || got.TrashDB != c.TrashDB || e.pendingFlag("JU3") != 1 ||
+		!strings.Contains(notes, "cut_gone: neither "+c.TrashDB+" nor a database "+c.DBName+" of the library is on the server; nothing was changed") {
+		t.Fatalf("both databases gone: %+v, pending %d\n%s", got, e.pendingFlag("JU3"), notes)
+	}
+	j, err := e.svc.RestoreFromTrash(ctx, admin, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(j, jobs.Succeeded)
+}
+
+// A purge that stopped with the database of the trash still there, then a
+// recovery from the trash that moved it back under the library's name and
+// stopped before reactivating the library (SQS-L058): at the next start the
+// recovery supersedes the purge, which changes nothing, and the recovery is
+// completed. The purge used to be finished first and refuse with SQS-L046,
+// naming the library's own database.
+func TestPendingRecoveryFromTheTrashSupersedesAnOlderPendingPurge(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, pass := e.trashedWithPassword("pu_order")
+	// Both after the delete that moved the library to the trash.
+	at := time.Now()
+	e.earlierPendingJob("JP1", core.JobLibraryPurge, l.ID, at, "journal",
+		fmt.Sprintf(`{"purge_of":%q,"trash_db":%q,"prev_db":""}`, l.ID, l.TrashDB))
+	if err := e.svc.PG.RenameDatabase(ctx, l.TrashDB, l.DBName); err != nil {
+		t.Fatal(err)
+	}
+	e.earlierPendingJob("JU1", core.JobLibraryUntrash, l.ID, at.Add(time.Second), "move",
+		fmt.Sprintf(`{"untrash_from":%q,"untrash_to":%q}`, l.TrashDB, l.DBName))
+	notes := e.start()
+	if strings.Contains(notes, "SQS-L046") || !strings.Contains(notes, "pu_order: the newer job JU1 of the library supersedes the interrupted job JP1; nothing was changed") ||
+		!strings.Contains(notes, "pu_order: completed the recovery from the trash") {
+		t.Fatalf("notes:\n%s", notes)
+	}
+	if got := e.lib(l.ID); got.State != core.StateActive || got.TrashDB != "" || e.pendingFlag("JP1") != 0 || e.pendingFlag("JU1") != 0 {
+		t.Fatalf("library %+v, pending %d %d\n%s", got, e.pendingFlag("JP1"), e.pendingFlag("JU1"), notes)
+	}
+	e.reloaded(l.OwnerRole, pass, l.DBName, true)
+}
+
+// A recovery whose rename is refused after its journal (a database took the
+// name after the check of SQS-L005) fails with SQS-L058 and stays pending,
+// since a refused rename may have been committed; the next start finds the
+// trash database and leaves the library in the trash.
+func TestRecoveryWhoseRenameIsRefusedStaysInTheTrash(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, _ := e.trashedWithPassword("cw_inv")
+	restore := core.SetFaultHook(func(point string) error {
+		if point == "untrash.name_lookup" {
+			return e.svc.PG.CreateDatabase(ctx, l.DBName, l.OwnerRole)
+		}
+		return nil
+	})
+	j, err := e.svc.RestoreFromTrash(ctx, admin, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.failsWith(j, "SQS-L058", "SQS-L058 the recovery from the trash stopped before it finished: ")
+	restore()
+	if !strings.Contains(got.ErrorDetail, "already exists") || e.pendingFlag(got.ID) != 1 || e.lib(l.ID).State != core.StateTrashed || e.db(l.TrashDB) == nil {
+		t.Fatalf("job error %q, pending %d, state %s", got.ErrorDetail, e.pendingFlag(got.ID), e.lib(l.ID).State)
+	}
+	notes := e.start()
+	if e.pendingFlag(got.ID) != 0 || e.lib(l.ID).State != core.StateTrashed ||
+		!strings.Contains(notes, "cw_inv: the recovery from the trash stopped before moving "+l.TrashDB+" back; the library stays in the trash") {
+		t.Fatalf("pending %d, state %s\n%s", e.pendingFlag(got.ID), e.lib(l.ID).State, notes)
+	}
+	if err := e.svc.PG.DropDatabase(ctx, l.DBName); err != nil {
+		t.Fatal(err)
+	}
+	j, err = e.svc.RestoreFromTrash(ctx, admin, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(j, jobs.Succeeded)
+}
+
+// An invalid database (left by an interrupted DROP DATABASE) still holds the
+// library's name: the recovery from the trash sees it and stops with SQS-L005
+// before its journal, so nothing waits for reconciliation. It used to see no
+// database, write its journal and fail on the rename with SQS-L058.
+func TestRecoveryRefusesANameHeldByAnInvalidDatabase(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, _ := e.trashedWithPassword("cw_held")
+	if err := e.svc.PG.CreateDatabase(ctx, l.DBName, l.OwnerRole); err != nil {
+		t.Fatal(err)
+	}
+	su, err := e.c.Connect(ctx, "postgres", e.c.SuperPass, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer su.Close(ctx)
+	if _, err := su.Exec(ctx, `UPDATE pg_database SET datconnlimit = -2 WHERE datname = $1`, l.DBName); err != nil {
+		t.Fatal(err)
+	}
+	j, err := e.svc.RestoreFromTrash(ctx, admin, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `SQS-L005 a database "cw_held" already exists`
+	if got := e.failsWith(j, "SQS-L005", want); got.ErrorDetail != want || e.pendingFlag(got.ID) != 0 {
+		t.Fatalf("job error %q, pending %d", got.ErrorDetail, e.pendingFlag(got.ID))
+	}
+	if got := e.lib(l.ID); got.State != core.StateTrashed || got.TrashDB != l.TrashDB || e.db(l.TrashDB) == nil {
+		t.Fatalf("after the refused recovery: state %s, trash %q", got.State, got.TrashDB)
+	}
+	if err := e.svc.PG.DropDatabase(ctx, l.DBName); err != nil {
+		t.Fatal(err)
+	}
+	j, err = e.svc.RestoreFromTrash(ctx, admin, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(j, jobs.Succeeded)
+}
+
+// A recovery recorded in the catalog whose backup schedule cannot be turned
+// back on fails with SQS-L058 and stays pending; the next start applies the
+// access and tries the schedule again until it works.
+func TestRecoveryWhoseScheduleCannotBeRestoredIsFinishedAtTheNextStart(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, pass := e.trashedWithPassword("cw_sched")
+	e.catalogExec(`CREATE TRIGGER refuse_schedule BEFORE UPDATE OF enabled ON schedules WHEN NEW.enabled = 1 BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
+	j, err := e.svc.RestoreFromTrash(ctx, admin, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.failsWith(j, "SQS-L058", "SQS-L058 the recovery from the trash stopped before it finished: ")
+	if !strings.Contains(got.ErrorDetail, "disk full") || e.pendingFlag(got.ID) != 1 || e.lib(l.ID).State != core.StateActive || e.backupScheduleEnabled(l.ID) {
+		t.Fatalf("job error %q, pending %d, state %s", got.ErrorDetail, e.pendingFlag(got.ID), e.lib(l.ID).State)
+	}
+	notes := e.start()
+	if !strings.Contains(notes, "cw_sched: could not restore its backup schedule after the recovery from the trash (") || e.pendingFlag(got.ID) != 1 {
+		t.Fatalf("first start, pending %d:\n%s", e.pendingFlag(got.ID), notes)
+	}
+	e.reloaded(l.OwnerRole, pass, l.DBName, true)
+	e.catalogExec(`DROP TRIGGER refuse_schedule`)
+	notes = e.start()
+	if e.pendingFlag(got.ID) != 0 || !e.backupScheduleEnabled(l.ID) {
+		t.Fatalf("next start, pending %d:\n%s", e.pendingFlag(got.ID), notes)
+	}
+}
+
+// A recovery from the trash that cannot write its journal stops with
+// SQS-L057 before the rename: nothing moved and nothing waits for
+// reconciliation.
+func TestRecoveryNeedsItsJournal(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, _ := e.trashedWithPassword("cw_journal")
+	e.catalogExec(`CREATE TRIGGER refuse_journal BEFORE UPDATE ON job_steps WHEN NEW.data LIKE '%"untrash_from"%' BEGIN SELECT RAISE(ABORT, 'journal refused'); END`)
+	j, err := e.svc.RestoreFromTrash(ctx, admin, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.failsWith(j, "SQS-L057", "SQS-L057 the job journal could not be written, so the database was not moved back from the trash: SQS-J041 the job journal was not written: ")
+	if !strings.Contains(got.ErrorDetail, "journal refused") || e.pendingFlag(got.ID) != 0 || e.lib(l.ID).State != core.StateTrashed ||
+		e.db(l.TrashDB) == nil || e.db(l.DBName) != nil {
+		t.Fatalf("job error %q, pending %d, state %s", got.ErrorDetail, e.pendingFlag(got.ID), e.lib(l.ID).State)
+	}
+}
+
+// A purge of a library without databases whose catalog write fails after its
+// roles were dropped stays pending reconciliation, and the next start
+// records it purged.
+func TestPurgeWithoutDatabasesStaysPendingOnceItsRolesAreDropped(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, _ := e.createActive("pnd_lib")
+	e.firstBackup(l)
+	e.lose(l, false)
+	tj, err := e.svc.Trash(ctx, admin, l.ID, l.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(tj, jobs.Succeeded)
+	if got := e.lib(l.ID); got.TrashDB != "" || got.PrevDB != "" {
+		t.Fatalf("trash %q, previous state %q", got.TrashDB, got.PrevDB)
+	}
+	e.catalogExec(`CREATE TRIGGER refuse_purged BEFORE UPDATE OF state ON libraries WHEN NEW.state = 'purged' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`)
+	j, err := e.svc.Purge(ctx, admin, l.ID, l.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.failsWith(j, "SQS-L047", "SQS-L047 the purge stopped before it finished: ")
+	if !strings.Contains(got.ErrorDetail, "disk I/O error") || !strings.HasSuffix(got.ErrorDetail, ". reconciliation finishes it at the next start of sqsolve") {
+		t.Fatalf("job error %q", got.ErrorDetail)
+	}
+	if exists, _ := e.svc.PG.RoleExists(ctx, l.OwnerRole); exists || e.pendingFlag(got.ID) != 1 || e.lib(l.ID).State != core.StateTrashed {
+		t.Fatalf("role kept %v, pending %d, state %s", exists, e.pendingFlag(got.ID), e.lib(l.ID).State)
+	}
+	e.catalogExec(`DROP TRIGGER refuse_purged`)
+	notes := e.start()
+	if e.lib(l.ID).State != core.StatePurged || e.pendingFlag(got.ID) != 0 || !strings.Contains(notes, "pnd_lib: finished the interrupted purge") {
+		t.Fatalf("state %s, pending %d\n%s", e.lib(l.ID).State, e.pendingFlag(got.ID), notes)
 	}
 }

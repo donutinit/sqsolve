@@ -108,6 +108,10 @@ type Status struct {
 	Active      int
 	Attention   []Attention
 	Databases   []pg.DBInfo
+
+	// pgErr is the error behind PostgresErr, which holds its public text
+	// until ForReader decides what the reader gets.
+	pgErr error
 }
 
 // Freshness summarizes how recent the verified backups are, without names.
@@ -252,6 +256,11 @@ func (m *Monitor) CheckPG(ctx context.Context) {
 		m.alerted, emitDown = true, true
 	}
 	m.mu.Unlock()
+	if emitDown {
+		// The event is stored for every viewer and sent to the notification
+		// channels: the driver's text goes only to the process log (docs 08 §5).
+		err = m.Svc.ReaderError(err, "postgres.down", false)
+	}
 	switch {
 	case emitDown && seenUp:
 		m.Events.Emit(ctx, events.Event{Type: events.PostgresDown, Severity: events.Critical, Message: "PostgreSQL is not responding: " + err.Error()})
@@ -471,11 +480,17 @@ func (m *Monitor) Snapshot(ctx context.Context) Status {
 		st.Postgres, st.PostgresUp = info, true
 		st.Databases, _ = m.Svc.PG.Databases(ctx)
 	} else {
-		st.PostgresErr = err.Error()
+		st.PostgresErr, _ = pg.Public(err)
+		st.pgErr = err
 		st.Attention = append(st.Attention, Attention{events.Critical, "PostgreSQL is not responding: workstations cannot open projects", "/health"})
 	}
 	if m.Notices != nil {
 		st.Attention = append(st.Attention, m.Notices()...)
+	}
+	if m.Svc.HBAProblem() != nil {
+		// The error itself is on the Health page: this list goes to every
+		// reader of the dashboard and of GET /api/v1/system/status.
+		st.Attention = append(st.Attention, Attention{events.Error, "The last change of the PostgreSQL access rules (pg_hba.conf) did not take effect", "/health"})
 	}
 	if st.PostgresUp {
 		if sev, msg := CompareVersions(st.Postgres.VersionNum, m.PGDumpVersion(ctx)); sev != "" {
@@ -528,6 +543,17 @@ func (m *Monitor) Snapshot(ctx context.Context) Status {
 	}
 	if st.PostgresUp && st.Postgres.MaxConnections > 0 && st.Postgres.Connections*100/st.Postgres.MaxConnections >= 80 {
 		st.Attention = append(st.Attention, Attention{events.Warning, fmt.Sprintf("PostgreSQL is using %d of %d connections", st.Postgres.Connections, st.Postgres.MaxConnections), "/health"})
+	}
+	return st
+}
+
+// ForReader returns st as the Health page and GET /api/v1/system/status show
+// it to a reader (docs 08 §5): the driver's text of a failed connection to
+// PostgreSQL goes to the process log, and PostgresErr keeps it only for a
+// reader with the diagnostics permission (full). where is the request path.
+func (m *Monitor) ForReader(st Status, where string, full bool) Status {
+	if st.pgErr != nil {
+		st.PostgresErr = m.Svc.ReaderError(st.pgErr, "health", full, "path", where).Error()
 	}
 	return st
 }

@@ -523,7 +523,7 @@ func TestAPIExportWithPostgreSQL(t *testing.T) {
 	for _, p := range []string{lib + "/projects/" + idProject + "/export", lib + "/grades/" + idStill + "/export", bk + "/grades/albums/" + idView2} {
 		r := e.call(t, "GET", p, export, "", false)
 		wantProblemPrefix(t, p+" with the audit log down", r, 503, x040)
-		if r.header.Get("X-Sqsolve-Name") != "" || strings.Contains(r.body, "PK") {
+		if r.header.Get("X-Sqsolve-Name") != "" || strings.HasPrefix(r.body, "PK") {
 			t.Errorf("%s went out without its entry", p)
 		}
 	}

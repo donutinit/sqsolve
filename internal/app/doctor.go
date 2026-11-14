@@ -24,6 +24,44 @@ type Check struct {
 	Status string `json:"status"` // ok, warn, fail
 	Detail string `json:"detail"`
 	Hint   string `json:"hint,omitempty"`
+
+	// For ChecksFor: the error whose text ends Detail, and the hint for a
+	// reader without the diagnostics permission when Hint names a file.
+	err        error
+	publicHint string
+}
+
+// errCheck is a check whose detail ends with the text of err.
+func errCheck(name, status, prefix string, err error, hint string) Check {
+	return Check{Name: name, Status: status, Detail: prefix + err.Error(), Hint: hint, err: err}
+}
+
+// superuserCheck is the failed check of the superuser connection; its hint
+// names the password file.
+func superuserCheck(err error, file string) Check {
+	c := errCheck("Superuser over the socket", "fail", "", err, "the password in "+file+" does not match the cluster")
+	c.publicHint = "the superuser password file does not match the cluster"
+	return c
+}
+
+// ChecksFor returns the checks of Doctor as the Health page shows them to a
+// reader (docs 08 §5): the driver's text of a failed connection to
+// PostgreSQL goes to the process log, and only a reader with the diagnostics
+// permission (full) gets it and the path of the superuser password file.
+// where is the request path. sqsolve doctor and the diagnostic bundle are
+// for administrators and show the checks whole.
+func (a *App) ChecksFor(checks []Check, where string, full bool) []Check {
+	out := append([]Check(nil), checks...)
+	for i, c := range out {
+		if c.err != nil {
+			shown := a.Svc.ReaderError(c.err, "doctor", full, "path", where, "check", c.Name)
+			out[i].Detail = strings.TrimSuffix(c.Detail, c.err.Error()) + shown.Error()
+		}
+		if !full && c.publicHint != "" {
+			out[i].Hint = c.publicHint
+		}
+	}
+	return out
 }
 
 // Tone for the UI.
@@ -40,34 +78,36 @@ func (c Check) Tone() string {
 // clusterCheck compares the PostgreSQL cluster with the one the control
 // plane knows (ADR 0023). It works in the CLI too, where the server's guard
 // state is not available.
-func (a *App) clusterCheck(ctx context.Context) (name, status, detail, hint string) {
-	name = "PostgreSQL cluster"
+func (a *App) clusterCheck(ctx context.Context) Check {
+	const name = "PostgreSQL cluster"
 	if p := a.PGIdentityProblem(); p != "" {
-		return name, "fail", p, ""
+		return Check{Name: name, Status: "fail", Detail: p}
 	}
 	current, err := a.systemIdentifier(ctx)
 	if err != nil {
-		return name, "warn", "could not read the system identifier: " + err.Error(), ""
+		return errCheck(name, "warn", "could not read the system identifier: ", err, "")
 	}
 	var stored string
 	if _, err := a.DB.GetSetting(ctx, pgSystemIDSetting, &stored); err != nil {
-		return name, "warn", "system identifier " + current + "; the stored one cannot be read: " + err.Error(), ""
+		return Check{Name: name, Status: "warn", Detail: "system identifier " + current + "; the stored one cannot be read: " + err.Error()}
 	}
 	switch decideIdentity(stored, current, a.Cfg.PGAcceptSystemID) {
 	case identityStore:
-		return name, "ok", "system identifier " + current + " (stored at the next start)", ""
+		return Check{Name: name, Status: "ok", Detail: "system identifier " + current + " (stored at the next start)"}
 	case identityAccept:
-		return name, "warn", fmt.Sprintf("system identifier %s differs from %s and SQSOLVE_PG_ACCEPT_SYSTEM_ID accepts it at the next start", current, stored), ""
+		return Check{Name: name, Status: "warn", Detail: fmt.Sprintf("system identifier %s differs from %s and SQSOLVE_PG_ACCEPT_SYSTEM_ID accepts it at the next start", current, stored)}
 	case identityHold:
-		return name, "fail", clusterChangedMessage(current, stored), ""
+		return Check{Name: name, Status: "fail", Detail: clusterChangedMessage(current, stored)}
 	}
-	return name, "ok", "system identifier " + current, ""
+	return Check{Name: name, Status: "ok", Detail: "system identifier " + current}
 }
 
 // Doctor runs the checks of docs 13 §7.
 func Doctor(ctx context.Context, a *App) []Check {
 	var out []Check
-	add := func(name, status, detail, hint string) { out = append(out, Check{name, status, detail, hint}) }
+	add := func(name, status, detail, hint string) {
+		out = append(out, Check{Name: name, Status: status, Detail: detail, Hint: hint})
+	}
 	c := a.Cfg
 
 	for _, v := range []struct{ name, path string }{{"Application volume", c.AppDir}, {"Backups volume", c.BackupDir}, {"Database volume", c.PGConfDir()}} {
@@ -124,7 +164,7 @@ func Doctor(ctx context.Context, a *App) []Check {
 		}
 	}
 	if err := a.PG.Ping(ctx); err != nil {
-		add("PostgreSQL", "fail", err.Error(), "check the postgres container and the shared socket volume")
+		out = append(out, errCheck("PostgreSQL", "fail", "", err, "check the postgres container and the shared socket volume"))
 	} else {
 		info, _ := a.PG.Server(ctx)
 		detail := fmt.Sprintf("version %s, %d of %d connections", info.Version, info.Connections, info.MaxConnections)
@@ -145,17 +185,19 @@ func Doctor(ctx context.Context, a *App) []Check {
 		default:
 			add("PostgreSQL version", "ok", fmt.Sprintf("server %s, %s", info.Version, strings.TrimSpace(dump)), "")
 		}
-		add(a.clusterCheck(ctx))
+		out = append(out, a.clusterCheck(ctx))
 		if conn, err := a.PG.Superuser(ctx, "postgres"); err != nil {
-			add("Superuser over the socket", "fail", err.Error(), "the password in "+c.SuperuserPasswordFile()+" does not match the cluster")
+			out = append(out, superuserCheck(err, c.SuperuserPasswordFile()))
 		} else {
 			conn.Close(ctx)
 			add("Superuser over the socket", "ok", "reachable only through the local socket", "")
 		}
 		if errs, err := a.PG.HBAErrors(ctx); err != nil {
-			add("pg_hba.conf", "warn", "could not validate: "+err.Error(), "")
+			out = append(out, errCheck("pg_hba.conf", "warn", "could not validate: ", err, ""))
 		} else if len(errs) > 0 {
 			add("pg_hba.conf", "fail", strings.Join(errs, "; "), "use Maintenance > Regenerate pg_hba.conf")
+		} else if herr := a.Svc.HBAProblem(); herr != nil {
+			out = append(out, errCheck("pg_hba.conf", "fail", "valid, but the last rewrite did not take effect: ", herr, "save Settings, General again or use Maintenance > Regenerate pg_hba.conf"))
 		} else {
 			add("pg_hba.conf", "ok", "valid", "")
 		}

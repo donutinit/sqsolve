@@ -37,17 +37,17 @@ services (optional egress), containers and host (volumes).
 | T-04 | CSRF | `SameSite=Strict` cookies. Every panel form carries a synchronizer token in its `csrf` field: an HMAC-SHA256 of the session token under a key derived from the master key, compared in constant time. In `multipart` forms it must be the first part and is checked before the upload is read. The API with a session cookie needs the same token in the `X-CSRF-Token` header for every method except `GET` and `HEAD`; bearer tokens carry no cookie and need none. Before signing in (login and setup forms), a double-submit token: a random `sqsolve_pre` cookie that must match the `csrf` field |
 | T-05 | XSS | `html/template` with contextual escaping; CSP `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'`; the only script is the panel's own `app.js` (ADR 0004): no third-party JavaScript and no inline scripts or styles |
 | T-06 | SQL injection | Parameters always; DDL only with validated and sanitized identifiers (`07` §2); fuzzing tests (`make fuzz`, nightly in CI); `go vet` and `staticcheck` in `make check` (no `gosec`) |
-| T-07 | Command injection | No shell; `execx` with an allowlist (`pg_dump`, `pg_restore`, `vacuumdb`, `restic`); arguments as an array; paths validated against the allowed directory |
+| T-07 | Command injection | No shell; `execx` with an allowlist (`pg_dump`, `pg_restore`, `vacuumdb`, `restic`); arguments as an array; paths validated against the allowed directory; a test fails when the code that ships starts a program outside `execx` (`16` §4) |
 | T-08 | Escalation from SQL injection to command execution | Control role without superuser (no `COPY ... PROGRAM`); the superuser is only used by `pg.Bootstrap` at every start, to create or repair `sqsolve_admin`, and by the doctor checks to test that it can connect (`07` §3); neither writes an audit entry |
 | T-09 | Administrative connection from the network | `pg_hba.conf` rejects `postgres` and `sqsolve_admin` over the network; sqsolve uses the local socket |
 | T-10 | Eavesdropping on the LAN | TLS on PostgreSQL: opportunistic encryption by default (Resolve 21.1.1 negotiates TLS 1.3 on its own, checked on 2026-10-19) and an optional "TLS only" mode that switches `pg_hba.conf` to `hostssl` (tested with Resolve 21.1.1 on Linux only, PoC-06), with a warning that how each Resolve version implements it is unknown; the sessions view shows whether each connection is encrypted (`pg_stat_ssl`); panel over HTTPS only; VPN recommended outside the LAN |
 | T-11 | Takeover of the setup wizard | Single-use installation code printed in the container log; the wizard closes when the first administrator is created. The code is held while that administrator is created and spent with it, so concurrent submissions create one; a failed attempt (a weak password) keeps it |
 | T-12 | Destructive operation by mistake or from a stolen session | Typed confirmation with the slug; automatic prior backup; trash; audit log; notification. No reauthentication since ADR 0021 |
 | T-13 | Reading backups | Volume with 0700 permissions owned by the sqsolve UID. sqsolve does not encrypt backups and makes no off-site copies (an off-site copy with restic is a roadmap direction) |
-| T-14 | Secrets leaking into logs | `secret.String` type that prints as `[redacted]`; `slog` handler that redacts known keys; a test that searches the whole output for test secrets |
+| T-14 | Secrets leaking into logs | `secrets.String` type that prints as `[redacted]` with every `fmt` verb, in `slog` and in JSON (`TestStringNeverPrints`, `TestStringNeverPrintsWithAnyVerb`); `slog` handler that redacts the attributes with known keys (`13` §1; no test of its own); the errors of the statements that carry a SCRAM verifier redact it (`TestRedactedErrorNeverPrintsTheSecret`, `TestFailedStatementsKeepTheVerifierSecret`). No test searches the whole output for secrets (`16` §5) |
 | T-15 | Malicious or faulty hook | sqsolve has no hooks and runs no user code (ADR 0011; isolated hooks are a roadmap direction) |
 | T-16 | Webhook to the internal network (SSRF) | Only URLs configured by administrators; warning if it points to private addresses; no automatic redirects |
-| T-17 | Compromised dependency | Closed list of modules; `govulncheck` on the source and on the binary inside the image; 7-day wait for new versions (also Dependabot's cooldown); SBOM and provenance attached by Buildx; images signed with cosign; binary reproducible with the same toolchain (checked by hand, `06` §10; no CI job checks it); base images pinned by digest; images published only after CI passes |
+| T-17 | Compromised dependency | Closed list of modules; `govulncheck` on the source and on the binary inside the image; 7-day wait for new versions (also Dependabot's cooldown), except a Go module or a base image that fixes a vulnerability (`17` §7); SBOM and provenance attached by Buildx; images signed with cosign; binary reproducible with the same toolchain (checked by hand, `06` §10; no CI job checks it); base images pinned by digest; images published only after CI passes |
 | T-18 | Container escape | Non-root, `read_only: true`, `cap_drop: [ALL]`, `no-new-privileges`, no Docker socket, `tmpfs` for `/tmp` |
 | T-19 | Denial of service by a full disk | Space check before every backup; alerts at 80 % and 90 %; retention; recommended reservation on the data volume |
 | T-20 | Tampering with the audit log | Hash chain; verification every day (the `system.housekeeping` job), when the audit log is opened in Activity, in the doctor checks and with `sqsolve audit verify`; the daily control plane backup exports the current month to `_system/audit-<YYYYMM>.jsonl` on the backups volume |
@@ -123,8 +123,23 @@ The matrix lives in `internal/auth/policy.go` as a table (`RoleAllows`); an API 
 narrow its owner's role with its scopes. `TestPolicyMatrix` checks every action for the
 administrator, the viewer and an unknown role, and the operator's limits on a list of actions.
 
-The detail of `SQS-E005` includes the PostgreSQL socket path and the `sqsolve_admin` role, and
-any signed-in user can see it (`19-risks.md` §5 K-02); no secret is disclosed that way.
+A PostgreSQL connection error names the socket path, the `sqsolve_admin` role and the database.
+The panel and the API show that text only to whoever has the `diagnostics` permission
+(administrators; with a token, the `admin` scope): in the detail of `SQS-E005` of the
+experimental export, in the error of PostgreSQL on the Health page and in
+`GET /api/v1/system/status`, in the doctor checks of the Health page (which also hold back the
+path of the superuser password file from everyone else), in the notice of a panel action that
+failed and in the `detail` of every API problem. Everyone else reads the message up to the
+driver's text, ending in "the connection to PostgreSQL failed (the cause is in the sqsolve
+log)", and the whole text goes to the process log (`13-observability.md` §1). A text that is
+stored or sent keeps that public text for everyone: the message of `postgres.down` (also in the
+notifications) and the error of a failed export preparation. `sqsolve doctor` on the console
+and the diagnostic bundle are for administrators and keep the whole text. There is no audit
+entry: no secret is disclosed. The error of a failed job (its page, `GET /api/v1/jobs/{id}` and
+the `job.failed` event) and the output of `pg_dump` and `pg_restore` are not covered.
+`TestPublicHidesConnectionErrors`, `TestPublicWithARealServer`,
+`TestReaderErrorHidesTheConnection`, `TestExportErrorsHideTheConnection` and the tests named in
+`16-testing.md` §5 check it.
 
 Authorization in Resolve: it exists only at the connection level. What can really be enforced:
 
@@ -157,12 +172,15 @@ Modes are enforced, not only documented. sqsolve refuses to start (`SQS-C010`, w
 group or by others, or written by anyone but its owner (at most 0600); the `postgres` password is
 the one secret shared with a group, and may be at most 0640 (`SQS-C014`). The doctor checks
 (`sqsolve doctor` and the Health page) apply the same rule to the master key and the
-`sqsolve_admin` password. `sqsolve-init` stops with `SQS-C085` when it cannot set the mode of an
-existing secret, of a TLS key or certificate, or of the folders of the app volume and of the
-PostgreSQL configuration that hold them, including when an ACL on the volume keeps a wider mode;
-a secret file it has just created is written with its mode but that mode is not checked
-afterwards (`19-risks.md` §5 K-05). On the backups volume and the db volume root, which hold no
-secret of sqsolve, it only warns, so a NAS share that refuses a mode does not stop PostgreSQL.
+`sqsolve_admin` password. `sqsolve-init` stops with `SQS-C085` when it cannot set the mode of a
+secret, whether the file was already there or was written in that run, of the PostgreSQL TLS key
+or certificate, or of the folders of the app volume and of the PostgreSQL configuration that hold
+them, including when an ACL on the volume keeps a wider mode: it reads the mode back after
+setting it. On the backups volume and the db volume root, which hold no secret of sqsolve, it
+only warns, so a NAS share that refuses a mode does not stop PostgreSQL. The panel key
+(`app/tls/panel.key`) is written by `sqsolve`, not by `sqsolve-init`: with mode 0600, and the
+write fails when that mode cannot be set, but nothing reads its mode back; what `sqsolve-init`
+checks there is the mode 0700 of its folder `app/tls`.
 The TLS key and certificate pairs are written so that a power cut never leaves a key next to a
 certificate of another pair (`fsx.WritePair`: each step is synced before the next).
 
@@ -189,13 +207,27 @@ their passwords must be rotated.
 - Network rules of a library (and every change of libraries, credentials, "TLS only" or access to
   the maintenance database) are applied by regenerating `pg_hba.conf`: sqsolve writes it keeping
   the previous one as `pg_hba.conf.prev`, validates it with `pg_hba_file_rules` and reloads
-  PostgreSQL. An invalid file is rolled back to `.prev` without reloading (`SQS-P042`). A change
-  counts as applied only after a successful reload: if the validation query or the reload fails
-  (`SQS-P001`, `SQS-P043`), the change is reported as not applied, the new file stays on disk, and
-  the next sync (the next change, Settings > Maintenance > "Regenerate pg_hba.conf", or the next
-  start of sqsolve) validates and reloads it again even though the file did not change. The
-  rewrite that follows a settings change ("TLS only", access to the maintenance database) or the
-  addition of a member has no audit entry of its own (`19-risks.md` §5 K-07).
+  PostgreSQL. An invalid file is rolled back to `.prev` without reloading (`SQS-P042`); when
+  `.prev` cannot be put back (for example there is none), the error of the rewrite says so after
+  the `SQS-P042` message: the rejected file stays on disk. While the stored settings cannot be
+  read, nothing is rewritten (`SQS-P044`): the factory defaults would turn "TLS only" off and
+  open the maintenance database. A change counts as applied only after a successful reload: if
+  the validation query or the reload fails (`SQS-P001`, `SQS-P043`), the change is reported as
+  not applied, the new file stays on disk, and
+  the next sync (the next change, saving Settings, General again, Settings > Maintenance >
+  "Regenerate pg_hba.conf", or the next start of sqsolve) validates and reloads it again even
+  though the file did not change. The rewrite that follows a settings change ("TLS only", access
+  to the maintenance database) or the addition of a member has an audit entry of its own,
+  `postgres.hba` (§9); without that entry the file is not rewritten (`SQS-X040`). When that
+  happens, or when the rewrite fails, the settings or the member stay stored and take effect at
+  the next rewrite: another change of libraries, credentials or access settings, any save of
+  Settings, General (while the last rewrite has not taken effect, saving the same settings again
+  rewrites the file), "Regenerate pg_hba.conf", or the next start. Until a rewrite takes effect,
+  whatever caused the one that did not (a change of settings, members or libraries, a job, the
+  start), the dashboard lists "The last change of the PostgreSQL access rules (pg_hba.conf) did
+  not take effect" under Attention and the Health check `pg_hba.conf` fails with the error of the
+  last rewrite (`13-observability.md` §4 and §7). The running sqsolve keeps that state in memory;
+  the rewrite that reconciliation makes at each start sets it again.
 
 ## 8. Hardening of the sqsolve container
 
@@ -229,7 +261,9 @@ doctor checks are not recorded.
 
 Format of each entry: `seq`, date, actor (type, id, IP), action, target, result, details without
 secrets, `prev_hash` and `hash = SHA-256(prev_hash || canonical JSON of the entry)`. Verification
-walks the chain; a break raises the critical event `audit.chain_broken`.
+walks the chain; a break raises the critical event `audit.chain_broken`. The details of a
+settings change (`settings.update`) carry every setting as saved, the default policy and the
+second-factor requirement included (none is a secret), so the entries show what each save changed.
 
 The entry of a sensitive action is written with it or before it, never after (ADR 0026): if it
 cannot be written, the action is not done and the caller gets `SQS-X040` (503 in the API).
@@ -237,9 +271,14 @@ cannot be written, the action is not done and the caller gets `SQS-X040` (503 in
 | Kind of action | When the entry is written | Results |
 |---|---|---|
 | Change inside SQLite (users, roles, panel passwords, API tokens, settings, pin or unpin a backup, unlock a user, turn the second factor on or off, notification channels, remove a blocked backup row from the catalog) | In the same transaction (`RecordTx`) | `ok` |
-| Action that runs as a job (library create, delete, purge, untrash; back up now; verify a backup; restores, revert, recreate; import; export preparation; maintenance jobs, also from the console; Retry; upgrade window) | In the transaction that queues the job, with `job_id` (`jobs.Audited`) | `accepted`, then `ok` or `failed` (with `state` and `error_code`) when the job ends |
-| Change in PostgreSQL, in files or in several steps (delete a backup, rotate a password, add or revoke a member, network rules, maintenance, end a session, reopen the initialization window, close an export workspace, regenerate `pg_hba.conf`, edit a library, change a backup policy, install a panel certificate, cancel a job) | Before the change; the change does not run without it (`Audit.Do`) | `accepted`, then `ok` or `failed` (with `error`); a result that cannot be written after a successful change is `SQS-X041` |
+| Action that runs as a job (library create, delete, purge, untrash; the purge of expired trash, actor `system`; back up now; verify a backup; restores, revert, recreate; import; export preparation; maintenance jobs, also from the console; Retry; upgrade window) | In the transaction that queues the job, with `job_id` (`jobs.Audited`) | `accepted`, then `ok` or `failed` (with `state` and `error_code`) when the job ends |
+| Change in PostgreSQL, in files or in several steps (delete a backup, rotate a password, add or revoke a member, network rules, maintenance, end a session, reopen the initialization window, close an export workspace, regenerate `pg_hba.conf`, the rewrite of `pg_hba.conf` that follows a settings change or the addition of a member (`postgres.hba`), edit a library, change a backup policy, install a panel certificate, cancel a job) | Before the change; the change does not run without it (`Audit.Do`) | `accepted`, then `ok` or `failed` (with `error`); a result that cannot be written after a successful change is `SQS-X041`, and after a failed change the error of the change is returned and the result that could not be written is logged |
 | Disclosure (reveal a password, download a backup, the recovery kit, the diagnostics, an export) | Before anything is sent (`Audit.Require`) | `ok` |
+
+A revocation or a maintenance that is done only in part is `failed`, and its error says what was
+done: a revocation recorded although its role's sessions could not be closed (`SQS-L081`), a
+library put in maintenance although some sessions could not be closed (`SQS-L082`), a role set
+`NOLOGIN` whose revocation could not be recorded (`SQS-L080`).
 
 Recorded on a best-effort basis, with a log line when the entry cannot be written (no result is
 ignored silently): logins, failed logins, the account lock (`auth.locked`), the use of a recovery
@@ -248,18 +287,42 @@ code at login, logouts, refusals (`denied`), the summary entries of the setup wi
 and what sqsolve does on its own at start or on a timer (`system.upgrade`, `tls.panel_renewed`).
 Refusing a login because the audit log cannot be written would lock everyone out of the panel
 that shows the problem, and a start or a certificate renewal that stopped on it would turn a disk
-problem into an outage. Accepting a new PostgreSQL cluster (`postgres.cluster_accepted`) is
-stored with its entry or not at all, and is tried again at the next start; its event of the same
-name is emitted even when that transaction fails (`19-risks.md` §5 K-06).
+problem into an outage. The purge of a library whose time in the trash ended is not best effort:
+the daily pass queues it as `library.purge` with actor `system` and the details `slug` and
+`purge_after`; without that entry nothing is queued, the pass logs a warning with `SQS-X040` and
+a later pass tries again. A purge by hand and the automatic purge share one job (ADR 0029): the
+one queued first writes the entries of the job, and the other joins it and writes none.
+Accepting a new PostgreSQL cluster (`postgres.cluster_accepted`) is stored with its entry or not
+at all. If that transaction fails, the failure is logged, the start
+goes on and the acceptance is tried again at the next start, as long as
+`SQSOLVE_PG_ACCEPT_SYSTEM_ID` is still set; the event of the same name is emitted only after the
+transaction is committed.
 
-The rewrites of `pg_hba.conf` that follow a settings change or the addition of a member have no
-entry of their own (`19-risks.md` §5 K-07); the change that caused them has its entry.
+Every rewrite of `pg_hba.conf` that a person asks for has an `accepted` entry before it and a
+result after it. Where the rewrite is a step of an action, they are the entries of that action:
+network rules, revoking a member, reopening the initialization window, `maintenance.hba`, and the
+jobs that create, delete, untrash, restore or recreate a library. The rewrite that follows a
+settings change ("TLS only" or access to the maintenance database, or any save of the settings
+while the last rewrite has not taken effect, §7) or the addition of a member runs after the
+entry of that change is closed, so it has a pair of its own, `postgres.hba`: the
+actor is whoever made the change, the target is `settings` `runtime` or the library, and the
+details carry `cause` (`settings.update` or `library.member_add`) with `require_tls` and
+`maintenance_db_access`, or with `role`. Without its `accepted` entry the file is not rewritten
+(`SQS-X040`); a rewrite that fails leaves `failed` with its error (for example `SQS-P041`,
+`SQS-P042`, `SQS-P043` or `SQS-P001`); in both cases the settings or the member stay stored (§7).
+When the addition of the member itself could not be closed (`SQS-X041`), that is the error
+returned, also if the rewrite was refused. The rewrite that reconciliation makes at every start
+has no audit entry; its failure is a reconciliation note in the log. Neither has the one that
+removes the lines of an initialization window when it expires (`07` §5), which nobody asks for;
+its failure is a warning in the log.
 
 The inventory above was checked against every call of the audit log on 2026-10-25 and against
 the code of 1.2.2 on 2026-10-26;
 `TestCatalogChangesNeedTheirAuditEntry`, `TestUnlockAndTOTPNeedTheirAuditEntry`,
-`TestChannelChangesNeedTheirAuditEntry`, `TestMemberAddNeedsItsAuditEntry` and
-`TestJobCancelNeedsItsAuditEntry` inject the failure.
+`TestChannelChangesNeedTheirAuditEntry`, `TestMemberAddNeedsItsAuditEntry`,
+`TestJobCancelNeedsItsAuditEntry`, `TestClusterAcceptedIsAnnouncedOnlyOnceStored`,
+`TestSettingsHBARewriteNeedsItsAuditEntry`, `TestMemberAddAuditsItsHBARewrite` and
+`TestAutomaticPurgeIsAudited` inject the failure.
 
 ## 10. Incident response and disclosure
 

@@ -5,10 +5,13 @@ package core_test
 // Final review of the audit fixes: reconciliation adopts a database only
 // after looking at it, a library left restoring gets back the state it had,
 // a recreation keeps the connection limit, a revocation that cannot be
-// recorded is reported and a backup cut by a stop or a cancel is not a
-// failure.
+// recorded, or whose sessions cannot be closed, is reported and a backup cut
+// by a stop or a cancel is not a failure.
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -189,6 +192,198 @@ func TestRevokeMemberReportsAnUnrecordedRevocation(t *testing.T) {
 	e.svc.Reconcile(ctx, nil)
 	if e.canLogin(c.PGRole) {
 		t.Fatal("the revoked member got its login back")
+	}
+}
+
+// Revoking closes the sessions of the person, because NOLOGIN does not end
+// them. When they cannot be listed or closed, the revocation is still
+// recorded (the role never gets its login back) and SQS-L081 says that a
+// workstation may still be connected; a failed rewrite of pg_hba.conf is
+// reported with it.
+func TestRevokeMemberReportsSessionsItCouldNotClose(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, _ := e.createActive("revoke_open")
+	e.firstBackup(l)
+	e.idle()
+	member := func(person string) (*core.Credential, func() error) {
+		t.Helper()
+		c, err := e.svc.AddMember(ctx, admin, l.ID, person)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pass, err := e.svc.RevealPassword(ctx, admin, l.ID, c.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn := e.connect(c.PGRole, pass, l.DBName)
+		t.Cleanup(func() { conn.Close(ctx) })
+		return c, func() error { _, err := conn.Exec(ctx, `SELECT 1`); return err }
+	}
+	revoked := func(c *core.Credential) bool {
+		t.Helper()
+		creds, err := e.svc.Credentials(ctx, l.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, x := range creds {
+			if x.ID == c.ID {
+				return x.RevokedAt != nil
+			}
+		}
+		t.Fatalf("credential %s not found", c.ID)
+		return false
+	}
+	// lastRevoke checks the two newest audit entries of the library: the
+	// accepted entry of the revocation and its result, ok without an error
+	// when want is empty, failed with want as its error otherwise.
+	lastRevoke := func(want string) {
+		t.Helper()
+		entries, err := e.svc.Audit.List(ctx, 0, 2, l.ID)
+		if err != nil || len(entries) != 2 {
+			t.Fatalf("audit entries: %d %v", len(entries), err)
+		}
+		if entries[1].Action != "library.member_revoke" || entries[1].Outcome != "accepted" || entries[0].Action != "library.member_revoke" {
+			t.Fatalf("entries %s:%s %s:%s", entries[1].Action, entries[1].Outcome, entries[0].Action, entries[0].Outcome)
+		}
+		got, _ := entries[0].Details["error"].(string)
+		if want == "" && (entries[0].Outcome != "ok" || got != "") || want != "" && (entries[0].Outcome != "failed" || got != want) {
+			t.Fatalf("result entry %s with error %q, want error %q", entries[0].Outcome, got, want)
+		}
+	}
+	wantL081 := func(c *core.Credential) string {
+		return "SQS-L081 the role " + c.PGRole + " is revoked and cannot open new connections, but its open sessions could not be closed, so a workstation that is still connected with it keeps working until it disconnects: "
+	}
+
+	// The open session of the person is closed.
+	ana, anaQuery := member("ana")
+	if err := e.svc.RevokeMember(ctx, admin, l.ID, ana.ID); err != nil {
+		t.Fatal(err)
+	}
+	if anaQuery() == nil {
+		t.Fatal("the session of a revoked person is still open")
+	}
+	lastRevoke("")
+
+	// The sessions cannot be listed, or cannot be closed.
+	for _, f := range []struct{ person, point, cause string }{
+		{"bea", "sessions.list", "listing refused"},
+		{"cai", "sessions.terminate", "termination refused"},
+	} {
+		c, query := member(f.person)
+		restore := core.SetFault(f.point, errors.New(f.cause))
+		err := e.svc.RevokeMember(ctx, admin, l.ID, c.ID)
+		restore()
+		if want := wantL081(c) + f.cause; err == nil || err.Error() != want {
+			t.Fatalf("%s: got %v, want %q", f.point, err, want)
+		}
+		if !revoked(c) || e.canLogin(c.PGRole) {
+			t.Fatalf("%s: the revocation was not kept", f.point)
+		}
+		if query() != nil {
+			t.Fatalf("%s: the session was closed although the error says it was not", f.point)
+		}
+		lastRevoke(err.Error())
+		e.svc.Reconcile(ctx, nil)
+		if e.canLogin(c.PGRole) {
+			t.Fatalf("%s: the revoked person got the login back at the next start", f.point)
+		}
+	}
+
+	// The rewrite of pg_hba.conf fails as well: both are reported.
+	dan, _ := member("dan")
+	blocker := filepath.Join(e.svc.Cfg.PGConfDir(), "pg_hba.conf.prev.partial")
+	if err := os.Mkdir(blocker, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	restore := core.SetFault("sessions.list", errors.New("listing refused"))
+	err := e.svc.RevokeMember(ctx, admin, l.ID, dan.ID)
+	restore()
+	if rerr := os.Remove(blocker); rerr != nil {
+		t.Fatal(rerr)
+	}
+	if want := wantL081(dan) + "listing refused\nSQS-P041 could not write pg_hba.conf: "; err == nil || !strings.HasPrefix(err.Error(), want) {
+		t.Fatalf("got %v, want an error starting with %q", err, want)
+	}
+	if !revoked(dan) || e.canLogin(dan.PGRole) {
+		t.Fatal("the revocation was not kept")
+	}
+	lastRevoke(err.Error())
+}
+
+// A revoked credential whose session could not be closed (SQS-L081) keeps
+// that session until it is closed by hand: "Close" in the Activity tab and
+// maintenance with "close sessions" count the revoked credentials among the
+// roles of the library. The revoked roles do not get their login back.
+func TestSessionsOfARevokedCredentialCanBeClosed(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, _ := e.createActive("revoked_close")
+	e.firstBackup(l)
+	e.idle()
+	// left revokes a new member whose session cannot be closed then, and
+	// returns a query on that session.
+	left := func(person string) (*core.Credential, func() error) {
+		t.Helper()
+		c, err := e.svc.AddMember(ctx, admin, l.ID, person)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pass, err := e.svc.RevealPassword(ctx, admin, l.ID, c.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn := e.connect(c.PGRole, pass, l.DBName)
+		t.Cleanup(func() { conn.Close(ctx) })
+		restore := core.SetFault("sessions.terminate", errors.New("termination refused"))
+		err = e.svc.RevokeMember(ctx, admin, l.ID, c.ID)
+		restore()
+		if err == nil || !strings.HasPrefix(err.Error(), "SQS-L081 the role "+c.PGRole+" is revoked") {
+			t.Fatalf("revocation: %v", err)
+		}
+		query := func() error { _, err := conn.Exec(ctx, `SELECT 1`); return err }
+		if query() != nil {
+			t.Fatal("the session was closed by the revocation")
+		}
+		return c, query
+	}
+	pidOf := func(role string) int32 {
+		t.Helper()
+		ss, err := e.svc.Sessions(ctx, l.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, x := range ss {
+			if x.User == role {
+				return x.PID
+			}
+		}
+		t.Fatalf("no session of %s", role)
+		return 0
+	}
+
+	ana, anaQuery := left("ana")
+	if err := e.svc.TerminateSession(ctx, admin, l.ID, pidOf(ana.PGRole)); err != nil {
+		t.Fatalf("close the session of a revoked credential: %v", err)
+	}
+	if anaQuery() == nil {
+		t.Fatal("the session of the revoked credential is still open")
+	}
+
+	bea, beaQuery := left("bea")
+	if n, err := e.svc.SetMaintenance(ctx, admin, l.ID, true, true); err != nil || n != 1 {
+		t.Fatalf("maintenance with close sessions: %d %v", n, err)
+	}
+	if beaQuery() == nil {
+		t.Fatal("maintenance left the session of the revoked credential open")
+	}
+	if _, err := e.svc.SetMaintenance(ctx, admin, l.ID, false, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []*core.Credential{ana, bea} {
+		if e.canLogin(c.PGRole) {
+			t.Fatalf("the revoked role %s got its login back", c.PGRole)
+		}
 	}
 }
 

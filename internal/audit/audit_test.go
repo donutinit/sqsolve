@@ -164,6 +164,33 @@ func TestDoReportsAnUnwrittenResult(t *testing.T) {
 	}
 }
 
+// A change that failed and whose failed result cannot be written either
+// still returns the error of the change, and the result it could not write
+// is logged: the chain keeps an accepted entry with no result, and that is
+// never silent.
+func TestDoLogsAnUnwrittenFailedResult(t *testing.T) {
+	ctx := context.Background()
+	l, db := newLog(t)
+	var buf bytes.Buffer
+	l.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER results_down BEFORE INSERT ON audit_log WHEN NEW.outcome = 'failed' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	errGone := errors.New("SQS-B099 gone")
+	if err := l.Do(ctx, System, "backup.delete", "backup", "B1", nil, func() error { return errGone }); err != errGone {
+		t.Fatalf("the error of the change is returned: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"could not write an audit entry", "action=backup.delete", "target=backup:B1", "outcome=failed", "disk I/O error"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log lacks %q: %q", want, out)
+		}
+	}
+	if list, _ := l.List(ctx, 0, 10, ""); len(list) != 1 || list[0].Outcome != Accepted {
+		t.Fatalf("entries %+v", list)
+	}
+}
+
 // PLAN P0.3: an entry RecordTx cannot write is SQS-X040, so every caller
 // reports the same code.
 func TestRecordTxFailureIsUnavailable(t *testing.T) {

@@ -130,7 +130,8 @@ administrator; if you restart the container before that, a new one is printed.
    - the installation name (shown in the panel and in notifications);
    - the default backup schedule for new libraries: activity-based (recommended), daily at
      02:00, every 4 hours from 09:00 to 21:00 Monday to Saturday, or every 4 hours every day.
-     Each library can be changed later.
+     Each library can be changed later (Schedule tab), and the default for new libraries in
+     Settings, General.
 3. **Download the recovery kit** and keep it off the server (password manager, a USB stick in a
    drawer). It holds the master key that encrypts the library passwords. Without it, on another
    server you recover the projects but the workstations need new passwords. You can download it
@@ -178,9 +179,10 @@ between workstations is not validated with real Resolve (PoC-07 has not run).
 
 - **Maintenance**: the library's users cannot open new connections (their PostgreSQL users are
   disabled); whoever is already inside keeps working unless you tick "Also close open
-  sessions". Backups, restore by replacement, revert, delete and export keep working, because
-  sqsolve can still reach the database. Reopening enables only the users whose credential is
-  active: a revoked person stays out.
+  sessions". If some cannot be closed, the panel says so (`SQS-L082`) and the library stays in
+  maintenance; close the rest from the Activity tab. Backups, restore by replacement, revert,
+  delete and export keep working, because sqsolve can still reach the database. Reopening
+  enables only the users whose credential is active: a revoked person stays out.
 - **Delete**: takes a final backup, moves the library to the trash for 30 days and takes it off
   the network. It can be brought back from the trash.
 - **Purge**: drops the database and its users for good (backups stay according to retention).
@@ -191,8 +193,10 @@ between workstations is not validated with real Resolve (PoC-07 has not run).
 - **Activity-based by default**: every 15 minutes sqsolve checks whether the library changed
   since the last backup and only then backs up. While someone works you get one per check; if
   nobody touches it, none, and the last one still counts as current. If you prefer fixed hours,
-  each library accepts a cron expression (Schedule tab). Small random offset per library so they
-  do not all start at once. Also "Back up now".
+  each library accepts a cron expression (Schedule tab). Settings, General, "Default policy for
+  new libraries" sets what a new library starts with: activity-based with its interval or a cron
+  expression, and the retention. Small random offset per library so they do not all start at
+  once. Also "Back up now".
 - Each backup is a `pg_dump` in custom format taken from a consistent snapshot of the database,
   with exact row counts in that same snapshot, a SHA-256 checksum and a JSON manifest next to it.
   It is written as `.partial` first and only renamed when complete.
@@ -209,16 +213,18 @@ between workstations is not validated with real Resolve (PoC-07 has not run).
 - **Retention** per library: by default the last 10, the newest of each of the last 14 days, 8
   weeks and 12 months that have a backup, and the last verified one is never deleted. "The last
   10" are counted in the order the backups were taken, so a clock change cannot delete the
-  backup just taken. Pinned backups are never deleted, those taken before a restore, a delete
-  or a Resolve upgrade are kept for 30 days, and a backup a restore, verification or export is
-  about to use is kept until a later run. Known issue (K-09 in
-  [19-risks.md](../19-risks.md) §5): the backups taken before a restore also take places among
-  the last 10, and every replacement or revert adds two (one before the swap and one of the
-  previous version right after it), so a few restores in a row can push regular backups out,
-  including the one just restored. Pin a backup you want to keep. The Schedule tab shows how many
-  backups the saved policy keeps and how many the next pass would delete. By hand you can delete
-  any backup except a pinned one (unpin it first) and the newest verified one of a library that
-  still exists (even if its database is missing: it is the one used to recreate it).
+  backup just taken. Pinned backups are never deleted, those taken before a restore, a delete or
+  a Resolve upgrade are kept for 30 days, and a backup a restore, verification or export is
+  about to use is kept until a later run. The backups taken before a restore do not count among
+  the last 10 (every replacement or revert adds two: one before the swap and one of the previous
+  version right after it), so several restores in a row do not push your regular backups out.
+  After their 30 days they are deleted once 10 newer backups of other kinds exist, unless the
+  daily, weekly or monthly rules keep them. The Schedule tab shows how many backups the saved
+  policy keeps and how many the next pass would delete. A library without a policy of its own,
+  such as one rebuilt from the backups volume, keeps all its backups until one is saved in its
+  Schedule tab, which says so. By hand you can delete any backup except
+  a pinned one (unpin it first) and the newest verified one of a library that still exists (even
+  if its database is missing: it is the one used to recreate it).
 - **Protection timeline**: every library is a track and every backup a marker (tall if the test
   restore passed, medium if checksum and index passed, dotted if unverified, a red cross if it
   failed). The amber band marks time without a verified backup (48 hours by default), unless the
@@ -243,7 +249,9 @@ between workstations is not validated with real Resolve (PoC-07 has not run).
   (`SQS-B074`).
 
 If the backups disk gets unmounted, sqsolve notices (every volume carries a marker) and does not
-write backups into the wrong empty folder.
+write backups into the wrong empty folder. Nor does it delete any: retention waits (its job fails
+with `SQS-S001` until the disk is back) and deleting a backup by hand is refused with the same
+code, so the panel never calls a backup deleted while its file is still on the disk.
 
 ## Restore
 
@@ -285,8 +293,11 @@ its Revert puts the original back.
 
 - **One password per person** (Access tab, "Credential for a person"): creates users like
   `client_x_season_2__maria`. What that person creates belongs to the library, and you can revoke
-  them without changing everybody's password. Per-person users are not validated with real
-  Resolve (PoC-01 did not get to that step).
+  them without changing everybody's password. Revoking also closes their open sessions; if they
+  cannot be closed the panel says so (`SQS-L081`): the person cannot connect again, but a Resolve
+  still connected with that user keeps working until it disconnects or you close that session
+  ("Close" in the Activity tab, or maintenance with "Also close open sessions"). Per-person users
+  are not validated with real Resolve (PoC-01 did not get to that step).
 - **Change password** (Access tab): the workstations using it will have to type the new one.
 - **Allowed networks** (Access tab): limit the networks that can reach that library (for example
   `192.168.10.0/24`). Without rules, any address that reaches the port can connect. On the LAN
@@ -303,7 +314,10 @@ its Revert puts the original back.
   21.1.1 on Linux, also with the mode on. It is the recommended option, but it is not known how
   every Resolve version on macOS and Windows implements it: before enabling it, check that your
   workstations show as encrypted in Sessions and test a new connection afterwards. If a
-  workstation can no longer connect, turn it off.
+  workstation can no longer connect, turn it off. If `pg_hba.conf` cannot be rewritten, the save
+  shows the error, the setting stays stored and the dashboard shows "The last change of the
+  PostgreSQL access rules (pg_hba.conf) did not take effect" until a rewrite succeeds: save the
+  settings again or use Settings, Maintenance, "Regenerate pg_hba.conf".
 - The administrative PostgreSQL users (`postgres` and `sqsolve_admin`) do not accept network
   connections, only the internal socket.
 - Library passwords are stored encrypted with the master key and shown only to administrators;
@@ -467,7 +481,9 @@ You need **the copy of the backups volume** and **the recovery kit**.
 
 Without the kit, install from scratch, run `sqsolve catalog rebuild` to see the backups and
 restore them as new libraries (with new passwords). Verified end to end on 2026-10-19
-([acceptance record](../acceptance/1.0.md)).
+([acceptance record](../acceptance/1.0.md)). The rebuilt libraries keep all their backups until
+you save a policy in their Schedule tab; the backups volume does not record the old policies or
+pins, so pin first any backup you want to keep.
 
 ## Troubleshooting
 
@@ -479,7 +495,7 @@ First: `docker compose exec sqsolve sqsolve doctor` and the Health page. Errors 
 | The installation code does not appear | There is already an administrator, or you looked at another container's log | `docker compose logs sqsolve`. If there is an administrator and you cannot log in: `sqsolve admin reset-password` |
 | `SQS-C053` at start | `user:` of the `sqsolve` service does not match `SQSOLVE_UID`/`SQSOLVE_GID` | Put the same numbers in the three places and bring it up again |
 | `SQS-S004` warning in `sqsolve-init` | The backups folder has files that are not sqsolve's | Mount an empty folder. If it really is the right one, `SQSOLVE_BACKUPS_ADOPT: "true"` for one start |
-| `SQS-S014` warning in `sqsolve-init`, critical "backups volume is not available" | The backups disk is not mounted (Docker left an empty folder in its place) | Mount it and `docker compose up -d`. If it is a new, empty disk, `SQSOLVE_BACKUPS_ADOPT: "true"` for one start. The libraries keep working meanwhile; no backups are written |
+| `SQS-S014` warning in `sqsolve-init`, critical "backups volume is not available" | The backups disk is not mounted (Docker left an empty folder in its place) | Mount it and `docker compose up -d`. If it is a new, empty disk, `SQSOLVE_BACKUPS_ADOPT: "true"` for one start. The libraries keep working meanwhile; no backups are written or deleted (retention and Delete answer `SQS-S001`) |
 | `SQS-S003` | That backups volume belongs to another installation | Check that you mounted the right folder |
 | `SQS-S011` or `SQS-S012` in `sqsolve-init` | The `db` folder is another installation's, or it is empty while sqsolve already has its catalog (the disk is not mounted) | Mount the right disk. If the cluster was lost on purpose and you will recreate the libraries from backups, `SQSOLVE_DB_ADOPT: "true"` for one start |
 | `SQS-S019` in `sqsolve-init` | The host paths of the volumes are swapped (for example `db` and `backups` exchanged): a folder holds another volume of this installation | Fix the three paths in the compose file and bring it up again |
@@ -493,13 +509,20 @@ First: `docker compose exec sqsolve sqsolve doctor` and the Health page. Errors 
 | Refusals with a `172.x` IP in the `postgres` log | Your Docker rewrites the source IP | Network rules do not see the workstation's real IP: remove them or allow that network |
 | The library does not activate | The name in Resolve was not the identifier, or the window expired | The panel shows the database that was created; reopen the window and create with the exact name |
 | `SQS-R020` when replacing | Sessions on that library were still open after 10 minutes | Ask everyone to close the project in Resolve and replace again. "Close open sessions" does not wait, but read [Restore](#restore) first |
+| `SQS-J005` when replacing or recreating | A job of that operation is already queued or running for that library with another backup or another choice of "Close open sessions" | Open the job named in the message from the Jobs page and wait for it to end, then start the operation again. A replacement that is waiting for open sessions goes on when they close and ends after 10 minutes if they do not |
 | `SQS-B012` | No space on the backups disk | Free space or adjust retention |
 | `SQS-B022` | No room on the database disk for a restored copy | Free space on the `db` volume (for example, purge the trash or an old previous version); a verification that hit it was only skipped |
+| `SQS-B045`, or an event "could not be checked" | A disk error (an I/O error, a folder without permission, a stale mount) stopped the check of where a backup file is; until it works sqsolve does not read that backup or count it as verified, and retention leaves it alone | Fix the backups volume (mount, permissions, disk) and run Settings, Maintenance, "Check the catalog"; do not remove the row |
 | `SQS-B070` | A verification could not run (the detail says why) | Nothing is wrong with the backup; fix the cause and verify again |
 | `SQS-B071` / `SQS-B072` on import | The file was still being copied, or it is cut short or damaged | Wait for the copy to finish, or copy it again, and import it again |
 | `SQS-B073` on import | The archive could not be read (the import was cancelled or `pg_restore` could not run); the detail says why | Import it again; if it repeats, run `sqsolve doctor` |
 | `SQS-B074` on import | The file in `_import/` changed while it was imported; nothing was imported and the file stays there | Wait until nothing writes to it and import it again |
-| `SQS-L046` when purging | The library user still owns another database (for example, one created with the wrong name) | Check that database and drop it by hand if it is useless |
+| `SQS-L046` when purging | The library user still owns another database (for example, one created with the wrong name). Nothing was dropped: the library is still in the trash with its database | Check that database and drop it by hand if it is useless, then purge again |
+| `SQS-L081` when revoking a person | sqsolve could not list or close that person's open sessions (the detail says why); the revocation itself is done | The person cannot connect again. A session of that user still listed in the Activity tab keeps working until that workstation disconnects or you close it there ("Close"); maintenance with "Also close open sessions" closes it too |
+| `SQS-P044` | sqsolve could not read its stored settings (the detail says why), so it did not rewrite `pg_hba.conf`: with the factory defaults it would turn "TLS only" off and open the maintenance database. The access rules in force stay as they were | Fix the cause, then use Settings, Maintenance, "Regenerate pg_hba.conf" or restart sqsolve. Do not save the settings meanwhile: while they cannot be read, the Settings pages show the factory defaults |
+| `SQS-L082` when putting a library in maintenance | Some open sessions could not be listed or closed (the detail says why); the library is in maintenance | Close the sessions that are left from the Activity tab |
+| `SQS-L056` when deleting | sqsolve could not record the deletion in its catalog (for example, no space left on the `app` volume) | Fix the cause. If the message says the database is kept under a trash name, restart sqsolve: the start records the move and the library appears in the trash. Otherwise nothing changed: delete it again |
+| `SQS-L058` when recovering from the trash | The recovery stopped after it started moving the database back (the detail says why) | Fix the cause and restart sqsolve: the start finishes the recovery, or leaves the library in the trash if its database was not moved, and you can recover it again |
 | `SQS-A003` | Too many login attempts | Wait the time shown |
 | `SQS-A004` | Ten wrong passwords in a row: the account is locked for 15 minutes | Wait 15 minutes, or `sqsolve admin unlock <user>` from the container console. Open panels and API tokens keep working meanwhile |
 | `SQS-A050` | The server is checking too many passwords at once (a burst of sign ins) | Try again in a few seconds |
@@ -507,5 +530,6 @@ First: `docker compose exec sqsolve sqsolve doctor` and the Health page. Errors 
 | `SQS-A040` when removing a second factor | It is required for administrators on this installation | Turn the option off first, or use `sqsolve admin disable-totp <user>` for a lost one |
 | Lost second factor | | `sqsolve admin disable-totp <user>` |
 | The panel says "PostgreSQL not responding" | The `postgres` container is stopped or restarting | `docker compose ps` and `docker compose logs postgres`; sqsolve reconnects on its own |
+| An error ends in "the connection to PostgreSQL failed (the cause is in the sqsolve log)" | sqsolve could not connect to PostgreSQL; only an administrator sees the driver's text in the panel | An administrator reads it on the Health page or in `docker compose logs sqsolve` |
 
 If you need help, Settings, Maintenance has a diagnostic bundle without secrets.

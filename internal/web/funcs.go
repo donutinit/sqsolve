@@ -294,9 +294,9 @@ var stepLabels = map[string]string{
 	"restore": "Restore", "activate": "Activate", "check": "Check", "pre_restore_backup": "Pre-restore backup",
 	"wait_for_sessions": "Wait for sessions to close", "lock": "Lock connections", "swap": "Swap databases",
 	"reopen": "Reopen", "final_backup": "Final backup", "move": "Move", "reactivate": "Reactivate",
-	"check_backup": "Check final backup", "drop_database": "Drop database", "drop_previous_state": "Drop previous state",
-	"drop_roles": "Drop roles", "roles": "Recreate roles", "read": "Read file", "copy": "Copy to the catalog",
-	"temporary_restore": "Temporary restore", "broken": "Broken", "one": "One", "two": "Two",
+	"check_backup": "Check final backup", "check_owned": "Check other databases", "drop_database": "Drop database",
+	"drop_previous_state": "Drop previous state", "drop_roles": "Drop roles", "roles": "Recreate roles", "read": "Read file",
+	"copy": "Copy to the catalog", "temporary_restore": "Temporary restore", "broken": "Broken", "one": "One", "two": "Two",
 }
 
 // stepLabel returns the UI name of a job step. Unknown names are prettified

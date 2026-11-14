@@ -19,6 +19,7 @@ import (
 	"github.com/donutinit/sqsolve/internal/audit"
 	"github.com/donutinit/sqsolve/internal/auth"
 	"github.com/donutinit/sqsolve/internal/config"
+	"github.com/donutinit/sqsolve/internal/core"
 )
 
 // apiServer runs the API router on a real App with SQLite only (no
@@ -155,6 +156,10 @@ func TestAPIRequestContract(t *testing.T) {
 			t.Errorf("%s: WWW-Authenticate %q", c.name, r.header.Get("WWW-Authenticate"))
 		}
 	}
+	// The whole detail of two of them.
+	wantProblem(t, "unknown token", e.call(t, "GET", "/api/v1/libraries", "sqs_nope", "", false), 401, "SQS-A024 invalid, expired or revoked token")
+	wantProblem(t, "restore with an unknown mode", e.call(t, "POST", "/api/v1/backups/NOPE/restore", e.admin, `{"mode":"sideways"}`, false),
+		400, "SQS-C063 mode must be new or replace")
 }
 
 // "Back up now" answers 202 with the job and its Location, and the job's
@@ -208,5 +213,33 @@ func TestAPIBackupNowQueuesAnAuditedJob(t *testing.T) {
 	// Maintenance needs its body: an empty one is not "enabled: false".
 	if r := e.call(t, "POST", "/api/v1/libraries/L1/maintenance", e.admin, "", false); r.status != 400 || r.problem.Code != "SQS-C061" {
 		t.Fatalf("empty maintenance body: %d %s", r.status, r.body)
+	}
+}
+
+// A list that the API builds for an answer is [] when it is empty, never
+// null (docs 10 §1): the items of every list route and the steps of a job.
+func TestAPIEmptyListsAreArrays(t *testing.T) {
+	e := apiServer(t)
+	e.seedLibrary(t, "L1", "old", "Old", core.StateTrashed)
+	j := enqueue(t, e, core.JobVacuum, "", nil)
+	for _, path := range []string{
+		"/api/v1/jobs?state=failed",
+		"/api/v1/jobs/" + j.ID + "/logs",
+		"/api/v1/events?library_id=NOPE",
+		"/api/v1/audit?target_id=NOPE",
+		"/api/v1/libraries?state=maintenance",
+		"/api/v1/libraries/L1/backups",
+		"/api/v1/backups",
+	} {
+		r := e.call(t, "GET", path, e.admin, "", false)
+		if r.status != 200 || strings.Join(strings.Fields(r.body), "") != `{"items":[]}` {
+			t.Errorf("%s: %d %s", path, r.status, r.body)
+		}
+	}
+	r := e.call(t, "GET", "/api/v1/jobs/"+j.ID, e.admin, "", false)
+	var detail map[string]json.RawMessage
+	decodeInto(t, r, &detail)
+	if r.status != 200 || string(detail["steps"]) != "[]" {
+		t.Errorf("job without steps: %d %s", r.status, r.body)
 	}
 }

@@ -90,7 +90,7 @@ func TestLegacyChecksumIsUpgraded(t *testing.T) {
 	}
 	db.ExecContext(ctx, `UPDATE schema_migrations SET checksum = 'other' WHERE version = ?`, all[0].version)
 	db.Close()
-	if _, err := Open(ctx, path, ""); err == nil || !strings.Contains(err.Error(), "SQS-X011") {
+	if _, err := Open(ctx, path, ""); err == nil || !strings.Contains(err.Error(), "SQS-X011 migration "+all[0].name+" changed after being applied") {
 		t.Fatalf("a different migration must be refused: %v", err)
 	}
 }

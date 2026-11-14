@@ -8,3 +8,6 @@ import "context"
 func (c *Client) ExecTx(ctx context.Context, stmts ...string) (int, error) {
 	return c.execTx(ctx, stmts...)
 }
+
+// Redact exposes redact to the tests.
+func Redact(err error, secret string) error { return redact(err, secret) }

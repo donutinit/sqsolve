@@ -33,10 +33,14 @@ func retentionItems(data []byte, now time.Time) []RetentionItem {
 
 // Properties of docs 16 §2: a pinned backup is never expired, the minimum of
 // verified backups is kept when there are enough, every backup is either
-// kept or expired, and the result does not depend on the input order.
+// kept or expired, the result does not depend on the input order, and
+// pre_restore backups take no keep_last place (the keep_last most recent
+// backups of the other kinds are kept whatever pre_restore backups sit
+// among them).
 func FuzzRetain(f *testing.F) {
 	f.Add([]byte{1, 3, 1, 30, 2, 2, 200, 1, 3}, uint8(1), uint8(2), uint8(1), uint8(1), uint8(2))
 	f.Add([]byte{0, 0, 0, 0, 0, 0, 5, 18, 9, 90, 10, 4}, uint8(0), uint8(0), uint8(0), uint8(0), uint8(3))
+	f.Add([]byte{3, 2, 1, 2, 18, 2, 2, 18, 3, 2, 18, 4, 0, 2, 5}, uint8(2), uint8(0), uint8(0), uint8(0), uint8(1))
 	f.Fuzz(func(t *testing.T, data []byte, last, daily, weekly, monthly, minVerified uint8) {
 		now := time.Date(2026, 3, 29, 1, 30, 0, 0, time.UTC)
 		loc, _ := time.LoadLocation("Europe/Madrid")
@@ -71,6 +75,33 @@ func FuzzRetain(f *testing.F) {
 		keep2, _ := Retain(reversed, p, now)
 		if !maps.Equal(keep, keep2) {
 			t.Fatalf("the order of the input changed the result")
+		}
+		// pre_restore backups take no keep_last place: what keep_last keeps
+		// without them is kept with them.
+		mostRecent := fmt.Sprintf("among the %d most recent", p.KeepLast)
+		var others []RetentionItem
+		for _, it := range items {
+			if it.Kind != KindPreRestore {
+				others = append(others, it)
+			}
+		}
+		keepOthers, _ := Retain(others, p, now)
+		for id, why := range keepOthers {
+			if _, kept := keep[id]; why == mostRecent && !kept {
+				t.Fatalf("%s, %s without the pre_restore backups, expired with them", id, mostRecent)
+			}
+		}
+		lastKept := 0
+		for _, it := range items {
+			if keep[it.ID] == mostRecent {
+				lastKept++
+				if it.Kind == KindPreRestore {
+					t.Fatalf("pre_restore %s took a keep_last place", it.ID)
+				}
+			}
+		}
+		if lastKept > p.KeepLast {
+			t.Fatalf("%d backups kept as %s", lastKept, mostRecent)
 		}
 	})
 }

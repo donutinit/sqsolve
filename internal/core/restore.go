@@ -393,7 +393,10 @@ func (s *Service) SlugAvailableIgnoringCatalog(ctx context.Context, slug string)
 	return nil
 }
 
-// RestoreReplace enqueues a restore that replaces the live library.
+// RestoreReplace enqueues a restore that replaces the live library. A second
+// request with the same backup and the same choice for the open sessions
+// while one is queued or running returns that job; another backup or the
+// other choice is refused with SQS-J005 (ADR 0029).
 func (s *Service) RestoreReplace(ctx context.Context, by audit.Actor, backupID, confirm string, terminate bool) (*jobs.Job, error) {
 	b, err := s.Backup(ctx, backupID)
 	if err != nil {
@@ -412,7 +415,7 @@ func (s *Service) RestoreReplace(ctx context.Context, by audit.Actor, backupID, 
 	if l.State != StateActive && l.State != StateMaintenance {
 		return nil, fmt.Errorf("SQS-R003 cannot replace a library in state %s", l.State.Label())
 	}
-	return s.Jobs.Enqueue(ctx, JobRestoreReplace, l.ID, RestoreParams{BackupID: backupID, TerminateSessions: terminate}, by, jobs.Priority(100),
+	return s.Jobs.Enqueue(ctx, JobRestoreReplace, l.ID, RestoreParams{BackupID: backupID, TerminateSessions: terminate}, by, jobs.Priority(100), jobs.Unique(),
 		jobs.Audited("restore.replace", "library", l.ID, map[string]any{"backup_id": backupID, "terminate_sessions": terminate}))
 }
 

@@ -29,7 +29,7 @@ func (s *Service) OpenExport(ctx context.Context, l *Library) (*drp.Session, err
 	}
 	conn, err := s.PG.ConnectDB(ctx, l.DBName)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrExportUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrExportUnavailable, err)
 	}
 	// drp.Open owns conn from here on, also when it fails.
 	return drp.Open(ctx, conn)
@@ -55,4 +55,16 @@ func ExportStatus(err error) int {
 		return 503
 	}
 	return 422
+}
+
+// ExportError returns the error a reader of the experimental export gets for
+// err. A failed connection to PostgreSQL names the socket path, the
+// sqsolve_admin role and the database: the whole text goes to the process
+// log, and only a reader with the diagnostics permission (full) gets it;
+// everyone else gets the message up to the driver's text (pg.Public, docs 08
+// §5). Any other error comes back unchanged and is not logged. where is the
+// request path. Take the HTTP status from err (ExportStatus), not from the
+// result: the result of a hidden error no longer wraps the sentinels.
+func (s *Service) ExportError(err error, where string, full bool) error {
+	return s.ReaderError(err, "export", full, "path", where)
 }

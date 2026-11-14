@@ -178,6 +178,29 @@ func TestPrecreatedLibrary(t *testing.T) {
 	}
 }
 
+// With the precreate strategy a library that cannot be recorded active fails
+// its create job, which rolls back what it created, instead of succeeding
+// with the library left being prepared.
+func TestPrecreatedLibraryThatCannotBeRecordedActive(t *testing.T) {
+	e := newQuietEnv(t)
+	ctx := e.ctx
+	e.catalogExec(`CREATE TRIGGER refuse_active BEFORE UPDATE OF state ON libraries WHEN NEW.state = 'active' BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
+	l, j, err := e.svc.CreateLibrary(ctx, admin, core.CreateInput{DisplayName: "Late", Slug: "late_lib", Strategy: core.StrategyPrecreate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.failsWith(j, "SQS-X900", "disk full")
+	if got := e.lib(l.ID); got.State != core.StatePurged || !strings.Contains(got.Notes, "[creation failed] constraint failed: disk full") {
+		t.Fatalf("after the failed create: %s %q", got.State, got.Notes)
+	}
+	if e.db("late_lib") != nil {
+		t.Fatal("the database the job created was kept")
+	}
+	if ok, _ := e.svc.PG.RoleExists(ctx, "late_lib"); ok {
+		t.Fatal("the role the job created was kept")
+	}
+}
+
 // A create job re-checks the server when it runs: a database or a role with
 // the library's name that appeared after the request fails it with its code,
 // the library ends purged with the cause in its notes, and only what the run
@@ -221,5 +244,98 @@ func TestLibraryCreateRechecksTheServer(t *testing.T) {
 	e.failsWith(j, "SQS-L010", "the library is not being prepared (Active)")
 	if got := e.lib(l.ID); got.State != core.StateActive || e.db(l.DBName) == nil {
 		t.Fatalf("a stale create touched an active library: %s", got.State)
+	}
+}
+
+// canCreateDB reports whether role has CREATEDB.
+func (e *env) canCreateDB(role string) bool {
+	e.t.Helper()
+	p, err := e.svc.PG.Pool()
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var ok bool
+	if err := p.QueryRow(e.ctx, `SELECT rolcreatedb FROM pg_roles WHERE rolname = $1`, role).Scan(&ok); err != nil {
+		e.t.Fatalf("role %s: %v", role, err)
+	}
+	return ok
+}
+
+// The watcher records an expired initialization window before it reports
+// it: while the state cannot be written, no library.init_expired event says
+// the window expired, and a later check records it.
+func TestInitWindowExpiryIsReportedOnlyOnceRecorded(t *testing.T) {
+	e := newQuietEnv(t)
+	ctx := e.ctx
+	l, j, err := e.svc.CreateLibrary(ctx, admin, core.CreateInput{DisplayName: "Late", Slug: "late_exp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(j, jobs.Succeeded)
+	if _, err := e.svc.DB.ExecContext(ctx, `CREATE TRIGGER no_expiry BEFORE UPDATE OF state ON libraries WHEN NEW.state = 'init_expired'
+		BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	defer func() { e.svc.Now = nil }()
+	e.svc.WatchInit(ctx)
+	if got := e.lib(l.ID); got.State != core.StateAwaitingInit {
+		t.Fatalf("state %s", got.State)
+	}
+	if evs := e.eventsOf(events.LibraryInitExpired, l.ID); len(evs) != 0 {
+		t.Fatalf("an expiry that was not recorded was reported: %+v", evs)
+	}
+	if _, err := e.svc.DB.ExecContext(ctx, `DROP TRIGGER no_expiry`); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.WatchInit(ctx)
+	if got := e.lib(l.ID); got.State != core.StateInitExpired || e.canCreateDB(l.OwnerRole) {
+		t.Fatalf("state %s, CREATEDB %v", got.State, e.canCreateDB(l.OwnerRole))
+	}
+	if evs := e.eventsOf(events.LibraryInitExpired, l.ID); len(evs) != 1 {
+		t.Fatalf("expiry events %+v", evs)
+	}
+}
+
+// Reopening an initialization window whose catalog write fails returns that
+// error, is recorded failed and gives nothing: the library stays
+// init_expired and its role does not keep CREATEDB, which nothing would take
+// back from a library in that state.
+func TestReopenInitWindowWithAFailedWriteGivesNothing(t *testing.T) {
+	e := newQuietEnv(t)
+	ctx := e.ctx
+	l, j, err := e.svc.CreateLibrary(ctx, admin, core.CreateInput{DisplayName: "Again", Slug: "again_win"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wait(j, jobs.Succeeded)
+	e.svc.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	e.svc.WatchInit(ctx)
+	e.svc.Now = nil
+	if got := e.lib(l.ID); got.State != core.StateInitExpired || e.canCreateDB(l.OwnerRole) {
+		t.Fatalf("state %s, CREATEDB %v", got.State, e.canCreateDB(l.OwnerRole))
+	}
+	if _, err := e.svc.DB.ExecContext(ctx, `CREATE TRIGGER no_reopen BEFORE UPDATE OF init_window_expires_at ON libraries
+		BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	err = e.svc.ReopenInitWindow(ctx, admin, l.ID)
+	if err == nil || !strings.Contains(err.Error(), "disk I/O error") {
+		t.Fatalf("reopen with a failed write: %v", err)
+	}
+	if got := e.lib(l.ID); got.State != core.StateInitExpired || e.canCreateDB(l.OwnerRole) {
+		t.Fatalf("after a failed reopen: state %s, CREATEDB %v", got.State, e.canCreateDB(l.OwnerRole))
+	}
+	if es, outcomes := e.auditOf(l.ID, "library.init_window", nil); outcomes != "accepted failed" || es[1].Details["error"] != err.Error() {
+		t.Fatalf("entries %s %+v", outcomes, es)
+	}
+	if _, err := e.svc.DB.ExecContext(ctx, `DROP TRIGGER no_reopen`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ReopenInitWindow(ctx, admin, l.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.lib(l.ID); got.State != core.StateAwaitingInit || !e.canCreateDB(l.OwnerRole) {
+		t.Fatalf("after the reopen: state %s, CREATEDB %v", got.State, e.canCreateDB(l.OwnerRole))
 	}
 }

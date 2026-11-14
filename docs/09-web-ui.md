@@ -84,7 +84,8 @@ One form in four numbered parts, then the recovery kit:
    shown in the next part.
 4. **Default backups**: activity-based every 15 minutes (the default), daily at 02:00, every 4 h
    from 09:00 to 21:00 Monday to Saturday, or every 4 h. Retention starts at the default (last
-   10, 14 daily, 8 weekly, 12 monthly) and is changed in Settings.
+   10, 14 daily, 8 weekly, 12 monthly); the schedule and the retention are changed later in
+   Settings, General.
 5. **Recovery kit**, on its own page after the account is created: download and a required
    checkbox "I saved it outside this server".
 
@@ -115,17 +116,22 @@ queued or running on the library, and tabs:
   a link to the printable instructions without the password; what collaboration needs (Resolve
   Studio in the same version on every workstation, TCP 50059 to 50314 open between them); a note
   that sqsolve does not generate `.resolvedbkey` keys (PoC-05). Below, the sessions connected now
-  with their encryption. While the library waits for Resolve, the tab shows the initialization
-  steps with the same values, the time left in the window and a warning if Resolve created a
-  database with another name; when it has no database on the server, "Recreate from the last
-  backup" (typed confirmation) and, if its previous state is kept, a link to revert.
+  with their encryption. While the job that creates the library is queued or running, the tab
+  says "Preparing the library" instead (§4.1). While the library waits for Resolve, the tab
+  shows the initialization steps with the same values, the time left in the window and a warning
+  if Resolve created a database with another name; when it has no database on the server,
+  "Recreate from the last backup" (typed confirmation) and, if its previous state is kept, a link
+  to revert.
 - **Backups**: the 30-day track and this library's backups (date, type, state, verification,
   size, duration, "Restore"), with an "Import" link.
 - **Schedule**: automatic backups on or off; activity-based (a check every 5, 10, 15, 30 or 60
   minutes), daily at an hour, every 4 h on working days, every 4 h, every hour or a cron
   expression, and the time zone; retention (latest, daily, weekly, monthly, minimum verified).
   Beside it, the next 5 runs or checks with the last one, and the effect of the saved retention
-  today (how many backups are kept and how many the next pass would delete).
+  today (how many backups are kept and how many the next pass would delete). For a library
+  without a policy of its own (not active yet, or registered by the catalog rebuild) the form
+  shows the default policy for new libraries, and the effect card says that retention deletes
+  none of its backups and what that policy would keep and delete once saved.
 - **Access**: credentials: the primary one and one per person (own user and password, revocable
   without touching the others; not validated with Resolve, PoC-01), each with "Reveal" and
   "Change password"; allowed networks (one CIDR or address per line).
@@ -183,16 +189,18 @@ PostgreSQL (version, up since, connections against the maximum, data checksums, 
 (gauge, free space and path of each volume, with its error), the doctor checks
 (`13-observability.md` §7), databases (owner, size, sessions, access, invalid ones and changed
 collation), certificates (expiry and fingerprint) and the system schedules with their next run.
-sqsolve does not measure media volumes.
+sqsolve does not measure media volumes. The error of PostgreSQL and the doctor checks show the
+driver's text of a failed connection, and the path of the superuser password file, only to
+whoever has the `diagnostics` permission (`08-security.md` §5).
 
 ### 3.8 Settings
 
 Tabs: **General** (installation name and the address workstations use; default policy for new
-libraries: cron and retention, where the cron expression has no effect while the default mode is
-activity-based, `docs/19-risks.md` §5 K-10; time limits: initialization window, days in the
-trash and days the previous state is kept, each between 1 and 3650, hours without a backup
-before the warning,
-maximum upload; security: library users in the `postgres` database, TLS only, second factor
+libraries: activity-based (a check every 5, 10, 15, 30 or 60 minutes) or a cron expression in the
+time zone of the policy, which the form shows, and retention (latest, daily, weekly, monthly);
+time limits: initialization window, days in the trash and days the previous state is kept, each
+between 1 and 3650, hours without a backup before the warning (1 to 87600) and maximum upload
+(1 to 1048576 MB); security: library users in the `postgres` database, TLS only, second factor
 required for administrators; Experimental: "Export of projects (.drp) and grades (.drx) from the
 panel", off by default, ADR 0019; and the upload of your own panel certificate), **Users**
 (panel accounts, role, second factor, disable; administrators only), **Notifications**
@@ -218,9 +226,12 @@ token is shown once).
    (recommended, E1) or "Empty database" (for testing only: Resolve 21.1 marks it incompatible,
    PoC-01); notes. The backup policy is the installation's default (Settings).
 2. The library page, which says "Preparing the library" and refreshes itself while the
-   `library.create` job runs.
-3. With E1: card "Initialize the library from Resolve" with the values to copy and the time
-   left in the window; the page polls the state and reloads when it detects the initialization.
+   `library.create` job is queued or running. That job sets the state of the library one step
+   before it writes the library's `pg_hba.conf` lines (`07-libraries-and-postgresql.md` §4), so
+   the page shows no value to connect with and no "Reveal password" until the job has ended.
+3. With E1, once that job has succeeded: card "Initialize the library from Resolve" with the
+   values to copy and the time left in the window; the page polls the state and reloads when it
+   detects the initialization.
 4. End: state active, a first backup queued, and the Connection tab with the values for the
    other workstations.
 

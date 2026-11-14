@@ -46,6 +46,10 @@ acceptance test confirms it.
   SQL.
 - External processes only with `exec.CommandContext` and an argument array, from
   `internal/execx`. No `sh -c`. Passwords through a temporary `PGPASSFILE`, never in arguments.
+  This rule is for the code that ships in the binary. Test code (`_test.go` files,
+  `internal/testpg` and the scripts in `test/`) may start programs directly, with an argument
+  array and no password in an argument; a fake program may be a shell script that the test
+  writes (`docs/16-testing.md` §4).
 - Cancelling a job only sends signals to child processes that same job launched. Never `pkill`,
   never signals to foreign PIDs (in tests, simulate `os.Process`).
 - Secrets: never in logs, never in long-lived environment variables; in the panel and the API

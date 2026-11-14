@@ -70,9 +70,7 @@ func TestCatalogWithoutTheServer(t *testing.T) {
 	add("RenameDatabase", cl.RenameDatabase(ctx, "lib", "lib__prev_202610250000"))
 	add("DropDatabase", cl.DropDatabase(ctx, "lib"))
 	for name, err := range calls {
-		// SetRolePassword rebuilds its error from the text to redact the
-		// verifier, so there only the message carries the code.
-		if err == nil || !strings.HasPrefix(err.Error(), want) || name != "SetRolePassword" && !errors.Is(err, pg.ErrUnavailable) {
+		if err == nil || !strings.HasPrefix(err.Error(), want) || !errors.Is(err, pg.ErrUnavailable) {
 			t.Errorf("%s without a server: %v", name, err)
 		}
 	}

@@ -39,28 +39,50 @@ tool of the host, §9).
   _import/                                folder for importing external files
 ```
 
-Every path in the catalog is relative to the volume and names a `.backup` file under
-`libraries/`, with its manifest next to it under the same name (`<name>.manifest.json`). sqsolve
-only reads, restores, downloads or deletes a backup whose path is clean (no `..`, not absolute)
-and stays on the volume once its symlinks are resolved (`fsx.Confined`). A row that does not
-meet that is never rewritten or deleted automatically: it is blocked (`SQS-B043`), reported at
-every start and by the catalog check as one critical `backup.path_invalid` event, and an
-administrator reviews it (`docs/runbooks/invalid-backup-path.md`). A blocked backup does not
-count as verified for any safety rule: the latest verified backup, the verified backups
-retention keeps, the guard on the newest usable backup and the final backup a purge needs all
-skip it.
+Every path in the catalog is relative to the volume and names a `.backup` file under `libraries/`,
+with its manifest next to it under the same name (`<name>.manifest.json`). sqsolve only reads,
+restores, downloads or deletes a backup whose path is clean (no `..`, not absolute) and stays on the
+volume once its symlinks are resolved (`fsx.Confined`). A row that does not meet that is never
+rewritten or deleted automatically: it is blocked (`SQS-B043`), reported at every start and by the
+catalog check as one critical `backup.path_invalid` event, and an administrator reviews it
+(`docs/runbooks/invalid-backup-path.md`). A blocked backup does not count as verified for any safety
+rule: the latest verified backup, the verified backups retention keeps, the guard on the newest
+usable backup, the final backup a purge needs, the backup that covers a previous state before it is
+dropped (§7.4) and the backup the activity gate compares with (§10) all skip it.
+
+A path that cannot be checked is blocked too, for as long as the check fails (`SQS-B045`): a
+disk error (an I/O error, a folder sqsolve may not enter, a stale mount, a file where a folder
+should be) stops `fsx.Confined` before it can say where the path leads, also while it follows a
+symlink of the path. A symlink that leads nowhere (its target does not exist, passes through a
+file or loops) is not on the volume (`SQS-B043`). Nothing is known about such a backup, so it is
+not read, restored, downloaded or deleted, it does not count as verified for the same safety
+rules, and retention leaves it alone. The row is not rewritten and cannot be removed with
+`sqsolve catalog forget` (`SQS-B044`): the backup may be intact. It counts again,
+with no other step, as soon as the check works. Every start and the catalog check report such
+rows in one `backup.path_unchecked` event (error) with the first cause. The check of a start
+runs in the background, so the panel does not wait for it; it only reports, and every operation
+checks the path of its own backup.
 
 A manifest is read only when it is a complete version 1 manifest
 (`api/schemas/manifest.v1.json`): `manifest_version` 1, valid IDs, a valid slug, a known kind, a
 `file` that is the base name of a `.backup` file, a size and a SHA-256; otherwise `SQS-B042`.
 Rebuilding the catalog adds a manifest only when it is valid, stays on the volume and names its
 own backup file (`x.manifest.json` next to `x.backup`); the rest are skipped with a warning in
-the job log.
+the job log. A library the catalog does not know is registered as `purged` without a policy of
+its own. Manifests do not record the policy or the pins of the installation that wrote them, so a
+rebuilt backup is not pinned, and retention keeps every backup of such a library until a policy
+is saved for it (§6).
 
 Permissions: directories 0700 and files 0600 for the sqsolve UID. The marker is written by
 `sqsolve-init` (ADR 0023) and checked before every write (RNF-FIA-04): if the volume is not
 mounted, the path exists empty inside the container and writing there would fill the container
-layer or the wrong disk.
+layer or the wrong disk. It is also checked before retention or a delete by hand removes a
+backup: on an empty folder the files are not there to remove, and recording them as removed
+would leave them on the disk, outside the catalog, once it is mounted again. And it is checked
+before a backup is taken as proof for a drop, since on an empty folder the path of every backup
+still checks (a path that does not exist is not one that leaves the volume): the purge of a
+library in the trash stops at `check_backup` with the error of the marker, before its journal
+(§7.8), and a previous state is kept (§7.4).
 
 ## 4. Backup procedure
 
@@ -158,56 +180,89 @@ When the volume cannot be measured, the operation is tried anyway.
 Per-library policy:
 
 ```
-keep_last      = 10   # the N most recent with state ok
+keep_last      = 10   # the N most recent with state ok, not counting pre_restore ones
 keep_daily     = 14   # the most recent of each of the last N days
 keep_weekly    = 8    # the most recent of each of the last N ISO weeks
 keep_monthly   = 12   # the most recent of each of the last N months
 min_verified   = 1    # never end up with fewer than N backups with a correct L1 or L2 verification
 ```
 
+A library gets a policy of its own when it becomes active (the default policy of Settings,
+General, unless one was saved before, §10), when it is restored as new (a copy of the policy of
+the library the backup came from) or when one is saved in its Schedule tab or through the API. A
+library without one (not active yet, or registered by the catalog rebuild, §3) has none of its
+backups expired: the default policy is what a new library starts with, not a decision about the
+backups an earlier installation kept. Its Schedule tab says so, the retention job names it in its
+log when it has backups (one not active yet has none, and is not named), and the leftovers of its
+failed backups (step 5) are still cleaned.
+
 Algorithm (`Retain` in `internal/core/retention.go`, a pure function with property tests):
 
-1. Candidates: `ok` backups of the library. A blocked backup (`SQS-B043`, §3) is not one: it
-   takes none of the places of the policy, so a readable backup never expires in its stead, and
-   it is never expired.
+1. Candidates: `ok` backups of the library. A blocked backup (`SQS-B043`, or `SQS-B045` while
+   its path cannot be checked, §3) is not one: it takes none of the places of the policy, so a
+   readable backup never expires in its stead, and it is never expired.
 2. Keep: pinned ones; those of kind `pre_restore`, `pre_delete` and `pre_upgrade` under 30 days
-   old; those that satisfy some `keep_*` rule. `keep_last` counts the most recent **by
-   insertion order** in the catalog (the SQLite row order), which a clock that jumps cannot
-   change: after the clock goes back, the backup just taken is still among the newest. Days,
-   weeks and months use `started_at` in the policy's time zone. Protected backups are not set
-   apart from the `keep_*` rules: a `pre_restore` backup also takes one of the `keep_last`
-   places, and every replace or revert leaves two (§7.2, §7.4), so a few restores can push
-   regular backups out, including the one just restored (`docs/19-risks.md` §5 K-09).
+   old; those that satisfy some `keep_*` rule. `keep_last` counts the most recent **by insertion
+   order** in the catalog (the SQLite row order), which a clock that jumps cannot change: after
+   the clock goes back, the backup just taken is still among the newest. Days, weeks and months
+   use `started_at` in the policy's time zone. A `pre_restore` backup takes none of the
+   `keep_last` places: every replace or revert leaves two (§7.2, §7.4), so the N places go to
+   the N most recent backups of the other kinds and restores cannot push those out. `keep_last`
+   also keeps a `pre_restore` backup while fewer than N backups of other kinds are newer than it
+   (every one of them while the library has fewer than N backups of other kinds), so no backup
+   that the count of every kind kept expires. Past its 30 days a `pre_restore` backup expires
+   once N backups of other kinds are newer, unless it is pinned, is the most recent backup of a
+   day, week or month that is kept, or `min_verified` needs it; a library that takes no new
+   backups keeps it. `pre_delete` and `pre_upgrade` backups take `keep_last` places like any
+   other. Days, weeks and months count every kind, `pre_restore` included.
 3. If after that fewer than `min_verified` verified ones remain, keep the most recent verified
    ones (by insertion order) until it is met. Backups of the live database count first: a
    backup of a previous state (`source_db` `<slug>__prev_*`, taken before it is dropped) holds
-   an older state and only counts when the live database has too few.
+   an older state and only counts when the live database has too few. Telling them apart needs
+   the library's database name: if it cannot be read, retention of that library stops with that
+   error and deletes nothing.
 4. The rest expire and are deleted in two phases: first the file and the manifest are removed
    and their folder is synced (`fsx.RemoveFiles`), then the row becomes `deleted` (reason
    `retention`), and one `backup.expired` event says how many went. A
    folder that cannot be synced leaves the row as it was and the deletion fails, so a power cut
    never brings back files the catalog calls deleted; the next attempt syncs the folder again
-   even if the files are already gone. Housekeeping removes `deleted` rows after 365 days (the
-   audit log keeps the history), except rows an export workspace or a previous state still uses.
+   even if the files are already gone. Housekeeping removes `deleted` rows after 365 days, except
+   rows an export workspace or a previous state still uses. The audit log keeps the history of the
+   backups deleted by hand; a backup that retention deletes has no audit entry, only the
+   `backup.expired` event with the count (events are kept 180 days).
 5. `failed` and `interrupted` backups: their leftovers are deleted immediately; the row stays
-   30 days, and goes only once the removal of its leftovers is durable.
+   30 days, and goes only once the removal of its leftovers is durable. They are listed before
+   step 4 deletes anything: if the list cannot be read, retention of that library stops with
+   that error and deletes nothing.
+
+Retention runs only on this installation's backups volume. Without its marker (`SQS-S001`, a
+disk that is not mounted), with an unreadable marker (`SQS-S002`), another installation's
+(`SQS-S003`) or this installation's marker of another volume (`SQS-S019`), it deletes nothing
+and records nothing deleted, failed rows included: the `system.retention` job fails with that
+code (`job.failed`), and Retry or the next run applies it once the volume is back; the retention
+step of a backup job fails the same way.
 
 Retention takes no library lock. Instead, an expired backup that a queued or running restore
 (new, replace, recreate), verification or export from a backup is going to read is kept until
 the next run, so a job never finds its backup deleted under it.
 
 The Schedule tab of a library shows the effect of its saved policy today (how many backups are
-kept and how many the next pass deletes), computed with the same function. There is no preview
-of a policy before it is saved, and no API endpoint for it.
+kept and how many the next pass deletes), computed with the same function. For a library without
+a policy of its own it shows what the default policy would keep and delete once saved there.
+There is no preview of other values before they are saved, and no API endpoint for it.
 
 The **newest verified backup** of a library (the one Recreate uses by default, the weekly
 verification checks, the panel shows and the manual-delete guard protects) is the newest usable
 verified backup of its live database. A backup of one of its auxiliary databases (`<slug>__...`:
 previous state, trash) only counts when there is no other; imported backups count normally.
+Telling them apart needs the library's database name: when it cannot be read, the lookup fails
+with that error instead of answering a backup of an auxiliary database.
 
 Deleting a backup by hand follows the same idea: the newest verified backup of a library cannot
 be deleted in any state from which it can still be restored or recreated, that is, every state
-except `purged` (a `missing` library needs it to be recreated).
+except `purged` (a `missing` library needs it to be recreated). It is refused with the same codes
+as retention while the backups volume is not this installation's, before its audit entry, and
+with the error of the lookup when the newest verified backup cannot be told.
 
 ## 7. Restore
 
@@ -249,9 +304,12 @@ Safety rules of the swap (ADR 0024):
 
 - The job re-validates at run time what the request checked (state `active` or `maintenance`);
   a stale job fails with `SQS-R003` and touches nothing. Every failure path drops only the
-  `__restore` database this job created. A replacement is queued without the unique job
-  identity of ADR 0028 (`docs/19-risks.md` §5 K-03): a second request for the same library
-  queues a second job, which runs after the first and replaces the result of the first.
+  `__restore` database this job created. A replacement has the unique job identity of ADR 0028
+  (ADR 0029): a second request with the same backup and the same choice for the open sessions
+  while one is queued or running returns the same job; one with another backup or the other
+  choice is refused with `SQS-J005`, which names the job that holds the library. The state is
+  checked first: during the swap itself the library is `restoring` and any new request gets
+  `SQS-R003`.
 - The lock is never taken without its journal: if the journal cannot be written, the job fails
   with `SQS-R057` before locking anything (the same applies to revert).
 - Every step of a job is stored before it runs, and a journal must land on the row of its step:
@@ -344,14 +402,17 @@ databases by hand to a row of the table, and restart sqsolve.
 
 A journal tried again at a later start (also one an earlier start settled but could not record
 as settled) never undoes what was done with the library since. It is settled without changing
-anything when a newer restore, revert, delete or recreate of the library succeeded or is itself
-pending, and, for a swap, when the library is no longer `restoring`: a pending swap always leaves
-it `restoring`, which every other operation refuses, so a library in any other state moved on
-(for example it was put in maintenance or moved to the trash). A delete or a recreate tried
-again only acts on the state the library has then (§7.7, §7.8). If the pending jobs themselves
-cannot be read, reconciliation keeps every `__restore_*` database, leaves every library that is
-`restoring` as it is, forgets no previous state, and raises a `library.reconcile_pending`
-warning without a library; every start tries again.
+anything when a newer restore, revert, delete, recreate or recovery from the trash of the library
+succeeded or is itself pending (so a purge that stopped with the trash database still there is
+settled by a later recovery that moved that database back, instead of reporting `SQS-L046` for
+the library's own database), and, for a swap, when the library is no longer `restoring`: a
+pending swap always leaves it `restoring`, which every other operation refuses, so a library in
+any other state moved on (for example it was put in maintenance or moved to the trash). A delete,
+a recreate or a recovery from the trash tried again only acts on the state the library has then
+(§7.7, §7.8). If the pending jobs themselves cannot be read, reconciliation keeps every
+`__restore_*` database, leaves every library that is `restoring` as it is, forgets no previous
+state, and raises a `library.reconcile_pending` warning without a library; every start tries
+again.
 
 After that, reconciliation applies to every library without a pending journal the access its
 state promises (ADR 0024), so a library locked by a cut during a delete or a revert is usable
@@ -370,24 +431,32 @@ becomes active (the way out of `SQS-R053`). Otherwise it fails with `SQS-R051`. 
 while one is queued or running returns the same job.
 
 A `__prev` database is dropped only with a **verified backup of that database itself**: the one
-taken after its swap, or one taken right then (the database is opened to `sqsolve_admin` for the
-dump and closed again). If neither is possible it is kept, the job logs `SQS-R055` and a
-`library.prev_kept` warning event is emitted. This applies to:
+taken after its swap, unless it is blocked (§3), or one taken right then (the database is opened to
+`sqsolve_admin` for the dump and closed again). If neither is possible it is kept, the job logs
+`SQS-R055` and a `library.prev_kept` warning event is emitted. While the backups volume is not this
+installation's (§3) no backup is looked at or taken: the `__prev` is kept, with the error of the
+marker (`SQS-S001` when it is missing) in place of `SQS-R055`. This applies to:
 
 - the expiry job, for libraries in `active`, `maintenance` or `trashed` (a `missing` library's
   `__prev` may be the only copy of its latest data and is kept). It reads the library again
   before dropping and clears `prev_db_name` only if it still names the same database, so it never
-  undoes a revert that ran in between;
+  undoes a revert that ran in between; when it cannot clear it, the job logs a warning that the
+  database was dropped but the catalog could not be updated, and the next pass or the next start
+  clears it. For a library in the trash whose purge is due in the same pass, it runs before that
+  purge is queued;
 - the `__prev` superseded by a newer restore;
-- the purge of a library in the trash, which handles the `__prev` before anything else and stops
-  without dropping anything if it cannot be backed up;
+- the purge of a library in the trash, which first checks the role's other databases (§7.8),
+  handles the `__prev` before any other drop and stops without dropping anything if it cannot be
+  backed up;
 - orphan `__prev` databases owned by the library's role that no row points to (left by older
   versions or by a cut), once older than the retention for previous states.
 
 None of them drops a `__prev` that the journal of a restore or revert still pending
 reconciliation names (§7.3): it is kept with `SQS-R090` and a `library.prev_kept` warning until
 a start settles that journal. If the pending jobs or their journals cannot be read, the `__prev`
-is kept too (`SQS-R091`).
+is kept too (`SQS-R091`). Nor do they drop, or count as dropped, a `__prev` that an interrupted
+`DROP DATABASE` left invalid (`07` §10): it is kept with `SQS-R062` and a `library.prev_kept`
+warning, the expiry does not forget it, and an administrator drops it by hand.
 
 At every start, reconciliation forgets a previous state whose database is no longer on the
 server (for example after a revert of a `missing` library cut after its rename, which leaves the
@@ -397,9 +466,9 @@ database still holds the name and keeps it; a check that fails, a library with a
 (a swap records its previous state before the rename that creates it) or pending jobs that
 cannot be read change nothing.
 
-These backups are of kind `pre_restore` (protected 30 days by retention) and record the
-`__prev` name as their source database, so they never count as the activity reference of the
-live library (ADR 0022).
+These backups are of kind `pre_restore` (protected 30 days by retention and outside the
+`keep_last` count, §6) and record the `__prev` name as their source database, so they never
+count as the activity reference of the live library (ADR 0022).
 
 ### 7.5 Backup compatibility
 
@@ -520,36 +589,77 @@ trash when it finds the database under its trash name. If the check fails, or th
 cannot be recorded in the catalog, nothing is changed and the job stays pending reconciliation:
 the library keeps its state and its lock (it is not reported `missing` while its data sits under
 the trash name), a `library.reconcile_pending` warning says so, and every start tries again until
-the library ends `trashed` with its trash database or gets its access back (§8). Recover from the
-trash re-validates the state (`SQS-L042`), the identifier (`SQS-L043`) and that the trash
-database still exists (`SQS-L051`). Delete, recover and a purge started by hand are queued
-without the unique job identity of ADR 0028 (`docs/19-risks.md` §5 K-03): a second request
-queues a second job, which re-validates the state when it runs and fails (`SQS-L041`,
-`SQS-L042`, `SQS-L044`) without touching anything. The purge of expired trash (§12) uses that
-identity.
+the library ends `trashed` with its trash database or gets its access back (§8). The job itself
+follows the same rule: if the catalog refuses to record the move once the database is under its
+trash name, the job fails with `SQS-L056`, keeps the lock and stays pending reconciliation, and
+the next start records the move, with a `library.trashed` event that gives the purge date. Until
+then the library keeps its state, with its database under the trash name. A library without a
+database (`missing`, or one whose initialization window created none) that cannot be recorded in
+the trash gets its access back, also with `SQS-L056`, and can be deleted again. A lookup that
+fails (whether Resolve created a database during the initialization window, whether a role still
+exists) or a role whose `CREATEDB` cannot be removed stops the delete with that error before the
+rename, so the library keeps the access of its state: a failed lookup is never read as "no
+database" or "role gone".
 
-Purge (`library.purge`) journals what it is about to drop before dropping anything (`SQS-L047`
-without the journal), then drops the previous state, the trash database and the roles, and
-records the library `purged` (credentials revoked, state and schedules) in one transaction.
-Every lookup and write is checked; a role that still owns another database stops it with
-`SQS-L046`. A failure after a drop never ends as success: the job fails with `SQS-L047` and stays
-pending reconciliation, and the next start finishes it from its journal (the roles are dropped and
-the library is recorded `purged`; a purge cut before it dropped the trash database leaves the
-library in the trash, where it can be purged again). The backups are always kept. Running the
-purge again also finishes it. The journal records the trash database but not the previous
-state: a purge of a library without a trash database, interrupted while its previous-state
-database is still on the server, finds that database owned by the library's role at every start
-and reports `SQS-L046` each time, with a `library.reconcile_pending` warning
-(`docs/19-risks.md` §5 K-04). The purge of expired items (§12) drops an expired previous state on
-its own in the same pass that queues the purge of its library; when both are due at once the
-purge can find the previous state already forgotten and fail with `SQS-L047`, and the next pass
-or the next start finishes it (`docs/19-risks.md` §5 K-11).
+Recover from the trash (`library.untrash`) re-validates the state (`SQS-L042`), that the trash
+database still exists (`SQS-L051`) and that no database has the library's name (`SQS-L005`, also
+an invalid one an interrupted `DROP DATABASE` left, which would refuse the rename); a lookup that
+fails stops it with that error, with nothing renamed and no journal. It writes its
+journal before renaming the trash database back and stops with `SQS-L057`, with
+nothing renamed, if it cannot. From then on any failure, a refused rename included (its answer
+may have been lost after PostgreSQL committed it), fails the job with `SQS-L058` and leaves it
+pending reconciliation, as a stop does. The next start finishes it from its journal: if the
+trash database is still there, the library stays in the trash and can be recovered again; if the
+database is back under the library's name, the library is recorded active and gets its access
+and its backup schedule back, and a `library.restored_from_trash` event says so. If neither is on
+the server, or a check or a write fails at the start, nothing more is changed and the job stays
+pending, with a `library.reconcile_pending` warning at every start. A library in the trash
+without a database has nothing to move back and writes no journal.
+
+Delete, recover and purge have the unique job identity of ADR 0028 (ADR 0029): a second
+request while one is queued or running returns the same job and writes no audit entry of its
+own. The state is checked before the queue, so once the running job has changed the state of
+the library a new request is refused with `SQS-L041`, `SQS-L042` or `SQS-L044`, as after it
+ends. A purge started by hand and the purge of expired trash (§12) are one job, whichever was
+queued first. The purge of expired trash is queued with its own audit entry (`library.purge`,
+actor `system`, docs 08 §9), so the job has an `accepted` entry and a result whoever queued it;
+without that entry it is not queued, the pass logs a warning with `SQS-X040` and the library
+stays in the trash until a later pass.
+
+Purge (`library.purge`) of a library with a trash database first checks its final backup
+(`check_backup`): without a verified one that is not blocked it stops with `SQS-L045`, and while
+the backups volume is not this installation's (§3) with the error of the marker, both before
+anything is journaled or dropped. It then checks that the library's role owns no database other
+than the ones the purge drops itself: the trash database and the previous state. Any other one is
+a manual decision (for example a database created with the wrong name during the initialization
+window, a previous state no row points to, or a previous state that an interrupted `DROP
+DATABASE` left invalid, which sqsolve never drops): the purge stops with `SQS-L046` before
+anything is journaled or dropped, and the library stays in the trash with its database, where it
+can still be recovered. If the check cannot look, the purge stops with `SQS-L047`, also with
+nothing dropped.
+It then journals what it is about to drop, the trash database and the previous state (`SQS-L047`
+without the journal), drops the previous state, the trash database and the roles, and records the
+library `purged` (credentials revoked, state and schedules) in one transaction. Every lookup and
+write is checked, and the role's databases are listed again right before the roles are dropped:
+one that appeared meanwhile stops the purge with `SQS-L046` and the roles are kept. A failure
+after a drop, or while the roles are dropped (also for a library that had no database to drop),
+never ends as success: the job fails with `SQS-L047` and stays pending
+reconciliation, and the next start finishes it from its journal (the roles are dropped and the
+library is recorded `purged`; a purge cut before it dropped the previous state or the trash
+database leaves the library in the trash, where it can be purged again). A journal written by
+1.2.3 or earlier does not name the previous state; reconciliation also looks at the one the
+catalog names. If reconciliation finds another database of the role once those are gone, it
+changes nothing and reports `SQS-L046` with a `library.reconcile_pending` warning at every start
+until that database is reviewed. The backups are always kept. Running the purge again also
+finishes it. The purge of expired items (§12) drops an expired previous state before it queues
+the purge of the same library, and a purge that finds its previous state already dropped and
+forgotten (the expiry runs without the library's lock) goes on.
 
 ## 8. Failures and interruptions
 
 | Failure | Detection | Handling |
 |---|---|---|
-| Power cut during `pg_dump` | On startup: job `running`, `.partial` file | Job `interrupted`, delete `.partial`, event; the next schedule runs normally or by the missed-runs policy |
+| Power cut during `pg_dump` | On startup: job `running`, `.partial` file | Job `interrupted`, delete `.partial`, event; the next schedule runs normally or by the missed-runs policy. On a backups volume that is not this installation's (another installation's, or a disk that is not mounted) the backup is recorded `interrupted` and no file is touched: the reconciliation note gives the code of the volume, and retention cleans the leftovers once the volume is back (§6) |
 | Cancel or graceful stop during a backup | The job's context | Leftovers deleted, backup `interrupted`; no `backup.failed` event (the job ends `cancelled` or `interrupted`) |
 | Cut during L2 verification | `sqsolve_verify_*` database without a live job | `DROP DATABASE ... WITH (FORCE)`; the backup keeps its verification status (§5.1) |
 | Verification that cannot run (no space, cancelled, server or tool unavailable) | Error class (§5.1) | `verify_status` unchanged, reason in `verify_detail`, `backup.verify_skipped` warning, job `SQS-B070` |
@@ -557,14 +667,16 @@ or the next start finishes it (`docs/19-risks.md` §5 K-11).
 | Cut during restore before the swap | `__restore_*` without a live job | Drop it; the active one was not touched |
 | Cut during the swap | Journal | Table in §7.3 |
 | Cut during the lock of a delete or a revert | Journal written before the lock | The lock is undone; reconciliation applies to every library the access of its state (ADR 0024) |
+| Cut during a recovery from the trash | Journal written before the rename | Trash database still there: the library stays in the trash. Database back under the library's name: the recovery is completed (active, access and backup schedule) (§7.8) |
 | Cut during a recreate before its comparison | Journal written before creating the database | Cut during `pg_restore`: the empty database it created is dropped and the library stays `missing`. Cut after `pg_restore` committed: the database has tables and is kept and adopted without the comparison. Check not finished: kept, library left `missing`, tried again at every start (§7.7) |
-| A recreate or a purge that fails after its irreversible step | The job fails (`SQS-R060`, `SQS-L047`) and stays pending reconciliation | The next start adopts the restored database, or finishes the purge from its journal (§7.7, §7.8) |
-| A journal that reconciliation cannot settle (a check fails, a rename or a catalog write is refused, a swap state no rule covers) | The interrupted restore, revert, delete, recreate or purge stays pending reconciliation; the 90-day job purge keeps it | Nothing is changed: the library keeps its state and access, the databases its journal names are kept (the `__restore_*` sweep skips them, a `__prev` is kept with `SQS-R090`, or `SQS-R091` when the pending jobs cannot be read), note and warning `library.reconcile_pending` at every start; every start tries again until it is settled, and a journal whose library moved on since is settled without changes (§7.3, §7.7, §7.8) |
+| A delete, a recovery from the trash, a recreate or a purge that fails after its irreversible step | The job fails (`SQS-L056`, `SQS-L058`, `SQS-R060`, `SQS-L047`) and stays pending reconciliation | The next start records the move to the trash, finishes the recovery from the trash (or leaves the library in the trash if its database was not moved), adopts the restored database, or finishes the purge from its journal (§7.7, §7.8) |
+| A journal that reconciliation cannot settle (a check fails, a rename or a catalog write is refused, a swap state no rule covers, a recovery from the trash that finds neither its trash database nor one of the library under its name) | The interrupted restore, revert, delete, recovery from the trash, recreate or purge stays pending reconciliation; the 90-day job purge keeps it | Nothing is changed: the library keeps its state and access, the databases its journal names are kept (the `__restore_*` sweep skips them, a `__prev` is kept with `SQS-R090`, or `SQS-R091` when the pending jobs cannot be read), note and warning `library.reconcile_pending` at every start; every start tries again until it is settled, and a journal whose library moved on since is settled without changes (§7.3, §7.7, §7.8) |
 | The jobs pending reconciliation cannot be read | Reading them at a start fails | Every `__restore_*` database is kept, libraries left `restoring` stay so, no previous state is forgotten; warning `library.reconcile_pending` without a library; tried again at every start (§7.3) |
 | A database with the name of a `missing` library is on the server | Reconciliation at every start connects and reads its structure (a database closed to connections is opened for the check) | Adopted (`active`, `library.found`) only when it has tables or the library never had any; otherwise kept, neither adopted nor dropped, closed to connections (also when found open), warning `library.missing` (§7.7) |
 | The previous state of a library is no longer on the server | Reconciliation at every start | `prev_db_name` cleared with a note, unless an invalid database holds the name, the check fails or the library has a pending journal (§7.4) |
 | Disk full | The `prepare` step, or a `pg_dump` write error | Delete `.partial`; `SQS-B012` from `prepare` (`SQS-B010` when `pg_dump` runs out of space); `backup.failed` event; backups outside retention are never deleted to make room |
-| Backups volume missing | Marker | Do not write; critical `storage.volume_missing`; backup jobs fail with `SQS-S001` |
+| Backups volume missing | Marker | Do not write or delete; critical `storage.volume_missing`; backup jobs and the retention job fail with `SQS-S001` and a manual delete is refused with it, so no backup is recorded deleted while its files are on the unmounted disk; nothing is dropped on the strength of a backup it cannot see: a purge stops with it at `check_backup`, before its journal, and a `__prev` is kept with it and a `library.prev_kept` warning (§3, §7.4, §7.8); an upload to the import folder from the panel is refused with it before anything is written, so it cannot fill the empty mount point |
+| A disk error stops the check of a backup path (I/O error, a folder without permission, a stale mount) | `fsx.Confined` returns the error, at every use of the backup, at every start and in the catalog check | Blocked while it lasts (`SQS-B045`): not read, not the latest verified backup, out of retention, not the final backup of a purge (`SQS-L045`); `backup.path_unchecked` (error); the row is not rewritten and counts again when the check works (§3) |
 | PostgreSQL down | The health monitor's check (every 5 s) or the job's connection | Critical `postgres.down` (and `postgres.up` when it answers again); the job fails with `SQS-P001`; there is no automatic retry: the next scheduled run or Retry |
 | `pg_dump` waits for a lock for more than 60 s | Exit code and message | `failed` with `SQS-B010`; there is no automatic retry: the next scheduled run or Retry backs it up |
 | Incompatible restore | §7.5 | Rejected before touching anything |
@@ -581,17 +693,20 @@ through `_import/` and the normal import (§7.6).
 
 ## 10. Scheduler
 
-- Two modes per library (ADR 0022). **Activity-based**, the default mode on new installations:
-  the scheduler wakes every 5, 10, 15, 30 or 60 minutes and backs up only if the activity mark
-  changed since the newest usable verified backup (`ok` and `l1_ok`, `l2_ok` or `partial`): a
-  backup that failed its verification, or was never verified, does not close the gate, so an
-  unchanged library still gets a good backup. The check is stored in the policy
-  (`last_check_at`, `last_check_same`) and produces no job or event. **Cron**: 5-field
-  expressions in the policy's time zone, plus presets on the library page: "daily at HH:00"
-  (`0 HH * * *`, 02:00 by default), "every 4 hours from 09:00 to 21:00, Monday to Saturday"
-  (`0 9-21/4 * * 1-6`), "every 4 hours" (`0 */4 * * *`) and "every hour" (`0 * * * *`). The setup
-  wizard offers the activity-based mode (selected), daily at 02:00, the Monday to Saturday preset
-  and every 4 hours.
+- Two modes per library (ADR 0022). **Activity-based**, the default mode on new installations: the
+  scheduler wakes every 5, 10, 15, 30 or 60 minutes and backs up only if the activity mark changed
+  since the newest usable verified backup of the live database (`ok` and `l1_ok`, `l2_ok` or
+  `partial`, and not blocked, §3): a backup that failed its verification, was never verified or is
+  blocked does not close the gate, so an unchanged library still gets a good backup. With no such
+  backup, the check backs up. The check is stored in the policy (`last_check_at`, `last_check_same`)
+  and produces no job or event. **Cron**: 5-field expressions in the policy's time zone, plus
+  presets on the library page: "daily at HH:00" (`0 HH * * *`, 02:00 by default), "every 4 hours
+  from 09:00 to 21:00, Monday to Saturday" (`0 9-21/4 * * 1-6`), "every 4 hours" (`0 */4 * * *`) and
+  "every hour" (`0 * * * *`). The setup wizard offers the activity-based mode (selected), daily at
+  02:00, the Monday to Saturday preset and every 4 hours. Settings, General sets the same two modes
+  for the default policy of new libraries: activity-based with its interval, or a cron expression
+  (without the presets). A library without a policy of its own takes the default one when it becomes
+  active and keeps its policy from then on: changing the default does not change it.
 - A verified backup whose mark matches the current one remains valid even if old: it does not
   trigger `backup.stale` or paint an amber band on the protection timeline.
 - `backup.stale` only counts as recent a verified backup dated up to now (5 minutes of
@@ -636,7 +751,8 @@ stateDiagram-v2
 - Cancellable: `backup.create`, `backup.verify`, `backup.export`, `backup.import`, `restore.new`
   and `system.vacuum`. Not cancellable: `restore.replace`, `restore.revert`, `restore.recreate`,
   the library jobs (create, delete, recover, purge) and the other system jobs. A backup cut by a
-  cancel or a graceful stop ends `interrupted`, without a `backup.failed` event.
+  cancel or a graceful stop ends `interrupted`, without a `backup.failed` event. A job that has
+  already ended is not cancelled: `SQS-J006` (`409` in the API).
 - Who may cancel or retry: whoever may start the operation of the job's type (its `Action`):
   `backup.create` for a backup, `restore.replace` for a restore by replacing and a recreate,
   `library.delete` for trash, recover and purge, administrators for system jobs. The panel and
@@ -665,8 +781,8 @@ stateDiagram-v2
   `system.internal_error` event and the loop goes on; a schedule that panics moves on to its
   next run.
 - Job and log history: 90 days (events: 180 days), removed by housekeeping (§12). An
-  interrupted restore, revert, delete, recreate or purge that reconciliation has not settled yet
-  is kept past that until it is settled (§8).
+  interrupted restore, revert, delete, recovery from the trash, recreate or purge that
+  reconciliation has not settled yet is kept past that until it is settled (§8).
 
 ## 12. Default maintenance jobs
 
@@ -678,7 +794,7 @@ backup and the catalog check by hand from Settings, Maintenance.
 
 | Job | Schedule |
 |---|---|
-| Retention for all libraries | Daily 04:00 and after every backup |
+| Retention for every library with a policy of its own (§6) | Daily 04:00 and after every backup |
 | L2 verification of the newest verified backup of each library | Sunday 05:00 |
 | `VACUUM (ANALYZE)` per library (`vacuumdb --analyze --skip-locked`) | Sunday 03:00 |
 | Schema fingerprint | Every 5 min |

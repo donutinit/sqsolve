@@ -146,6 +146,10 @@ func TestOperatorCannotCancelOrRetryAdminJobs(t *testing.T) {
 	if g, _ := a.Jobs.Get(ctx, j.ID); g.State != jobs.Cancelled {
 		t.Fatalf("state after the admin cancel: %s", g.State)
 	}
+	// Once it has ended it is not cancelled again, and the notice says why.
+	if _, loc, msg := fxPost(boss, "/jobs/"+j.ID+"/cancel", url.Values{"csrf": {bossTok}}); loc != "/jobs/"+j.ID || msg != "SQS-J006 the job has already ended" {
+		t.Fatalf("cancel of an ended job: %s %q", loc, msg)
+	}
 	before := jobCount(t, a)
 	// The operator cannot replay it.
 	st, _, body = op.do("POST", "/jobs/"+j.ID+"/retry", url.Values{"csrf": {opTok}})

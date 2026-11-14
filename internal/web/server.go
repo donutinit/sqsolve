@@ -350,8 +350,12 @@ func (s *Server) renderError(w http.ResponseWriter, r *http.Request, p *auth.Pri
 	s.renderStatus(w, r, status, "error", "Error", "", map[string]any{"Status": status, "Message": msg})
 }
 
-// fail shows an error from a service as a flash and redirects back.
+// fail shows an error from a service as a flash and redirects back. The
+// driver's text of a failed connection to PostgreSQL goes to the process log
+// and only a reader with the diagnostics permission gets it
+// (core.Service.ReaderError).
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, back string, err error) {
+	err = s.A.Svc.ReaderError(err, "request", principalOf(r).Can(auth.ActDiagnostics), "path", r.URL.Path)
 	s.flash(w, "error", humanError(err))
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }

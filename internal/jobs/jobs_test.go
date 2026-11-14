@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -194,6 +195,29 @@ func TestCancelAndInterrupt(t *testing.T) {
 	}
 }
 
+// A job that has ended, whatever its end, cannot be cancelled: it exists, so
+// the refusal is SQS-J006 and not SQS-J002, and its row is left as it was.
+func TestCancelAnEndedJob(t *testing.T) {
+	m, db := newManager(t)
+	ctx := context.Background()
+	for _, st := range []State{Succeeded, Failed, Cancelled, Interrupted} {
+		id := "E-" + string(st)
+		if _, err := db.ExecContext(ctx, `INSERT INTO jobs(id, type, state, scheduled_for, created_at, finished_at, created_by_type) VALUES (?, 't.noop', ?, ?, ?, ?, 'system')`,
+			id, string(st), store.NowT(), store.NowT(), store.NowT()); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Cancel(ctx, id); !errors.Is(err, ErrEnded) || err.Error() != "SQS-J006 the job has already ended" {
+			t.Errorf("cancel of a %s job: %v", st, err)
+		}
+		if j, err := m.Get(ctx, id); err != nil || j.State != st {
+			t.Errorf("%s job after the refused cancel: %+v %v", st, j, err)
+		}
+	}
+	if err := m.Cancel(ctx, "NOSUCHJOB"); !errors.Is(err, ErrNotFound) || err.Error() != "SQS-J002 job not found" {
+		t.Fatalf("cancel of an unknown job: %v", err)
+	}
+}
+
 // PLAN P0.2: a step runs only once its row is stored, and a journal must
 // land on the row of its step.
 func TestStepAndJournalAreRequired(t *testing.T) {
@@ -330,4 +354,41 @@ func TestUniqueJobIdentity(t *testing.T) {
 	if entries, _ := log.List(ctx, 0, 10, ""); len(entries) != 1 || entries[0].Details["job_id"] != first.ID {
 		t.Fatalf("audit entries %+v", entries)
 	}
+}
+
+// ADR 0028, ADR 0029: Unique also returns the job this process is running,
+// not only a queued one, and refuses other parameters while it runs.
+// Replace, delete, recover and purge rely on it while their job runs.
+func TestUniqueReturnsTheRunningJob(t *testing.T) {
+	m, _ := newManager(t)
+	hold, running := make(chan struct{}), make(chan struct{})
+	var release sync.Once
+	defer release.Do(func() { close(hold) })
+	m.Register(Spec{Type: "t.swap", Run: func(ctx context.Context, r *Run) error {
+		close(running)
+		<-hold
+		return nil
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.Start(ctx)
+	first, err := m.Enqueue(ctx, "t.swap", "L1", map[string]string{"backup_id": "B1"}, audit.System, Unique())
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-running:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the job never started")
+	}
+	same, err := m.Enqueue(ctx, "t.swap", "L1", map[string]string{"backup_id": "B1"}, audit.System, Unique())
+	if err != nil || same.ID != first.ID || same.State != Running {
+		t.Fatalf("same parameters: %+v %v", same, err)
+	}
+	_, err = m.Enqueue(ctx, "t.swap", "L1", map[string]string{"backup_id": "B2"}, audit.System, Unique())
+	if !errors.Is(err, ErrConflict) || err.Error() != "SQS-J005 another job of this type is already queued or running for this library with different parameters; wait for it or cancel it (job "+first.ID+")" {
+		t.Fatalf("other parameters: %v", err)
+	}
+	release.Do(func() { close(hold) })
+	waitState(t, m, first.ID, Succeeded)
 }

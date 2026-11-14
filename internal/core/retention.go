@@ -43,7 +43,8 @@ type RetentionPolicy struct {
 // "Most recent" (keep_last and the minimum of verified backups) follows the
 // insertion order (Seq), which a clock that jumps cannot reorder: the backup
 // just taken is always among the newest. The calendar rules (days, weeks,
-// months) can only use the timestamps.
+// months) can only use the timestamps. keep_last counts the backups of
+// every kind except pre_restore, which take none of its places (docs 11 §6).
 func Retain(items []RetentionItem, p RetentionPolicy, now time.Time) (keep map[string]string, expire []string) {
 	loc := p.Location
 	if loc == nil {
@@ -84,10 +85,24 @@ func Retain(items []RetentionItem, p RetentionPolicy, now time.Time) (keep map[s
 			}
 		}
 	}
-	for i, it := range inserted {
-		if i < p.KeepLast {
-			mark(it.ID, fmt.Sprintf("among the %d most recent", p.KeepLast))
+	// keep_last counts the backups that are not of kind pre_restore. Every
+	// replace or revert leaves two pre_restore backups (docs 11 §7.2, §7.4);
+	// counted here, a few restores pushed the regular backups out, the
+	// restored one included. A pre_restore backup with fewer than keep_last
+	// newer backups of other kinds is kept too, with a reason of its own,
+	// and takes no place: this keeps every backup that counting all kinds
+	// kept, and more.
+	counted := 0
+	for _, it := range inserted {
+		if counted >= p.KeepLast {
+			break
 		}
+		if it.Kind == KindPreRestore {
+			mark(it.ID, fmt.Sprintf("before a restore, fewer than %d newer backups of other kinds", p.KeepLast))
+			continue
+		}
+		mark(it.ID, fmt.Sprintf("among the %d most recent", p.KeepLast))
+		counted++
 	}
 	bucket := func(n int, key func(time.Time) string, label string) {
 		if n <= 0 {
@@ -155,10 +170,13 @@ func (s *Service) RetentionPreview(ctx context.Context, libraryID string, p Poli
 
 // retentionItems reads the ok backups of a library that retention decides
 // on: the blocked ones are not among them. The SQLite rowid of the catalog
-// row is its insertion order.
+// row is its insertion order. Without the database name of the library it
+// cannot tell the auxiliary backups, so a failed lookup stops it.
 func (s *Service) retentionItems(ctx context.Context, libraryID string) ([]RetentionItem, error) {
 	var dbName string
-	s.DB.QueryRowContext(ctx, `SELECT db_name FROM libraries WHERE id = ?`, libraryID).Scan(&dbName)
+	if err := s.DB.QueryRowContext(ctx, `SELECT db_name FROM libraries WHERE id = ?`, libraryID).Scan(&dbName); err != nil {
+		return nil, err
+	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT id, rowid, started_at, kind, pinned, verify_status, source_db, file_path FROM backups
 		WHERE library_id = ? AND status = 'ok'`, libraryID)
 	if err != nil {
@@ -172,10 +190,11 @@ func (s *Service) retentionItems(ctx context.Context, libraryID string) ([]Reten
 		if err := rows.Scan(&it.ID, &it.Seq, &started, &it.Kind, &it.Pinned, &verify, &source, &path); err != nil {
 			return nil, err
 		}
-		// A blocked backup (SQS-B043) is left alone: it is not a candidate.
-		// It is not one of the verified backups retention must keep, it
-		// takes none of the places of the policy (a readable backup would
-		// expire in its stead) and it is never expired.
+		// A blocked backup (SQS-B043, or SQS-B045 while its path cannot be
+		// checked) is left alone: it is not a candidate. It is not one of
+		// the verified backups retention must keep, it takes none of the
+		// places of the policy (a readable backup would expire in its stead)
+		// and it is never expired.
 		if s.blocked(&Backup{ID: it.ID, FilePath: path}) {
 			continue
 		}
@@ -256,23 +275,49 @@ func (s *Service) backupsInUse(ctx context.Context) (map[string]bool, error) {
 
 // applyRetention deletes expired backups of a library and cleans failed
 // leftovers. It returns how many backups were removed. Backups that a job is
-// about to read are kept until a later run.
+// about to read are kept until a later run, and a library without a policy
+// of its own keeps all of them (retainLibrary).
 func (s *Service) applyRetention(ctx context.Context, libraryID string) (int, error) {
-	p, err := s.Policy(ctx, libraryID)
-	if err != nil {
-		return 0, err
+	n, _, err := s.retainLibrary(ctx, libraryID)
+	return n, err
+}
+
+// retainLibrary is applyRetention; own is false when the library has no
+// policy of its own (no backup_policies row: one the catalog rebuild
+// registered, or one not active yet). None of its backups expire then: the
+// default policy of Settings is what a new library starts with, not a
+// choice about the backups an earlier installation kept, whose policy and
+// pins the manifests do not record (docs 11 §6). The leftovers of its
+// failed backups are cleaned as for any library. On a backups volume that is
+// not this installation's it does nothing and returns the error of
+// BackupVolumeOK.
+func (s *Service) retainLibrary(ctx context.Context, libraryID string) (n int, own bool, err error) {
+	// Nothing is deleted, nor recorded deleted, on a backups volume that is
+	// not this installation's (see removeBackupFiles).
+	if err := s.BackupVolumeOK(); err != nil {
+		return 0, false, err
 	}
-	_, expire, err := s.RetentionPreview(ctx, libraryID, p)
+	p, own, err := s.policyRow(ctx, libraryID)
 	if err != nil {
-		return 0, err
+		return 0, false, err
+	}
+	var expire []string
+	if own {
+		if _, expire, err = s.RetentionPreview(ctx, libraryID, p); err != nil {
+			return 0, own, err
+		}
 	}
 	var inUse map[string]bool
 	if len(expire) > 0 {
 		if inUse, err = s.backupsInUse(ctx); err != nil {
-			return 0, err
+			return 0, own, err
 		}
 	}
-	n := 0
+	// Listed before anything is deleted: a failed lookup stops the pass.
+	failed, err := s.Backups(ctx, BackupFilter{LibraryID: libraryID, Statuses: []string{BackupFailed, BackupInterrupted}})
+	if err != nil {
+		return 0, own, err
+	}
 	for _, id := range expire {
 		if inUse[id] {
 			s.Log.Info("retention: backup in use by a job; kept until the next run", "backup", id)
@@ -289,7 +334,6 @@ func (s *Service) applyRetention(ctx context.Context, libraryID string) (int, er
 		n++
 	}
 	// Remove files of failed or interrupted backups and old failed rows.
-	failed, _ := s.Backups(ctx, BackupFilter{LibraryID: libraryID, Statuses: []string{BackupFailed, BackupInterrupted}})
 	for _, b := range failed {
 		abs, err := s.AbsPath(b)
 		if err != nil {
@@ -316,5 +360,5 @@ func (s *Service) applyRetention(ctx context.Context, libraryID string) (int, er
 		s.Events.Emit(ctx, events.Event{Type: events.BackupExpired, LibraryID: libraryID,
 			Message: fmt.Sprintf("Retention deleted %d backups of %q", n, name), Data: map[string]any{"count": n}})
 	}
-	return n, nil
+	return n, own, nil
 }

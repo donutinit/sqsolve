@@ -73,6 +73,14 @@ func TestLibraryAccessWithPostgreSQL(t *testing.T) {
 	if _, _, msg := fxPost(boss, base+"/people", url.Values{"csrf": {tok}, "person": {"ana"}}); msg != "SQS-L033 role apolo__ana already exists" {
 		t.Fatalf("add the same person twice: %q", msg)
 	}
+	// The rewrite of pg_hba.conf that lets her in has its own entries.
+	if got := outcomes("postgres.hba"); got != "accepted,ok" {
+		t.Fatalf("postgres.hba audit: %s", got)
+	}
+	if acc := auditEntries(t, a, "postgres.hba")[1]; acc.Actor.Name != "boss" || acc.TargetID != l.ID ||
+		acc.Details["cause"] != "library.member_add" || acc.Details["role"] != "apolo__ana" {
+		t.Fatalf("postgres.hba accepted %+v", acc)
+	}
 	var memberID string
 	creds, _ := a.Svc.Credentials(ctx, l.ID)
 	for _, cr := range creds {
@@ -223,5 +231,60 @@ func TestLibraryAccessWithPostgreSQL(t *testing.T) {
 	}
 	if got := outcomes("maintenance.hba"); got != "accepted,ok" {
 		t.Fatalf("hba audit: %s", got)
+	}
+}
+
+// The default policy set in Settings, General reaches a
+// library created afterwards, in cron mode as in activity mode, and a
+// library that already has its policy keeps it when the default changes.
+func TestNewLibraryTakesTheDefaultPolicyOfSettings(t *testing.T) {
+	a, srv, c := fxPGPanel(t)
+	ctx := context.Background()
+	boss, tok := jobsLogin(t, srv, "boss", jobsAdminPass)
+	// maintenance_db is sent because an absent checkbox turns off the access
+	// to the postgres database that fxActiveLibrary needs.
+	general := func(fields ...string) {
+		t.Helper()
+		form := url.Values{"csrf": {tok}, "maintenance_db": {"on"}}
+		for i := 0; i+1 < len(fields); i += 2 {
+			form.Set(fields[i], fields[i+1])
+		}
+		if _, loc, msg := fxPost(boss, "/settings/general", form); loc != "/settings" || msg != "Settings saved." {
+			t.Fatalf("%q: %s %q", fields, loc, msg)
+		}
+	}
+	initTables := func(conn *pgx.Conn) {
+		if _, err := conn.Exec(ctx, `CREATE TABLE "SM_Project"(id serial primary key, name text)`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Read from the table: Policy falls back to the default policy.
+	row := func(l *core.Library) (p core.Policy) {
+		t.Helper()
+		if err := a.DB.QueryRowContext(ctx, `SELECT mode, check_minutes, schedule_cron, timezone, keep_last, keep_daily, keep_weekly, keep_monthly
+			FROM backup_policies WHERE library_id = ?`, l.ID).Scan(&p.Mode, &p.CheckMinutes, &p.Cron, &p.Timezone,
+			&p.KeepLast, &p.KeepDaily, &p.KeepWeekly, &p.KeepMonthly); err != nil {
+			t.Fatalf("policy of %s: %v", l.Slug, err)
+		}
+		return p
+	}
+
+	general("default_mode", "cron", "default_cron", "30 1 * * *", "keep_last", "4", "keep_daily", "5", "keep_weekly", "6", "keep_monthly", "7")
+	apolo := fxActiveLibrary(t, a, c, boss, tok, "Apolo", "apolo", initTables)
+	want := core.Policy{Mode: core.ModeCron, CheckMinutes: 15, Cron: "30 1 * * *", Timezone: "UTC", KeepLast: 4, KeepDaily: 5, KeepWeekly: 6, KeepMonthly: 7}
+	if p := row(apolo); p != want {
+		t.Fatalf("policy of apolo %+v, want %+v", p, want)
+	}
+	if sc, err := a.Sched.Get(ctx, core.ScheduleBackup, apolo.ID); err != nil || sc == nil || sc.Cron != "30 1 * * *" || !sc.Enabled {
+		t.Fatalf("schedule of apolo %+v %v", sc, err)
+	}
+
+	general("default_mode", "activity", "default_check_minutes", "30")
+	bora := fxActiveLibrary(t, a, c, boss, tok, "Bora", "bora", initTables)
+	if p := row(bora); p.Mode != core.ModeActivity || p.CheckMinutes != 30 || p.Cron != "*/30 * * * *" {
+		t.Fatalf("policy of bora %+v", p)
+	}
+	if p := row(apolo); p != want {
+		t.Fatalf("the new default changed apolo: %+v", p)
 	}
 }

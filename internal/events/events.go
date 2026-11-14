@@ -76,6 +76,7 @@ const (
 	BackupStale              = "backup.stale"
 	BackupExpired            = "backup.expired"
 	BackupPathInvalid        = "backup.path_invalid"
+	BackupPathUnchecked      = "backup.path_unchecked"
 	RestoreStarted           = "restore.started"
 	RestoreSucceeded         = "restore.succeeded"
 	RestoreFailed            = "restore.failed"

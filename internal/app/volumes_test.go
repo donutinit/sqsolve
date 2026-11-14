@@ -197,7 +197,7 @@ func TestInitAdoptsForeignFilesOnlyWhenAsked(t *testing.T) {
 	cfg := testConfig(t)
 	os.WriteFile(filepath.Join(cfg.BackupDir, "old.txt"), []byte("x"), 0o600)
 	out := mustInit(t, cfg)
-	if !strings.Contains(out, "SQS-S004") {
+	if !strings.Contains(out, "SQS-S004 the backups volume "+cfg.BackupDir+" has files but does not belong to sqsolve.") {
 		t.Fatalf("want SQS-S004:\n%s", out)
 	}
 	if _, err := fsx.ReadMarker(cfg.BackupDir); !errors.Is(err, fsx.ErrNoMarker) {
@@ -406,7 +406,7 @@ func TestInitRefusesUnreadableDBMarker(t *testing.T) {
 	cfg := established(t)
 	os.WriteFile(filepath.Join(cfg.PGDir, fsx.MarkerName), []byte("garbage"), 0o600)
 	_, err := initOut(t, cfg)
-	if err == nil || !strings.Contains(err.Error(), "SQS-S015") {
+	if err == nil || !strings.HasPrefix(err.Error(), "SQS-S015 cannot read the marker of the database volume "+cfg.PGDir+": ") {
 		t.Fatalf("want SQS-S015, got %v", err)
 	}
 	cfg.DBAdopt = true
@@ -438,12 +438,12 @@ func TestInitRefusesMismatchedAppMarker(t *testing.T) {
 	cfg := established(t)
 	fsx.WriteMarker(cfg.AppDir, fsx.Marker{InstanceID: "OTHER", Volume: "app", CreatedAt: time.Now()})
 	_, err := initOut(t, cfg)
-	if err == nil || !strings.Contains(err.Error(), "SQS-S010") {
+	if err == nil || !strings.HasPrefix(err.Error(), "SQS-S010 the application volume "+cfg.AppDir+" holds the app volume of installation OTHER but its instance_id is ") {
 		t.Fatalf("want SQS-S010, got %v", err)
 	}
 	os.WriteFile(filepath.Join(cfg.AppDir, fsx.MarkerName), []byte("garbage"), 0o600)
 	_, err = initOut(t, cfg)
-	if err == nil || !strings.Contains(err.Error(), "SQS-S017") {
+	if err == nil || !strings.HasPrefix(err.Error(), "SQS-S017 cannot read the marker of the application volume "+cfg.AppDir+": ") {
 		t.Fatalf("want SQS-S017, got %v", err)
 	}
 }
@@ -454,7 +454,8 @@ func TestInitRefusesToGuessIdentity(t *testing.T) {
 	cfg := testConfig(t)
 	os.WriteFile(filepath.Join(cfg.BackupDir, fsx.MarkerName), []byte("garbage"), 0o600)
 	_, err := initOut(t, cfg)
-	if err == nil || !strings.Contains(err.Error(), "SQS-S016") {
+	if err == nil || !strings.HasPrefix(err.Error(), "SQS-S016 cannot tell whether this is a new installation or a recovery: the application "+
+		"and database volumes have no identity and the marker of the backups volume cannot be read (") {
 		t.Fatalf("want SQS-S016, got %v", err)
 	}
 	if _, err := os.Stat(instanceIDPath(cfg)); !errors.Is(err, os.ErrNotExist) {

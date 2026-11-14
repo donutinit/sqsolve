@@ -71,7 +71,7 @@ the names of all databases. This is documented; no "secret library" is offered.
 ```mermaid
 stateDiagram-v2
   [*] --> provisioning: create
-  provisioning --> awaiting_init: role and rules ready (E1)
+  provisioning --> awaiting_init: role created, window open (E1)
   provisioning --> active: pre-created (E0, experimental) or restored from a backup
   awaiting_init --> active: Resolve initialized the database
   awaiting_init --> init_expired: window expires
@@ -105,6 +105,12 @@ stateDiagram-v2
 | `missing` | No (no database under its name) | No | Yes, with actions |
 | `trashed` | No | No | In "Trash" |
 | `purged` | No | No | Only in the audit log |
+
+The creation job (`library.create`) makes a new library `awaiting_init` (E1) or `active` (E0) one
+step before it writes the library's `pg_hba.conf` lines and reloads PostgreSQL, so a workstation
+that connects in between is refused. While that job is queued or running, the library page says
+"Preparing the library" and shows no value to connect with (`09-web-ui.md` §4.1), and an API
+client connects only once the job has succeeded (`10-api.md` §2).
 
 Each state promises an access and sqsolve applies it in one place (ADR 0024): `LOGIN` for the
 roles with an active credential in `active`, `awaiting_init`, `init_expired` and `missing`;
@@ -143,7 +149,10 @@ implemented; both are roadmap directions (`20-roadmap.md`).
    <slug>`. The database keeps its owner.
 6. Schema fingerprint, default backup policy and first backup (chained job).
 7. Maximum window configurable from 5 min to 24 h, 60 min by default; when it expires `CREATEDB`
-   is removed and the library goes to `init_expired`, from where the window can be reopened.
+   is removed, the library goes to `init_expired` (the `library.init_expired` event follows that
+   write) and its `pg_hba.conf` lines are removed at once; a rewrite that fails is a warning in
+   the log and is reported as not in force (docs 08 §7). From there the window can be reopened; a
+   reopen whose catalog write fails takes `CREATEDB` back and leaves the library `init_expired`.
 
 Bounded risk: during the window, the role could create other databases. It is mitigated by the
 short duration, by the `pg_hba.conf` that only lets it connect to its database and the
@@ -178,17 +187,27 @@ the catalog" and are not backed up. Both are roadmap directions (`20-roadmap.md`
   (`SQS-L070`), so the panel never shows a password that does not work; if that also fails (for
   example, the stored password cannot be decrypted), `SQS-L071` asks to rotate again. Both are
   recorded in the audit log as failed rotations. When the `ALTER ROLE ... PASSWORD` itself fails,
-  its PostgreSQL error is returned with the verifier redacted, which drops the wrapped error chain
-  (`19-risks.md` §5 K-08).
+  its error is returned with the verifier redacted and keeps its cause: it still matches
+  `SQS-P001`, `SQS-P050` and `SQS-P051` with `errors.Is` and the SQLSTATE of PostgreSQL with
+  `pg.IsCode`, and the PostgreSQL error it hands out is a copy with the verifier redacted too. The
+  errors of the other two statements that carry a verifier, the `CREATE ROLE` of a library role
+  (`SQS-P020`) and the statement of `pg.Bootstrap` (`SQS-P002`), are redacted the same way and
+  keep their SQLSTATE.
 - Add a per-person credential (not validated with Resolve, PoC-01 step 5): the role is created
   together with its membership of `sqsolve_admin` in one transaction (§3); a later failure (owner
   membership, default role, the SQLite row or `CONNECT`) drops the role and the row (`SQS-L072`),
   so the same person can be added again. A library in maintenance gets the new role as
-  `NOLOGIN`. Afterwards `pg_hba.conf` is rewritten to include the role; that rewrite has no audit
-  entry of its own (`19-risks.md` §5 K-07).
+  `NOLOGIN`. Afterwards `pg_hba.conf` is rewritten to include the role, under an audit entry of
+  its own (`postgres.hba`, docs 08 §9). If that rewrite fails, or its entry cannot be written
+  (`SQS-X040`), the person stays added, the error is shown and the role cannot connect until the
+  next rewrite of `pg_hba.conf` (docs 08 §7).
 - Revoke a per-person credential: `ALTER ROLE ... NOLOGIN`, close its sessions, set `revoked_at`
   and rewrite `pg_hba.conf` without its role. If `revoked_at` cannot be recorded, `SQS-L080` asks
-  to revoke again, because the next start would give the role its login back. The role is not
+  to revoke again, because the next start would give the role its login back. If its sessions
+  cannot be listed or closed, the revocation is still recorded and `pg_hba.conf` still rewritten,
+  and `SQS-L081` says that a workstation still connected with the role keeps working until it
+  disconnects (followed by the error of the rewrite if that failed too); the audit entry is
+  `failed` with that text. That session can still be closed by hand (§7, §8). The role is not
   dropped: it stays `NOLOGIN` until the library is purged.
 - A revoked role name is not reused: while the role exists, adding the same person again fails
   with `SQS-L033`.
@@ -206,8 +225,10 @@ WHERE a.datname = $1 AND a.backend_type = 'client backend' AND a.pid <> pg_backe
 ORDER BY a.backend_start;
 ```
 
-Terminate a session: `pg_terminate_backend(pid)` after confirmation, only if `usename` is a role
-of that library (`SQS-L016` otherwise). Audited as `library.session_terminate` with the `pid`.
+Terminate a session: `pg_terminate_backend(pid)` after confirmation, only if `usename` is the
+role of a credential of that library, a revoked one included (a session it opened before its
+revocation stays open, `SQS-L081`); `SQS-L016` otherwise. Audited as
+`library.session_terminate` with the `pid`. Closing a session gives no role its login back.
 
 Terminate every session of a database (maintenance, delete, restore): all client sessions except
 sqsolve's own and those of superusers. PostgreSQL does not let `sqsolve_admin` end a superuser
@@ -229,8 +250,8 @@ the mark so that a statistics reset is never read as "no changes".
 
 | Action | SQL |
 |---|---|
-| Maintenance on (ADR 0024) | `ALTER ROLE <role> NOLOGIN` for the owner and every active member, `ALTER DATABASE <slug> ALLOW_CONNECTIONS true` and, if requested, terminate the sessions of those roles only |
-| Maintenance off | `ALTER ROLE <role> LOGIN` for the roles with an active credential (revoked ones stay `NOLOGIN`; a person added during maintenance was created `NOLOGIN` and gets `LOGIN` here) |
+| Maintenance on (ADR 0024) | `ALTER ROLE <role> NOLOGIN` for the owner and every active member, `ALTER DATABASE <slug> ALLOW_CONNECTIONS true` and, if requested, terminate the sessions of the library roles only, revoked members included (their roles are already `NOLOGIN`); a session that cannot be listed or closed leaves the library in maintenance and is reported (`SQS-L082`) |
+| Maintenance off | `ALTER ROLE <role> LOGIN` for the roles with an active credential (revoked ones stay `NOLOGIN`; a person added during maintenance was created `NOLOGIN` and gets `LOGIN` here). Either way, a state that cannot be written fails the change, recorded failed with no event, and the roles get back the access of the state the library keeps |
 | Temporary lock before a rename (delete, restore by swap, revert) | `ALTER DATABASE <slug> ALLOW_CONNECTIONS false` and terminate sessions; undone if anything fails before the rename |
 | Connection limit | `ALTER ROLE <role> CONNECTION LIMIT n` on the owner and on every member role; the database stays at `CONNECTION LIMIT -1` |
 | Optimize | `vacuumdb --analyze --skip-locked` on every library in `active` or `maintenance` (the weekly `system.vacuum` job, or Settings, Maintenance, on demand); sqsolve does not reindex |
@@ -350,9 +371,10 @@ library, reads that one row and treats an invalid database as missing; an error 
 databases: at every start, reconciliation drops the invalid auxiliary ones (`sqsolve_verify_*`,
 `sqsolve_export_*`, `*__restore_*`) like any other leftover of those kinds; any other invalid
 database (a library, `__prev`, `__trash` or one created by hand) is never dropped automatically
-and an administrator drops it with `DROP DATABASE` as the superuser after checking Health. A name
-held by an invalid database is still taken: creating a library or restoring as new with that
-identifier fails with `SQS-L005`.
+and an administrator drops it with `DROP DATABASE` as the superuser after checking Health; the
+purge of expired items keeps such a `__prev` with `SQS-R062` instead of counting it as dropped
+(docs 11 §7.4). A name held by an invalid database is still taken: creating a library or
+restoring as new with that identifier fails with `SQS-L005`.
 
 Generated `pg_hba.conf` (order matters, first match wins; fields are separated by tabs):
 
@@ -386,9 +408,10 @@ host    all         all                          all              reject
 With "TLS only" in Settings, the library lines use `hostssl` instead of `host` (PoC-06: Resolve
 21.1.1 on Linux connects with it; other platforms were not tested). sqsolve writes the file
 keeping the previous version as `pg_hba.conf.prev` and, before reloading, validates it by reading
-`pg_hba_file_rules`; if there are errors it puts `.prev` back and does not reload (`SQS-P042`). A
-change counts as applied only after a successful reload; how a failed one is retried is in docs
-08 §7.
+`pg_hba_file_rules`; if there are errors it puts `.prev` back and does not reload (`SQS-P042`, and
+the error says so when `.prev` cannot be put back). Without the stored settings it writes nothing
+(`SQS-P044`). A change counts as applied only after a successful reload; how a failed one is
+retried is in docs 08 §7.
 
 ## 11. Control plane SQLite schema
 

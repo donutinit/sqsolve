@@ -70,7 +70,7 @@ func (s *Server) backup(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{"B": b, "L": l}
 	if m, err := s.A.Svc.BackupManifest(b); err == nil {
 		data["M"] = m
-	} else if errors.Is(err, core.ErrBackupPath) {
+	} else if errors.Is(err, core.ErrBackupPath) || errors.Is(err, core.ErrBackupPathUnchecked) {
 		data["PathError"] = humanError(err)
 	}
 	if b.JobID != "" {
@@ -277,11 +277,15 @@ func (s *Server) importSubmit(w http.ResponseWriter, r *http.Request) {
 }
 
 // saveUpload streams a file part into the import folder of the backups
-// volume and returns its name there.
+// volume and returns its name there. Without the volume's marker nothing is
+// written: on an unmounted disk the upload would fill the empty mount point.
 func (s *Server) saveUpload(part *multipart.Part) (string, error) {
 	base := filepath.Base(strings.ReplaceAll(part.FileName(), "\\", "/"))
 	if base == "." || base == "/" || base == ".." || strings.HasPrefix(base, ".") || strings.HasSuffix(base, ".partial") {
 		return "", errors.New("SQS-B050 invalid file name")
+	}
+	if err := s.A.Svc.BackupVolumeOK(); err != nil {
+		return "", err
 	}
 	dir := s.A.Svc.ImportDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {

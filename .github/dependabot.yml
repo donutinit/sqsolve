@@ -3,7 +3,9 @@
 # PostgreSQL minor version that reaches every installation) and the GitHub Actions (pinned by
 # commit SHA). Docs 17 section 7.
 #
-# Every update waits 7 days after publication (the project's 7-day rule). Go modules are not
+# Every update waits 7 days after publication (the project's 7-day rule). A base image that
+# fixes a vulnerability may be taken sooner, by hand (docs 17 section 7): the cooldown below
+# stays at 7 days and Dependabot opens no security updates for Docker images. Go modules are not
 # listed: they are updated by hand once a month and every new one needs an ADR (docs 06 section 9).
 #
 # PostgreSQL appears in two files that must carry the same tag and digest: Dockerfile and

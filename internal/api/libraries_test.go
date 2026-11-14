@@ -222,6 +222,43 @@ func TestAPIConnectionAndReveal(t *testing.T) {
 	}
 }
 
+// A change that is done and recorded but whose library cannot be read again
+// for the answer is a 500 problem, not a panic: a PATCH whose update leaves a
+// row that does not scan, and a reveal whose connection data cannot be read,
+// which keeps the password out of the answer.
+func TestAPIAnswersWhenTheRereadFails(t *testing.T) {
+	e := apiServer(t)
+	e.seedLibrary(t, "L1", "lib", "Lib", core.StateActive)
+	e.seedLibrary(t, "L2", "other", "Other", core.StateActive)
+	e.seedCredential(t, "C2", "L2", "owner", "other", "silver halide 400")
+	wantRereadProblem := func(what, path string, r reply) {
+		t.Helper()
+		if r.status != 500 || r.problem.Status != 500 || r.problem.Title != "Internal Server Error" || r.problem.Type != "about:blank" ||
+			r.problem.Code != "" || r.problem.Instance != path || !strings.Contains(r.problem.Detail, `"connection_limit"`) {
+			t.Errorf("%s: %d %s", what, r.status, r.body)
+		}
+	}
+
+	e.exec(t, `CREATE TRIGGER garble AFTER UPDATE OF notes ON libraries BEGIN UPDATE libraries SET connection_limit = 'garbled' WHERE id = NEW.id; END`)
+	r := e.call(t, "PATCH", "/api/v1/libraries/L1", e.admin, `{"notes":"Grade by Friday"}`, false)
+	wantRereadProblem("patch", "/api/v1/libraries/L1", r)
+	var notes string
+	if err := e.a.DB.QueryRow(`SELECT notes FROM libraries WHERE id = 'L1'`).Scan(&notes); err != nil || notes != "Grade by Friday" || !e.hasEntry(t, "L1", "library.update", audit.OK) {
+		t.Errorf("the patch was not done and recorded: notes %q %v, entries %+v", notes, err, e.entries(t, "L1"))
+	}
+
+	e.exec(t, `UPDATE libraries SET connection_limit = 'garbled' WHERE id = 'L2'`)
+	const reveal = "/api/v1/libraries/L2/connection/reveal"
+	r = e.call(t, "POST", reveal, e.admin, "", false)
+	wantRereadProblem("reveal", reveal, r)
+	if strings.Contains(r.body, "silver") {
+		t.Fatalf("the password went out in the problem: %s", r.body)
+	}
+	if !e.hasEntry(t, "L2", "library.credential_reveal", audit.OK) {
+		t.Errorf("no reveal entry: %+v", e.entries(t, "L2"))
+	}
+}
+
 // Sessions of a library without a live database are an empty list without
 // asking PostgreSQL; a live library needs it (503 with SQS-P001 when down).
 func TestAPISessions(t *testing.T) {
@@ -315,4 +352,39 @@ func TestAPIBackupPolicy(t *testing.T) {
 func TestAPIBackupPolicyOfAnUnknownLibrary(t *testing.T) {
 	e := apiServer(t)
 	wantProblem(t, "unknown library", e.call(t, "GET", "/api/v1/libraries/NOPE/backup-policy", e.admin, "", false), 404, "SQS-L002 library not found")
+}
+
+// K-03, ADR 0029: a second DELETE while the first job is queued answers 202
+// with that job, queues nothing and writes no entry.
+func TestAPILibraryDeleteTwiceIsOneJob(t *testing.T) {
+	e := apiServer(t)
+	e.seedLibrary(t, "L1", "lib", "Lib", core.StateActive)
+	var ids []string
+	for i := range 2 {
+		r := e.call(t, "DELETE", "/api/v1/libraries/L1", e.admin, `{"confirm":"lib"}`, false)
+		var j jobs.Job
+		decodeInto(t, r, &j)
+		if r.status != 202 || j.State != jobs.Queued || r.header.Get("Location") != "" {
+			t.Fatalf("delete %d: %d %v %s", i+1, r.status, r.header, r.body)
+		}
+		ids = append(ids, j.ID)
+	}
+	if ids[0] != ids[1] {
+		t.Fatalf("two jobs: %v", ids)
+	}
+	if js := e.jobsOf(t, "L1"); len(js) != 1 {
+		t.Fatalf("%d jobs", len(js))
+	}
+	n := 0
+	for _, en := range e.entries(t, "L1") {
+		if en.Action == "library.delete" {
+			n++
+			if en.Outcome != audit.Accepted || en.Details["job_id"] != ids[0] {
+				t.Fatalf("entry %+v", en)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d library.delete entries", n)
+	}
 }

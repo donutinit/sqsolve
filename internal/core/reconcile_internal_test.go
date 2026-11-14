@@ -159,3 +159,70 @@ func TestDropPrevKeepsItWhenPendingJobsCannotBeRead(t *testing.T) {
 		t.Fatalf("after settling: %v", err)
 	}
 }
+
+// A purge cut before it dropped its previous state, whose database cannot be
+// checked, is not settled, whether its journal names the previous state or,
+// written up to 1.2.3, only the catalog does.
+func TestReconcilePurgeWaitsWhenThePreviousStateCheckFails(t *testing.T) {
+	s, l := catalogOnly(t)
+	ctx := context.Background()
+	s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'trashed' WHERE id = ?`, l.ID)
+	l, _ = s.Library(ctx, l.ID)
+	for _, j := range []purgeJournal{{Library: "L1", PrevDB: "lib__prev_202610190000"}, {Library: "L1"}} {
+		var notes []string
+		note := func(format string, args ...any) { notes = append(notes, fmt.Sprintf(format, args...)) }
+		if s.reconcilePurge(ctx, l, j, note) {
+			t.Fatalf("a purge whose previous state could not be checked was settled: %+v", j)
+		}
+		if all := strings.Join(notes, "\n"); all != "lib: could not check whether the purge dropped lib__prev_202610190000 (SQS-P001 PostgreSQL is not available); nothing was changed" {
+			t.Fatalf("journal %+v: notes %q", j, all)
+		}
+		if got, _ := s.Library(ctx, l.ID); got.State != StateTrashed || got.PrevDB != "lib__prev_202610190000" || got.PrevBackupID != "B0" {
+			t.Fatalf("library changed: %+v", got)
+		}
+	}
+}
+
+// A recovery from the trash cut after its journal, whose databases cannot be
+// checked, is not settled and changes nothing; one cut before its journal has
+// nothing to settle.
+func TestReconcileUntrashWaitsWhenTheCheckFails(t *testing.T) {
+	s, l := catalogOnly(t)
+	ctx := context.Background()
+	s.DB.ExecContext(ctx, `UPDATE libraries SET state = 'trashed', trash_db_name = 'lib__trash_20261020000000' WHERE id = ?`, l.ID)
+	l, _ = s.Library(ctx, l.ID)
+	var notes []string
+	note := func(format string, args ...any) { notes = append(notes, fmt.Sprintf(format, args...)) }
+	j := untrashJournal{TrashDB: "lib__trash_20261020000000", DBName: "lib"}
+	if s.reconcileUntrash(ctx, l, j, note) {
+		t.Fatal("a recovery whose databases could not be checked was settled")
+	}
+	if all := strings.Join(notes, "\n"); all != "lib: could not check whether the recovery from the trash moved lib__trash_20261020000000 back (SQS-P001 PostgreSQL is not available); nothing was changed" {
+		t.Fatalf("notes %q", all)
+	}
+	if got, _ := s.Library(ctx, l.ID); got.State != StateTrashed || got.TrashDB != j.TrashDB {
+		t.Fatalf("library changed: %+v", got)
+	}
+	notes = nil
+	if !s.reconcileUntrash(ctx, l, untrashJournal{}, note) || len(notes) != 0 {
+		t.Fatalf("a recovery cut before its journal: notes %q", notes)
+	}
+}
+
+// The check a purge runs before its first drop reports a lookup that fails
+// as such, never as another database of the role (SQS-L046).
+func TestPurgeCheckReportsAFailedLookup(t *testing.T) {
+	s, l := catalogOnly(t)
+	ctx := context.Background()
+	var owned *ownedError
+	err := s.checkOwned(ctx, l)
+	if err == nil || errors.As(err, &owned) || err.Error() != "could not check the previous-state database lib__prev_202610190000: SQS-P001 PostgreSQL is not available" {
+		t.Fatalf("previous state: %v", err)
+	}
+	s.DB.ExecContext(ctx, `UPDATE libraries SET prev_db_name = '' WHERE id = ?`, l.ID)
+	l, _ = s.Library(ctx, l.ID)
+	err = s.checkOwned(ctx, l)
+	if err == nil || errors.As(err, &owned) || err.Error() != "could not list the databases of lib: SQS-P001 PostgreSQL is not available" {
+		t.Fatalf("databases of the role: %v", err)
+	}
+}

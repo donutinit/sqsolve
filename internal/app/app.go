@@ -68,6 +68,10 @@ type App struct {
 	installCode     string
 	cert            atomic.Pointer[tls.Certificate]
 	cancel          context.CancelFunc
+
+	// checkPaths is the catalog path check Background starts; nil runs
+	// Svc.CheckCatalogPaths. Tests replace it.
+	checkPaths func(context.Context) (invalid, unchecked []string, err error)
 }
 
 // ReadMasterKey loads the master key file.
@@ -238,23 +242,37 @@ func (a *App) removeStalePartials() {
 }
 
 // checkBackupPaths reports the backup rows whose path is not valid (PLAN
-// 1.3.2): an upgrade does not rewrite them; they stay blocked until an
-// administrator reviews them.
+// 1.3.2) or could not be checked: an upgrade does not rewrite them; they
+// stay blocked. A stop that cuts the pass is not reported.
 func (a *App) checkBackupPaths(ctx context.Context) {
-	if ids, err := a.Svc.CheckCatalogPaths(ctx); err != nil {
+	check := a.checkPaths
+	if check == nil {
+		check = a.Svc.CheckCatalogPaths
+	}
+	invalid, _, err := check(ctx)
+	switch {
+	case ctx.Err() != nil:
+	case err != nil:
 		a.Log.Error("could not check the paths of the backup catalog", "err", err)
-	} else if len(ids) > 0 {
-		a.Log.Error("backups with a path that is not valid are blocked", "backups", ids)
+	case len(invalid) > 0:
+		a.Log.Error("backups with a path that is not valid are blocked", "backups", invalid)
 	}
 }
 
 // Background starts the monitor, the PostgreSQL connection, reconciliation
 // and the loops. The monitor and the notifier start first, so a PostgreSQL
 // that never answers is reported (postgres.down after the startup grace).
+// The check of the catalog paths runs in the background too.
 func (a *App) Background(ctx context.Context) {
 	ctx, a.cancel = context.WithCancel(ctx)
 	a.removeStalePartials()
-	a.checkBackupPaths(ctx)
+	// The check of the catalog paths only reports (every operation checks
+	// the path of its own backup) and costs 16 lstat calls for each backup
+	// on the backups volume (at /backups), so it runs apart: neither the
+	// panel nor the connection to PostgreSQL waits for it. It stops with
+	// ctx like the other loops; like Monitor.Run it is not joined at
+	// Shutdown, and Recorder.Emit survives a closed database.
+	go a.checkBackupPaths(ctx)
 	go a.Notify.Run(ctx)
 	go a.Monitor.Run(ctx)
 	go func() {

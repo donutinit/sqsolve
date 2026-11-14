@@ -59,7 +59,13 @@ variable afterwards. In step 5, a library whose database is still on the server 
 needs no recreation.
 
 Without a kit: install from scratch, `docker compose exec sqsolve sqsolve catalog rebuild --wait`
-to see the backups, and restore them as new libraries; workstations need new passwords.
+to see the backups, and restore them as new libraries; workstations need new passwords. The
+rebuild registers each library as Purged without a policy of its own. The manifests do not record
+the policies or the pins of the old installation, so retention keeps every backup of those
+libraries (the retention job log names them) until you save a policy in a library's Schedule
+tab, which shows how many backups that policy would delete; pin first any backup you want to
+keep. A library restored as new gets, for its own new backups, the policy shown in the Schedule
+tab of the library it came from.
 
 How to know it went well: `docker compose exec sqsolve sqsolve doctor` with no warnings (the
 three volume markers belong to the installation); the Health page in green; a project opens in

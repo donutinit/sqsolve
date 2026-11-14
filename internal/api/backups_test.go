@@ -68,6 +68,19 @@ func TestAPIBackupCatalog(t *testing.T) {
 	wantProblem(t, "unknown backup", e.call(t, "GET", "/api/v1/backups/NOPE", e.read, "", false), 404, "SQS-B001 backup not found")
 }
 
+// The catalog of a library that does not exist is 404 with SQS-L002, as
+// GET /libraries/{id} answers, not an empty list.
+func TestAPIBackupsOfAnUnknownLibrary(t *testing.T) {
+	e := apiServer(t)
+	for _, path := range []string{"/api/v1/libraries/NOPE/backups", "/api/v1/libraries/NOPE/backups?status=deleted"} {
+		r := e.call(t, "GET", path, e.read, "", false)
+		wantProblem(t, path, r, 404, "SQS-L002 library not found")
+		if r.problem.Type != "/docs/errors/SQS-L002" || r.problem.Title != "Not Found" || r.problem.Instance != "/api/v1/libraries/NOPE/backups" {
+			t.Errorf("%s: %+v", path, r.problem)
+		}
+	}
+}
+
 // Back up now: 404 for an unknown library, SQS-B003 for a library that
 // cannot be backed up, the backup scope for tokens, and no job without its
 // accepted entry (ADR 0026).
@@ -228,5 +241,57 @@ func TestAPIBackupDownload(t *testing.T) {
 	wantProblemPrefix(t, "audit log down", r, 503, x040)
 	if strings.Contains(r.body, "the dump bytes") {
 		t.Fatal("the file went out without its entry")
+	}
+}
+
+// K-03, ADR 0029: a second replacement with the same backup and the same
+// choice for the open sessions answers 202 with the queued job; another
+// backup or the other choice is refused with 409 and SQS-J005, which names
+// the job. Nothing else is queued and no other entry is written.
+func TestAPIRestoreReplaceTwice(t *testing.T) {
+	e := apiServer(t)
+	e.seedLibrary(t, "L1", "lib", "Lib", core.StateActive)
+	e.seedBackup(t, "B1", "L1", core.BackupOK, time.Now())
+	e.seedBackup(t, "B2", "L1", core.BackupOK, time.Now())
+	restore := e.token(t, "restore")
+	const replace = `{"mode":"replace","confirm":"lib"}`
+	var ids []string
+	for i := range 2 {
+		r := e.call(t, "POST", "/api/v1/backups/B1/restore", restore, replace, false)
+		var j jobs.Job
+		decodeInto(t, r, &j)
+		if r.status != 202 || j.State != jobs.Queued {
+			t.Fatalf("replace %d: %d %s", i+1, r.status, r.body)
+		}
+		ids = append(ids, j.ID)
+	}
+	if ids[0] != ids[1] {
+		t.Fatalf("two jobs: %v", ids)
+	}
+	j005 := "SQS-J005 another job of this type is already queued or running for this library with different parameters; wait for it or cancel it (job " + ids[0] + ")"
+	for _, c := range []struct{ name, backup, body string }{
+		{"the other choice for the open sessions", "B1", `{"mode":"replace","confirm":"lib","terminate_sessions":true}`},
+		{"another backup", "B2", replace},
+	} {
+		r := e.call(t, "POST", "/api/v1/backups/"+c.backup+"/restore", restore, c.body, false)
+		wantProblem(t, c.name, r, 409, j005)
+		if r.problem.Type != "/docs/errors/SQS-J005" || r.problem.Title != "Conflict" || r.problem.Instance != "/api/v1/backups/"+c.backup+"/restore" {
+			t.Errorf("%s: problem %+v", c.name, r.problem)
+		}
+	}
+	if js := e.jobsOf(t, "L1"); len(js) != 1 {
+		t.Fatalf("%d jobs", len(js))
+	}
+	n := 0
+	for _, en := range e.entries(t, "L1") {
+		if en.Action == "restore.replace" {
+			n++
+			if en.Outcome != audit.Accepted || en.Details["job_id"] != ids[0] || en.Details["backup_id"] != "B1" {
+				t.Fatalf("entry %+v", en)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d restore.replace entries", n)
 	}
 }

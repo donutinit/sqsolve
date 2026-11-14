@@ -143,7 +143,7 @@ those records do not cover.
 | RNF-FIA-01 | No sqsolve operation writes to a library's active database, except `GRANT`, connection-related `ALTER DATABASE` and the swap renames | Met |
 | RNF-FIA-02 | A power cut at any moment leaves the system in a state from which it recovers on its own at startup, without loss of libraries or of complete backups | Partial: tested with processes killed mid-job (`make scenarios`) and a power-loss model in the Go tests; no power cut during a backup on real hardware is recorded |
 | RNF-FIA-03 | A backup only counts as valid if its file, its manifest and its checksum match | Met |
-| RNF-FIA-04 | The backups volume is identified by a marker file; if it is missing, nothing is written | Met |
+| RNF-FIA-04 | The backups volume is identified by a marker file; if it is missing, nothing is written and no backup is deleted | Met |
 | RNF-FIA-05 | Retention never leaves an active library without at least one verified backup | Met |
 | RNF-FIA-06 | The control plane works with PostgreSQL down (to diagnose and restore) | Met |
 

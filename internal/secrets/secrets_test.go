@@ -29,6 +29,36 @@ func TestStringNeverPrints(t *testing.T) {
 	}
 }
 
+// TestStringNeverPrintsWithAnyVerb: fmt prints the redacted text whatever
+// the verb, flags and width, also through a pointer and inside a struct; a
+// verb that does not suit a string says so about "[redacted]". fmt prints
+// the fields of a value without its methods for %p and in an unexported
+// field (pg.Client keeps both passwords so): there it shows an address.
+// The formats are not constants, so go vet does not stop the odd ones.
+func TestStringNeverPrintsWithAnyVerb(t *testing.T) {
+	const fake = "fake-value-for-the-test"
+	s := New(fake)
+	formats := []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "% x", "%d", "%t", "%c", "%e", "%f", "%g", "%b", "%o", "%U", "%p", "%T", "%20.5s", "%-8v"}
+	for _, f := range formats {
+		for name, arg := range map[string]any{"value": s, "pointer": &s, "field": struct{ Pw String }{s}, "unexported field": struct{ pw String }{s}} {
+			got := fmt.Sprintf(f, arg)
+			if strings.Contains(got, fake) || strings.Contains(got, "fake-") {
+				t.Errorf("%s with %s printed the value: %s", name, f, strings.ReplaceAll(got, fake, "<the value>"))
+			}
+		}
+	}
+	for f, want := range map[string]string{
+		formats[0]: "[redacted]",
+		formats[2]: `"[redacted]"`,
+		formats[5]: "5b72656461637465645d",
+		formats[8]: "%!d(string=[redacted])",
+	} {
+		if got := fmt.Sprintf(f, s); got != want {
+			t.Errorf("%s: %q, want %q", f, strings.ReplaceAll(got, fake, "<the value>"), want)
+		}
+	}
+}
+
 func TestGeneratePassword(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 100; i++ {

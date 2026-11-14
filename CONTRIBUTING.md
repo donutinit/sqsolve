@@ -3,8 +3,9 @@
 ## Before you start
 
 Read [`AGENTS.md`](AGENTS.md): it holds the non-negotiable rules (SQL with parameters, external
-processes only from `internal/execx`, nothing destructive without a backup, secrets out of the
-logs) and the definition of done. They apply equally to people and to agents.
+processes only from `internal/execx` in the code that ships, nothing destructive without a
+backup, secrets out of the logs) and the definition of done. They apply equally to people and to
+agents.
 
 ## Environment
 
@@ -47,6 +48,8 @@ data: if a datum is missing, "To be confirmed". One-line commits, no trailers.
    section its notes only say that `CHANGELOG.md` has none for that version.
    If the PostgreSQL pin changed since the previous release, say so and give the new `image:` line:
    installed copies of the compose file keep the old digest.
+   If a base image was taken before its 7 days because it fixes a vulnerability
+   (`docs/17-ci-cd-and-releases.md` §7), name the vulnerability.
 2. Tag `vX.Y.Z` and push: CI runs first and, only if it passes, publishes the signed image; then,
    and only then, the GitHub release with the compose file (pinned to `X.Y.Z`) is published.
 3. Verify the signature as the user guide ("Updating") says (cosign 3 or newer) and update the

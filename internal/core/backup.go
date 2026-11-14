@@ -226,8 +226,13 @@ func auxSource(dbName, source string) bool {
 // when it is set: a backup dated in the future (the clock went back) says
 // nothing about how recent the protection is.
 func (s *Service) latestVerified(ctx context.Context, libraryID string, notAfter time.Time) (*Backup, error) {
+	// Without the name the backups of a previous state would not sort last;
+	// a target that is no library row has none.
 	var dbName string
-	s.DB.QueryRowContext(ctx, `SELECT db_name FROM libraries WHERE id = ?`, libraryID).Scan(&dbName)
+	err := s.DB.QueryRowContext(ctx, `SELECT db_name FROM libraries WHERE id = ?`, libraryID).Scan(&dbName)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
 	q := `SELECT ` + backupCols + ` FROM backups WHERE library_id = ? AND status = 'ok' AND verify_status IN ('l1_ok', 'l2_ok', 'partial')`
 	args := []any{libraryID}
 	if !notAfter.IsZero() {
@@ -255,11 +260,13 @@ func (s *Service) latestVerified(ctx context.Context, libraryID string, notAfter
 	return nil, rows.Err()
 }
 
-// blocked reports whether the catalog path of b is not valid (SQS-B043):
-// such a backup is never read, so no safety rule may count it as verified.
+// blocked reports whether b cannot be counted on: its catalog path is not
+// valid (SQS-B043) or could not be checked (SQS-B045). Such a backup is
+// not read, so no safety rule may count it as verified, and retention
+// leaves it alone.
 func (s *Service) blocked(b *Backup) bool {
 	_, err := s.AbsPath(b)
-	return errors.Is(err, ErrBackupPath)
+	return err != nil
 }
 
 // ErrBackupPath is a catalog row whose path is not one sqsolve writes: a
@@ -268,6 +275,14 @@ func (s *Service) blocked(b *Backup) bool {
 // it is not rewritten either: an administrator reviews it
 // (docs/runbooks/invalid-backup-path.md).
 var ErrBackupPath = errors.New("SQS-B043 the catalog path of this backup is not valid; it is blocked until an administrator reviews it")
+
+// ErrBackupPathUnchecked is a catalog row whose path could not be checked:
+// a disk error (an I/O error, a folder sqsolve may not enter, a stale
+// mount, a file where a folder should be) stopped fsx.Confined. Nothing is
+// known about the backup, so it is blocked while the error lasts. Unlike
+// ErrBackupPath the row is not reviewed and cannot be forgotten: it counts
+// again when the check works (docs/runbooks/invalid-backup-path.md).
+var ErrBackupPathUnchecked = errors.New("SQS-B045 the path of this backup could not be checked; it is blocked until the check can be made")
 
 // validBackupRel reports whether rel is a clean relative path of a .backup
 // file under libraries/.
@@ -281,8 +296,9 @@ func backupFileName(name string) bool {
 	return name == filepath.Base(name) && !strings.ContainsRune(name, '/') && strings.HasSuffix(name, ".backup") && len(name) > len(".backup")
 }
 
-// AbsPath returns the absolute path of a backup file, or ErrBackupPath when
-// the catalog path is not valid or leaves the backups volume.
+// AbsPath returns the absolute path of a backup file, ErrBackupPath when
+// the catalog path is not valid or leaves the backups volume, or
+// ErrBackupPathUnchecked, with the cause, when a disk error stops the check.
 func (s *Service) AbsPath(b *Backup) (string, error) {
 	bad := fmt.Errorf("%w (backup %s)", ErrBackupPath, b.ID)
 	if !validBackupRel(b.FilePath) {
@@ -292,7 +308,7 @@ func (s *Service) AbsPath(b *Backup) (string, error) {
 	for _, p := range []string{abs, manifestPath(abs)} {
 		ok, err := fsx.Confined(s.Cfg.BackupDir, p)
 		if err != nil {
-			return "", fmt.Errorf("could not check the path of backup %s: %w", b.ID, err)
+			return "", fmt.Errorf("%w (backup %s): %w", ErrBackupPathUnchecked, b.ID, err)
 		}
 		if !ok {
 			return "", bad
@@ -428,8 +444,9 @@ var (
 	// hookDBVolumeFree replaces the free space measured on the database
 	// volume by the restore space check.
 	hookDBVolumeFree atomic.Pointer[func() uint64]
-	// hookFault makes a PostgreSQL lookup or grant fail at a named point,
-	// where no trigger can (PLAN P0.4).
+	// hookFault makes a PostgreSQL lookup, grant, count, session listing or
+	// session termination fail at a named point, where no trigger can (PLAN
+	// P0.4).
 	hookFault atomic.Pointer[func(point string) error]
 )
 
@@ -803,6 +820,9 @@ func (s *Service) createBackup(ctx context.Context, r *jobs.Run, l *Library, kin
 		if cerr == nil {
 			fp, cerr = pg.SchemaFingerprint(ctx, tx.Conn())
 		}
+		if ferr := fault("backup.count"); ferr != nil {
+			cerr = ferr
+		}
 		wg.Wait()
 		<-ticking
 		if dumpErr != nil {
@@ -1060,7 +1080,9 @@ func (s *Service) SetPinned(ctx context.Context, by audit.Actor, id string, pinn
 
 // DeleteBackup removes one backup by hand. The newest verified backup of a
 // library that can still be restored or recreated (every state but purged:
-// a missing library needs it to be recreated) cannot be deleted.
+// a missing library needs it to be recreated) cannot be deleted. It is
+// refused while the backups volume is not this installation's
+// (BackupVolumeOK), before its audit entry.
 func (s *Service) DeleteBackup(ctx context.Context, by audit.Actor, id string) error {
 	b, err := s.Backup(ctx, id)
 	if err != nil {
@@ -1069,6 +1091,9 @@ func (s *Service) DeleteBackup(ctx context.Context, by audit.Actor, id string) e
 	if b.Status == BackupDeleted {
 		return nil
 	}
+	if err := s.BackupVolumeOK(); err != nil {
+		return err
+	}
 	if _, err := s.AbsPath(b); err != nil {
 		return err
 	}
@@ -1076,7 +1101,11 @@ func (s *Service) DeleteBackup(ctx context.Context, by audit.Actor, id string) e
 		return errors.New("SQS-B033 unpin the backup before deleting it")
 	}
 	if l, err := s.Library(ctx, b.LibraryID); err == nil && l.State != StatePurged {
-		if latest, _ := s.LatestVerified(ctx, l.ID); latest != nil && latest.ID == b.ID {
+		latest, err := s.LatestVerified(ctx, l.ID)
+		if err != nil {
+			return err
+		}
+		if latest != nil && latest.ID == b.ID {
 			return errors.New("SQS-B034 it is the most recent verified backup of the library; it cannot be deleted manually")
 		}
 	}
@@ -1107,6 +1136,13 @@ func (s *Service) ForgetInvalidBackup(ctx context.Context, by audit.Actor, id st
 }
 
 func (s *Service) removeBackupFiles(ctx context.Context, b *Backup, reason string) error {
+	// Without this installation's marker the backups volume may not be
+	// mounted (an empty folder at the mount point, ADR 0023): its files are
+	// not there to remove, and recording them as removed would leave them on
+	// the disk, outside the catalog, once it is back.
+	if err := s.BackupVolumeOK(); err != nil {
+		return err
+	}
 	abs, err := s.AbsPath(b)
 	if err != nil {
 		return err

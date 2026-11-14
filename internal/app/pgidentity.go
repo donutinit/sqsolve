@@ -90,7 +90,8 @@ func (a *App) applyIdentity(ctx context.Context, current string) bool {
 		}
 	case identityAccept:
 		// Stored with its entry or not at all; then the next start accepts
-		// it again.
+		// it again. The event says the variable can be removed, so it is
+		// emitted only once the transaction is committed.
 		if err := a.DB.Tx(ctx, func(tx *sql.Tx) error {
 			if err := a.DB.SetSettingTx(ctx, tx, pgSystemIDSetting, current, "system"); err != nil {
 				return err
@@ -98,6 +99,7 @@ func (a *App) applyIdentity(ctx context.Context, current string) bool {
 			return a.Audit.RecordTx(ctx, tx, audit.System, "postgres.cluster_accepted", "system", "", audit.OK, map[string]any{"from": stored, "to": current})
 		}); err != nil {
 			a.Log.Error("could not store the accepted PostgreSQL system identifier", "err", err)
+			break
 		}
 		a.Events.Emit(ctx, events.Event{Type: "postgres.cluster_accepted", Severity: events.Warning,
 			Message: fmt.Sprintf("PostgreSQL cluster %s accepted in place of %s (SQSOLVE_PG_ACCEPT_SYSTEM_ID); you can remove the variable", current, stored)})

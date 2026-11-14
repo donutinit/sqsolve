@@ -17,22 +17,32 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-// String holds a secret value and never prints it.
-type String struct{ v string }
+// String holds a secret value and never prints it. The value is behind a
+// pointer: fmt prints the fields of a value without calling its methods for
+// %p and in an unexported field, and there a pointer prints as an address.
+type String struct{ v *string }
 
 // New wraps a value.
-func New(v string) String { return String{v} }
+func New(v string) String { return String{&v} }
 
 // Reveal returns the secret value. Call sites are easy to audit with grep.
-func (s String) Reveal() string { return s.v }
+func (s String) Reveal() string {
+	if s.v == nil {
+		return ""
+	}
+	return *s.v
+}
 
 // Empty reports whether the secret is unset.
-func (s String) Empty() bool { return s.v == "" }
+func (s String) Empty() bool { return s.Reveal() == "" }
 
 func (s String) String() string { return "[redacted]" }
 
-// GoString hides the value from %#v.
-func (s String) GoString() string { return "[redacted]" }
+// Format prints the redacted text with every verb, %#v included, so none
+// reaches the value.
+func (s String) Format(f fmt.State, verb rune) {
+	fmt.Fprintf(f, fmt.FormatString(f, verb), s.String())
+}
 
 // LogValue hides the value from slog.
 func (s String) LogValue() slog.Value { return slog.StringValue("[redacted]") }

@@ -322,6 +322,57 @@ func TestLibraryBackupRestoreLifecycle(t *testing.T) {
 	}
 }
 
+// TestReplaceAndRevertTakeNoKeepLastPlace: the pre_restore backups a replace
+// and a revert leave take none of the keep_last places, so the retention
+// step of the next backup deletes none of the backups they sit among.
+func TestReplaceAndRevertTakeNoKeepLastPlace(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.ctx
+	l, _ := e.createActive("retained")
+	first := e.firstBackup(l)
+	pol, err := e.svc.Policy(ctx, l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.KeepLast, pol.KeepDaily, pol.KeepWeekly, pol.KeepMonthly, pol.MinVerified = 3, 0, 0, 0, 1
+	if err := e.svc.SetPolicy(ctx, admin, l.ID, pol); err != nil {
+		t.Fatal(err)
+	}
+	run := func(j *jobs.Job, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.wait(j, jobs.Succeeded)
+	}
+	run(e.svc.BackupNow(ctx, admin, l.ID))
+	run(e.svc.RestoreReplace(ctx, admin, first.ID, "retained", true))
+	run(e.svc.Revert(ctx, admin, l.ID, "retained"))
+	run(e.svc.BackupNow(ctx, admin, l.ID))
+	bs, err := e.svc.Backups(ctx, core.BackupFilter{LibraryID: l.ID, IncludeDeleted: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	others, pre := 0, 0
+	for _, b := range bs {
+		switch {
+		case b.Status == core.BackupDeleted:
+			t.Errorf("%s backup %s deleted (%s)", b.Kind, b.ID, b.ExpiredReason)
+		case b.Status != core.BackupOK:
+		case b.Kind == core.KindPreRestore:
+			pre++
+		default:
+			others++
+		}
+	}
+	if others != 3 || pre != 4 {
+		t.Errorf("%d ok backups of other kinds (want 3) and %d pre_restore (want 4)", others, pre)
+	}
+	if _, err := os.Stat(mustAbs(e.svc, first)); err != nil {
+		t.Errorf("the file of the first backup: %v", err)
+	}
+}
+
 func TestSwapRecoveryAfterCrash(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.ctx
@@ -418,6 +469,17 @@ func TestInitWindowExpiresAndHBA(t *testing.T) {
 	if l.State != core.StateInitExpired {
 		t.Fatalf("state %s", l.State)
 	}
+	// An expired window takes no connections: its lines go with it (docs 07
+	// §10), not only at the next rewrite or start.
+	hba, _ = os.ReadFile(filepath.Join(e.c.ConfDir, "pg_hba.conf"))
+	if strings.Contains(string(hba), "\"vence\"") {
+		t.Fatalf("the lines of an expired window stay:\n%s", hba)
+	}
+	pass, _ := e.svc.RevealPassword(ctx, admin, l.ID, "")
+	if conn, err := e.c.ConnectTCP(ctx, "vence", pass, "postgres"); err == nil {
+		conn.Close(ctx)
+		t.Fatal("the role of an expired window still connects")
+	}
 	if err := e.svc.ReopenInitWindow(ctx, admin, l.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +494,6 @@ func TestInitWindowExpiresAndHBA(t *testing.T) {
 	if err := e.svc.SetNetworkRules(ctx, admin, l.ID, []string{"10.9.9.0/24"}); err != nil {
 		t.Fatal(err)
 	}
-	pass, _ := e.svc.RevealPassword(ctx, admin, l.ID, "")
 	if _, err := e.c.ConnectTCP(ctx, "vence", pass, "postgres"); err == nil {
 		t.Fatal("connection from 127.0.0.1 allowed by a 10.9.9.0/24 rule")
 	}

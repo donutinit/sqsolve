@@ -5,6 +5,277 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+- Security: the experimental export no longer shows the PostgreSQL socket path, the
+  `sqsolve_admin` role and the database name to every signed-in user when the connection to
+  PostgreSQL fails (known issue K-02). The detail of `SQS-E005` now ends in "the connection to
+  PostgreSQL failed (the cause is in the sqsolve log)"; the whole error goes to the process log,
+  one `WARN` line per failed request, and the panel and the API show it only to whoever has the
+  `diagnostics` permission (administrators; with a token, the `admin` scope).
+- A backup whose path cannot be checked because of a disk error (an I/O error, a folder sqsolve
+  may not enter, a stale mount, a file where a folder should be) is now blocked while the error
+  lasts (`SQS-B045`, 409 in the API, the backup page hides Restore, Download and Export). Before,
+  it counted as a readable verified backup: retention could expire readable backups in its
+  stead, down to the only readable verified one, a purge could accept it as the final backup and
+  drop the trash database, and the guard of the manual delete protected it and not the newest
+  readable backup. Every start and the catalog check report such rows in a new
+  `backup.path_unchecked` event (error) with the first cause. The row is not rewritten, cannot
+  be removed with `sqsolve catalog forget` (`SQS-B044`), and counts again as soon as the check
+  works (`docs/runbooks/invalid-backup-path.md`).
+- The check of the catalog paths at a start runs in the background: the panel, the connection
+  to PostgreSQL and reconciliation no longer wait for it. `/readyz` is unchanged. Before the
+  panel opens sqsolve still reads the marker of the backups volume and lists `_system/` once.
+- A purge that stops with `SQS-L046` now stops before anything is journaled or dropped, so the
+  library stays in the trash with its database and can be recovered; new job step "Check other
+  databases"; a previous state left invalid by an interrupted DROP DATABASE is reported there;
+  the check runs again before the roles are dropped.
+- A purge no longer fails with `SQS-L047` when the purge of expired items already dropped and
+  forgot the previous state of the same library, and that pass now drops an expired previous
+  state before it queues the purge (known issue K-11).
+- An interrupted purge whose previous-state database is still on the server no longer reports
+  `SQS-L046` at every start: the journal records the previous state, the library stays in the
+  trash and can be purged again; a journal of an earlier version uses the catalog (known
+  issue K-04).
+- `SQS-L043` removed: the unique index on the identifier of libraries that are not purged
+  makes it impossible.
+- Restoring by replacing, moving a library to the trash, recovering it from the trash and a purge
+  started by hand have the unique job identity of ADR 0028 (K-03, ADR 0029): a second identical
+  request while the job is queued or running gets that job instead of queueing another one, and
+  writes no audit entry. A second replacement with another backup or another choice for the open
+  sessions is refused with `SQS-J005` (409 in the API, which used to answer 202 and queue a second
+  job). A purge started by hand and the automatic purge of expired trash share one job. From the
+  console, a `restore --replace` repeated while the server is already running the first one still
+  queues a second job (K-03).
+- Retention: a backup taken before a restore (`pre_restore`) no longer takes one of the
+  `keep_last` places (known issue K-09). Every replacement or revert leaves two of them,
+  protected for 30 days, and they were also counted among the latest N: a few restores in a row
+  pushed the regular backups out, the one just restored included (seen in the 1.2.2 acceptance).
+  `keep_last` now counts the backups of the other kinds. A `pre_restore` backup is still kept
+  while fewer than N backups of other kinds are newer than it, so no backup that 1.2.3 kept
+  expires because of this change, and a library that takes no new backups keeps its
+  `pre_restore` backups past their 30 days. The daily, weekly and monthly rules, the 30 days of
+  protection and the minimum of verified backups are as before. The count of kept backups in the
+  Schedule tab can go up.
+- Settings, General sets the schedule mode of the default policy for new libraries, as the
+  Schedule tab of a library does: activity-based with its interval (5, 10, 15, 30 or 60 minutes)
+  or a cron expression, and it shows the time zone of the policy. The old "Schedule (cron)" field
+  only stored an expression that the activity-based mode never ran (known issue K-10). In
+  activity-based mode the cron field is not read; in cron mode an empty or wrong expression is
+  refused with `SQS-J020`. Saving no longer puts the default policy back to its factory values:
+  saving the field empty in activity-based mode did, the retention numbers of the same form
+  included. Upgrade: an expression typed in the old field while the default mode was
+  activity-based had no effect and is not kept, so choose "Cron expression" in Settings, General
+  if new libraries must use it; where the field was once saved empty, the default policy has been
+  the factory one since then and stays so until General is saved again. Libraries that have a
+  policy of their own are not changed.
+- The rewrite of `pg_hba.conf` that follows a settings change ("TLS only", access of library
+  users to the `postgres` database) or the addition of a person has its own audit entry,
+  `postgres.hba`, with who made the change: `accepted` before the file is written, then `ok` or
+  `failed` with the error. Without the entry the file is not rewritten (`SQS-X040`); the settings
+  or the person stay stored and take effect at the next rewrite. Closes known issue K-07.
+- The errors of the three statements that carry a SCRAM verifier keep their cause, so code can
+  match it with `errors.Is` and `errors.As`: `SQS-P001`, `SQS-P050` and `SQS-P051` in a failed
+  password change, and the SQLSTATE of PostgreSQL in a failed password change, role creation
+  (`SQS-P020`) or preparation of `sqsolve_admin` (`SQS-P002`). The verifier stays redacted in
+  their text, in the logs and in the PostgreSQL error they hand out. The messages do not
+  change. This was known issue K-08.
+- API: an empty list is `[]`. The lists of jobs, job steps, job log lines, events and audit
+  entries, and `attention` in `GET /system/status`, came back as `null` when they were empty.
+  `GET /jobs/{id}/logs` answers `404` with `SQS-J002` for a job that does not exist; it answered
+  `200` with `null` items (known issue K-01). `GET /jobs/{id}` answers `500` when the steps of
+  the job cannot be read; it answered `200` with `null` steps. API clients that read `null` as an
+  empty list keep working; a client that asks for the logs of a job that does not exist, one
+  that housekeeping removed 90 days after it ended included, now gets `404`.
+- `sqsolve-init` checks the mode of a file it has just written the same way it checks one that
+  was already there (`instance_id`, the master key, the `sqsolve_admin` password, the PostgreSQL
+  superuser password and the initial `pg_hba.conf` and `pg_ident.conf`): on a volume that does
+  not keep the mode, that run stops with `SQS-C085 ... it stays 0700` and PostgreSQL and
+  `sqsolve` are not started. Until now only the next run caught it, after `sqsolve` had refused
+  to start with `SQS-C010` (known issue K-05 of 1.2.3). The file stays in place and the next run
+  checks it again; no new secret is generated.
+- The event `postgres.cluster_accepted` is emitted only after the new cluster identifier and its
+  audit entry are stored. Until now it was also emitted when that transaction failed, and it said
+  that `SQSOLVE_PG_ACCEPT_SYSTEM_ID` could be removed while the next start still needed it (known
+  issue K-06).
+- Dependencies: a base image that fixes a vulnerability may be taken before the 7 days the
+  project waits, as a Go module already could (`docs/17-ci-cd-and-releases.md` §7). The digest
+  is changed by hand, the change goes through the full CI and the release notes name the
+  vulnerability, as 1.2.3 did for the Go builder image. Dependabot's cooldown stays at 7 days.
+- Tests: `TestCancelKillsTheWholeGroup` (`internal/execx`) failed now and then under load
+  although `Run` had killed the whole process group: PID 1 reaps the killed member at any
+  moment, and the test read it as running when it caught that reaping in progress. The test now
+  checks once, without waiting, that when `Run` returns the member is gone, waits to be reaped
+  or has a SIGKILL pending.
+- Tests: the error codes that had no test of their code and message have one. Failures are
+  simulated for `SQS-B002`, `SQS-B010`, `SQS-B011`, `SQS-B012`, `SQS-P021`, `SQS-P030`,
+  `SQS-P042`, `SQS-P043`, `SQS-R010`, `SQS-R011`, `SQS-R020`, `SQS-R031`, `SQS-X002` and
+  `SQS-X998`, and the tests of `SQS-A024`, `SQS-B041`, `SQS-C020`, `SQS-C063`, `SQS-P050`,
+  `SQS-P051`, `SQS-R060`, `SQS-R061`, `SQS-S004`, `SQS-S010`, `SQS-S015` to `SQS-S017` and
+  `SQS-X011` now check the message too. The backup has one more fault point for tests
+  (`backup.count`); nothing changes in how sqsolve behaves.
+- A blocked backup (`SQS-B043`, or `SQS-B045` while its path cannot be checked) no longer stands for
+  data sqsolve cannot read back. The expiry of a previous state, the purge of a library in the trash
+  and a replace that supersedes an older previous state accepted it as the backup of a `__prev`
+  database and dropped that database; they now take a new backup first and keep the `__prev`
+  (`SQS-R055`, `library.prev_kept` warning) when none can be taken. In activity mode, a library
+  whose newest verified backup was blocked skipped its scheduled backups for as long as nothing
+  changed; the gate now compares with the newest backup sqsolve can read, as the `backup.stale`
+  warning already did, and backs up when there is none.
+- Retention no longer deletes the backups of a library that has no backup policy of its own: one
+  that "Rebuild the catalog" registered (state Purged) or one not active yet. It pruned them with
+  the default policy for new libraries (Settings, General), so after installing from scratch on
+  the backups volume of a lost server and rebuilding the catalog without the recovery kit, the
+  first retention pass (04:00, or "Apply retention") deleted every backup beyond the 10 latest,
+  14 daily, 8 weekly and 12 monthly of the new installation, whatever the old one kept, pinned
+  ones included: the manifests record neither policies nor pins. Such a library now keeps every
+  backup until a policy is saved in its Schedule tab, which says so and shows how many backups
+  that policy would delete, and the retention job names it in its log. Leftovers of failed
+  backups are still cleaned, and libraries with a policy, purged ones included, are pruned as
+  before.
+- Retention and the manual delete of a backup check the marker of the backups volume first.
+  While the backups disk was not mounted (Docker leaves an empty folder in its place), they
+  recorded backups as deleted although their files were still on that disk, removed the rows of
+  old failed backups without their leftovers and announced deletions that never happened; once
+  the disk was back those files were outside the catalog, retention never removed them and a
+  catalog rebuild skipped them. Now nothing is deleted or recorded deleted unless the volume
+  carries this installation's marker of the backups volume: the retention job fails with the
+  code of the volume (`SQS-S001` for a disk that is not mounted; `SQS-S002`, `SQS-S003` or
+  `SQS-S019` for an unreadable marker, another installation's or one of another volume) and Retry
+  or the next run applies it once the disk is back, and a delete by hand is refused with the same
+  code. Files left this way by earlier versions stay on the disk; the catalog check counts them
+  among the files that are not in the catalog.
+- A delete whose catalog write fails after its database was renamed to the trash name now fails
+  with `SQS-L056`, keeps its lock and stays pending reconciliation, and the next start records
+  the move with a `library.trashed` event. Until now the job just failed, and the next start
+  reported the library missing and said to recreate it from its latest backup while its data sat
+  under a trash name no row recorded. A delete of a library without a database that cannot be
+  recorded gives the access back. Recover from the trash now journals its rename (`SQS-L057`
+  without the journal) and is settled by reconciliation: a failure after the journal
+  (`SQS-L058`) or a stop is finished at the next start (the library active with its access and
+  backup schedule, or still in the trash if its database was not moved) instead of leaving it in
+  the trash with its database back under its name and Recover answering `SQS-L051`. A purge of a
+  library without databases whose catalog write fails after its roles were dropped stays pending
+  reconciliation too.
+- Saving Settings, General again, even unchanged, rewrites `pg_hba.conf` when the last rewrite
+  did not take effect (it failed, or its audit entry could not be written, `SQS-X040`). Until
+  now it answered "Settings saved." without rewriting, so "TLS only" or the access to the
+  `postgres` database could show one value while PostgreSQL applied the previous rules. Until a
+  rewrite takes effect, whatever caused the one that did not (a settings or member change, a job,
+  the start), the dashboard lists it under Attention, also in `GET /api/v1/system/status`, and
+  the Health check `pg_hba.conf` fails with its error.
+- Revoking a person's credential, and putting a library in maintenance with "Also close open
+  sessions", no longer report success when the open sessions could not be listed or closed.
+  The revocation stays recorded and `SQS-L081` says that a workstation still connected keeps
+  working until it disconnects; the library stays in maintenance and `SQS-L082` says how many
+  sessions were closed. Both are recorded as failed in the audit log.
+- The automatic purge of a library whose time in the trash ended now has its audit entries:
+  `library.purge` with actor `system`, `accepted` with the job and the details `slug` and
+  `purge_after`, then the result. Until now it dropped the database and the roles with no entry,
+  and a purge by hand that joined it wrote none either. Without the entry the purge is not
+  queued: the pass logs a warning with `SQS-X040` and a later pass tries again.
+- Cancelling a job while its `pg_dump`, `pg_restore`, `vacuumdb` or `restic` runs now always
+  ends with SIGKILL to the program's whole process group. When the SIGTERM of the cancel made
+  the program exit before sqsolve started waiting for it, that SIGKILL could be skipped, and a
+  process of the group that ignores SIGTERM kept running after the job ended.
+- Tests: `TestPanelEndToEnd` (`internal/web`) failed now and then under load with "pg_hba.conf
+  rejects connection": it connected as soon as the new library was waiting for Resolve, a state
+  the creation job sets one step before it rewrites `pg_hba.conf` and reloads PostgreSQL. The
+  panel tests now wait for that job to end and then connect once, without the retries that hid
+  the same race. The reload itself needs no wait: PostgreSQL applies it before it accepts the
+  next connection.
+- Tests: the throwaway cluster of `internal/testpg` starts again on another port when another
+  process took its port first ("Address already in use"), and it stops when its test process is
+  killed. The next start of a cluster removes the folders that killed tests left in
+  `~/.cache/sqsolve-test` (`pg-<pid>-<digits>`, only when that process and the postmaster are
+  gone); folders of earlier versions of the fixture stay.
+- Errors that were dropped before a success no longer are. A delete stops with the error of a
+  failed lookup (the database of an initialization window, a role in the lock) or of the removal
+  of `CREATEDB`, and a recovery from the trash with that of the lookup of the library's name,
+  instead of reading it as "no database" or "role gone". Maintenance, and reopening an
+  initialization window, whose catalog write fails are recorded failed and put back the access
+  they changed. An expired window loses its `pg_hba.conf` lines at once, not at the next rewrite.
+  The purge of expired items keeps a previous state left invalid by an interrupted
+  `DROP DATABASE` (`SQS-R062`) instead of logging it deleted and forgetting it, and says when the
+  catalog could not forget one it dropped. Retention stops when the library cannot be read, and
+  an audit result that cannot be written after a failed change is logged.
+- Error answers of the API and the panel. `GET /api/v1/libraries/{id}/backups` answers `404`
+  with `SQS-L002` for a library that does not exist; it answered `200` with an empty list.
+  Cancelling a job that has already ended is refused with the new `SQS-J006` (`409` in the API);
+  the panel and the API said `SQS-J002` "job not found" (`404` in the API). When the catalog
+  cannot be read, `GET /jobs/{id}` and the routes that first read the library of their path
+  (`GET` and `PATCH /libraries/{id}` and the `GET` routes of its projects and grades) answer
+  `500` instead of `422`. A `PATCH` of a library or a reveal whose answer cannot be read back
+  answers a `500` problem; the handler panicked and the panel's plain `SQS-X999` answered. An
+  upload to the import folder is refused with the error of the backups volume check (`SQS-S001`
+  on an unmounted disk) before anything is written; it could fill the empty mount point. A test
+  now covers the panel's answer to a panic.
+- Small fixes from the audit. `sqsolve-init` stops with the new `SQS-C055` and the path when it
+  cannot write a file (a full disk, a refused mode on the new `.partial` file); it returned the
+  bare error. A `secrets.String` prints `[redacted]` with every `fmt` verb and from an unexported
+  field; `%d`, `%p` or a `%v` of `pg.Client` printed the value. `pg.Bootstrap` behind a lock
+  reports `SQS-P050` inside `SQS-P002`, and its first read, which had no code, reports the same.
+  A disk error while `fsx.Confined` follows a symlink of a backup path is `SQS-B045`, blocked
+  while it lasts; it was `SQS-B043`, which `sqsolve catalog forget` can remove. `08-security.md`
+  says what is checked of the panel key and names the secret tests that exist.
+- Small fixes in the core. The hours without a backup before the warning and the maximum upload
+  are refused outside 1 to 87600 and 1 to 1048576 MB (the new `SQS-C033` and `SQS-C034`), and
+  larger stored values are read capped; they overflowed. The `settings.update` audit entry
+  carries every setting, the second factor and the default policy included. The newest verified
+  backup, a manual delete and retention stop with the error of a lookup that fails; they
+  answered a previous-state backup, deleted the newest verified backup or skipped the cleanup of
+  failed backups. A precreated library that cannot be recorded active fails its job and is
+  rolled back; it succeeded while still being prepared. A recovery from the trash refuses a name
+  an invalid database holds with `SQS-L005` before its journal; it failed on the rename with
+  `SQS-L058`, pending reconciliation. Reconciliation at start touches no file on a backups volume
+  that is not this installation's, and its note says why; it removed the `.partial` files of
+  another installation's volume. The retention log no longer names libraries without backups.
+- Tests: `TestAPIExportWithPostgreSQL` (`internal/api`) failed now and then: it looked for the
+  letters `PK` anywhere in the body of a refused download, and the identifier of a backup in the
+  path of the error can contain them. It now looks at the start of the body, where a download
+  begins.
+- Security: the PostgreSQL socket path and the `sqsolve_admin` role of a failed connection no
+  longer reach every signed-in user outside the export either. The Health page with its doctor
+  checks, `GET /api/v1/system/status`, every API problem and the notice of a panel action that
+  failed show the driver's text, and the path of the superuser password file, only to whoever
+  has the `diagnostics` permission; everyone else reads "the connection to PostgreSQL failed
+  (the cause is in the sqsolve log)". The message of `postgres.down`, also in the
+  notifications, and the stored error of a failed export preparation keep that text for
+  everyone. The whole error goes to the process log; the ping and the superuser connection
+  keep the driver's error so it can be recognized. `sqsolve doctor` and the diagnostic bundle
+  are unchanged.
+- Tests: the rule that external programs run only through `internal/execx` is written as a rule
+  for the code that ships (`AGENTS.md`, `docs/16-testing.md` §4): test code, `internal/testpg`
+  included, starts what it needs directly, with an argument array. A new test fails when a file
+  that ships starts a program outside `internal/execx` or imports `internal/testpg`.
+- Panel: while the job that creates a library is queued or running, the Connection tab of the
+  library says "Preparing the library" and reloads itself until the job ends. It showed
+  "Initialize the library from Resolve" with "Reveal password" (with an empty database, the
+  values to connect) as soon as the job had set the state, one step before it writes the
+  `pg_hba.conf` lines of the library, and a workstation that connected then was refused once
+  ("pg_hba.conf rejects connection"). `docs/10-api.md` says that an API client waits for that
+  job to succeed before it connects.
+- Data safety: with the backups disk not mounted (an empty folder at the mount point), the purge
+  of a library in the trash and the drop of a previous state (`__prev`: its expiry, a newer
+  restore, the purge, the orphan sweep) took a backup row as proof although its file could not be
+  seen, since the path of every backup still checks there, and dropped the database. They now
+  check the marker of the volume first: the purge stops at `check_backup` with its error
+  (`SQS-S001` when it is missing) before its journal, and the `__prev` is kept, with that error
+  in place of `SQS-R055`. Also in 1.2.3.
+- Reconciliation: a recovery from the trash pending reconciliation now supersedes an older
+  pending purge of the same library. A purge that stopped with its trash database still there,
+  followed by a recovery that moved that database back and stopped before reactivating the
+  library (`SQS-L058`), made the next start finish the purge first, which refused with
+  `SQS-L046` naming the library's own database. Nothing was dropped.
+- Security: the rewrite of `pg_hba.conf` no longer uses the factory defaults when the stored
+  settings cannot be read, which turned "TLS only" off and opened the maintenance database. It
+  writes nothing and fails with `SQS-P044`, which the dashboard and Health report as for any
+  rewrite that did not take effect.
+- Security: when PostgreSQL rejects a new `pg_hba.conf` (`SQS-P042`) and the previous file cannot
+  be put back either, the error, its audit entry and Health say so; that failure was ignored, and
+  the rejected file stayed on disk without a word.
+- Access: the session of a revoked per-person credential that could not be closed (`SQS-L081`)
+  can be closed now with "Close" in the Activity tab or with maintenance and "Also close open
+  sessions"; both left it out and "Close" answered `SQS-L016`. The revoked role stays `NOLOGIN`.
+
 ## [1.2.3] 2026-11-10
 
 Fixes from the repository audit of 2026-11-10 (network rules, schedules, retention, restore as

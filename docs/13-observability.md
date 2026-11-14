@@ -14,11 +14,21 @@
   its case. The error stored for a notification channel hides its URL and its secret fields
   (`10-api.md` §5). No test searches the whole log output for secrets;
   `TestFailedStatementsKeepTheVerifierSecret` checks that a password change PostgreSQL refuses
-  does not carry the SCRAM verifier.
+  does not carry the SCRAM verifier, and `TestRedactedErrorNeverPrintsTheSecret` that such an
+  error does not show it through `fmt`, `slog`, JSON or the PostgreSQL error it unwraps to.
 - HTTP requests, panel and API: one `http` line per request with `method`, `path` (without
   query), `status`, `ms` and `ip`; static resources and the health probes (`/healthz`,
   `/readyz`, `/api/v1/system/health`), which Docker and uptime monitors call every few seconds,
   are not logged (`TestProbesAreNotLogged`).
+- A failed connection to PostgreSQL: one `WARN` line `<place>: the connection to PostgreSQL
+  failed` with `err` (the whole error with the driver's text: socket path, role and database,
+  never a password) each time sqsolve shows it or stores it. The place is `export` (a request
+  of the experimental export), `request` (any other API problem, or the notice of a panel
+  action that failed), `health` (the Health page or `GET /api/v1/system/status`) and `doctor`
+  (a doctor check on the Health page), each with `path`, the request path, and `check` for the
+  doctor; `postgres.down` (the event); `backup export` (a failed export preparation) with
+  `workspace`. The panel and the API show that text only to whoever has the `diagnostics`
+  permission, and the event and the stored error never (`08-security.md` §5).
 
 ## 2. Events and audit log
 
@@ -42,6 +52,9 @@ page. The API lists the three (`10-api.md` §2).
 | `GET /healthz` | No | `200` and `ok` if the process is serving (liveness, for the Docker `healthcheck` via `sqsolve healthcheck`) |
 | `GET /readyz` | No | `200` and `ready` if PostgreSQL was reached, reconciled and answers, and the backups volume carries this installation's marker; otherwise `503` and `not ready:` with the failures (`postgresql`, `backup volume`), without sensitive details |
 | `GET /api/v1/system/health` | No | JSON for uptime monitors: `503` when anything is critical (see below) |
+
+`/readyz` does not wait for the check of the catalog paths that a start runs in the background
+(`11-backups-and-automation.md` §3).
 
 PostgreSQL being down does not make `healthz` fail: restarting sqsolve does not fix PostgreSQL
 and would take the panel away. The monitor starts with sqsolve, before PostgreSQL answers, so a
@@ -89,6 +102,7 @@ The "Attention" block of the dashboard (and `attention` in `GET /api/v1/system/s
 |---|---|---|---|
 | PostgreSQL available | Ping every 5 s, from the start of sqsolve | | Not answering (critical). The event `postgres.down` (critical) comes at the first failed check after it answered or, at startup, after 5 minutes without an answer |
 | PostgreSQL cluster | `pg_control_system()` at each start against the stored identifier (ADR 0023) | | Different: `postgres.cluster_changed`, critical; sqsolve holds |
+| PostgreSQL access rules | Result of the last rewrite of `pg_hba.conf` by the running sqsolve (reconciliation rewrites it at each start) | | The last rewrite failed or was refused for want of its audit entry (`SQS-X040`): "The last change of the PostgreSQL access rules (pg_hba.conf) did not take effect", until a rewrite takes effect; the error is on the Health page (§7) |
 | PostgreSQL version | `server_version_num` against the bundled `pg_dump --version` | Older minor version than `pg_dump`: update the postgres image digest | Different major version (critical) |
 | Total connections | `pg_stat_activity` (client backends) | 80 % of `max_connections` | |
 | Space on `db`, `app`, `backups` | `statfs` of each volume (`db` is mounted read-write at `/var/lib/postgresql`, where sqsolve also writes `pg_hba.conf`) | 80 % | 90 %, or a volume that cannot be measured (`storage.volume_missing`, critical) |
@@ -134,7 +148,9 @@ names. The Maintenance tab summarizes the contents next to the download.
 ## 7. `sqsolve doctor`
 
 Checks with result `ok`, `warn` or `fail` and a suggestion per failure; the Health page shows the
-same list:
+same list, without the driver's text of a failed connection to PostgreSQL and the path of the
+superuser password file for a reader who does not have the `diagnostics` permission
+(`08-security.md` §5):
 
 1. The application, backups and database configuration volumes can be written, and their space
    (`warn` from 80 %, `fail` from 90 %).
@@ -144,7 +160,10 @@ same list:
 4. PostgreSQL answers over the socket (version, connections; `warn` without page checksums); its
    version against the bundled `pg_dump`; cluster identity (ADR 0023); the superuser over the
    local socket. These checks are skipped when PostgreSQL does not answer.
-5. `pg_hba.conf` has no errors (`pg_hba_file_rules`).
+5. `pg_hba.conf` has no errors (`pg_hba_file_rules`). In the panel it also fails while the last
+   rewrite of `pg_hba.conf` has not taken effect, with that rewrite's error and the hint to save
+   Settings, General again or regenerate the file; `sqsolve doctor` runs in a process of its own
+   and does not see that state.
 6. Databases on the server that are not in the catalog (`warn`).
 7. Audit chain intact.
 8. Integrity of the SQLite database.

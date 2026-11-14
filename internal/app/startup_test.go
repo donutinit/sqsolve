@@ -172,6 +172,141 @@ func TestStartupReportsInvalidBackupPaths(t *testing.T) {
 	}
 }
 
+// invalidPathRow inserts library L1 and backup B1, whose path leaves the
+// backups volume, as TestStartupReportsInvalidBackupPaths does.
+func invalidPathRow(t *testing.T, ctx context.Context, a *App) {
+	t.Helper()
+	now := store.NowT()
+	if _, err := a.DB.ExecContext(ctx, `INSERT INTO libraries(id, slug, display_name, state, db_name, owner_role, creation_strategy, created_at, updated_at)
+		VALUES ('L1', 'client_x', 'Client X', 'active', 'client_x', 'client_x', 'resolve', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DB.ExecContext(ctx, `INSERT INTO backups(id, library_id, kind, status, file_path, started_at) VALUES ('B1', 'L1', 'manual', 'ok', '../../etc/passwd', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// heldCheck replaces the catalog path check of a with one that waits for
+// release (or the end of its context) before it runs; entered closes when
+// it starts and done when it returns.
+func heldCheck(a *App) (entered, release, done chan struct{}) {
+	entered, release, done = make(chan struct{}), make(chan struct{}), make(chan struct{})
+	a.checkPaths = func(ctx context.Context) ([]string, []string, error) {
+		defer close(done)
+		close(entered)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return a.Svc.CheckCatalogPaths(ctx)
+	}
+	return entered, release, done
+}
+
+// closesWithin reports whether ch closes within d.
+func closesWithin(ch <-chan struct{}, d time.Duration) bool {
+	select {
+	case <-ch:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+// Pending 3.7 item 2: the check of the catalog paths only reports, so the
+// start does not wait for it: Background returns while it runs, and its
+// event comes when it ends.
+func TestBackgroundDoesNotWaitForTheCatalogPathCheck(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cfg := testConfig(t)
+	a := openApp(t, ctx, cfg)
+	defer a.Close()
+	invalidPathRow(t, ctx, a)
+	entered, release, _ := heldCheck(a)
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		a.Background(ctx)
+	}()
+	defer a.Shutdown(time.Second)
+	if !closesWithin(entered, 5*time.Second) {
+		t.Fatal("the catalog path check did not start")
+	}
+	if !closesWithin(returned, 5*time.Second) {
+		t.Fatal("Background waits for the catalog path check")
+	}
+	if hasEvent(ctx, a, events.BackupPathInvalid, events.Critical) {
+		t.Fatal("reported before the check ran")
+	}
+	close(release)
+	waitFor(t, "backup.path_invalid", 5*time.Second, func() bool { return hasEvent(ctx, a, events.BackupPathInvalid, events.Critical) })
+}
+
+// Pending 3.7 item 2: a stop that cuts the check short is not a failure of
+// the check and is not logged as one, and nothing is reported.
+func TestCatalogPathCheckSaysNothingAfterAStop(t *testing.T) {
+	ctx := context.Background()
+	cfg := testConfig(t)
+	cfg.Workers, cfg.HeavyJobs, cfg.Location = 1, 1, time.UTC
+	mustInit(t, cfg)
+	var logged bytes.Buffer
+	a, err := Open(ctx, cfg, slog.New(slog.NewTextHandler(&logged, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	invalidPathRow(t, ctx, a)
+	stopped, cancel := context.WithCancel(ctx)
+	cancel()
+	a.checkBackupPaths(stopped)
+	if evs, err := a.Events.List(ctx, events.Filter{TypePrefix: events.BackupPathInvalid}); err != nil || len(evs) != 0 {
+		t.Fatalf("a stopped check reported %+v %v", evs, err)
+	}
+	if strings.Contains(logged.String(), "could not check the paths of the backup catalog") {
+		t.Fatalf("a stop was logged as a failure:\n%s", logged.String())
+	}
+}
+
+// Pending 3.7 item 2, with PostgreSQL: sqsolve is ready (what /readyz reads)
+// while the check of the catalog paths still runs.
+func TestReadinessDoesNotWaitForTheCatalogPathCheck(t *testing.T) {
+	c := testpg.Start(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cfg := clusterConfig(t, c, t.TempDir())
+	a := openApp(t, ctx, cfg)
+	defer a.Close()
+	invalidPathRow(t, ctx, a)
+	entered, release, done := heldCheck(a)
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		a.Background(ctx)
+	}()
+	defer a.Shutdown(5 * time.Second)
+	if !closesWithin(entered, 5*time.Second) {
+		t.Fatal("the catalog path check did not start")
+	}
+	if !closesWithin(returned, 5*time.Second) {
+		t.Fatal("Background waits for the catalog path check")
+	}
+	waitFor(t, "PostgreSQL", 20*time.Second, a.PGReady)
+	if !a.PGAlive(ctx) || a.Svc.BackupVolumeOK() != nil {
+		t.Fatalf("not ready while the check runs: PostgreSQL %v, backups volume %v", a.PGAlive(ctx), a.Svc.BackupVolumeOK())
+	}
+	select {
+	case <-done:
+		t.Fatal("the check returned while it was held")
+	default:
+	}
+	close(release)
+	if !closesWithin(done, 5*time.Second) {
+		t.Fatal("the check did not end")
+	}
+	waitFor(t, "backup.path_invalid", 5*time.Second, func() bool { return hasEvent(ctx, a, events.BackupPathInvalid, events.Critical) })
+}
+
 func certOf(t *testing.T, a *App) *x509.Certificate {
 	t.Helper()
 	c, err := a.Certificate()
@@ -326,7 +461,7 @@ func TestPanelCertificatePair(t *testing.T) {
 		os.Chmod(panelKeyPath(cfg), 0)
 		defer os.Chmod(panelKeyPath(cfg), 0o600)
 		err := a.LoadPanelCert()
-		if err == nil || !strings.Contains(err.Error(), "SQS-C020") {
+		if err == nil || !strings.HasPrefix(err.Error(), "SQS-C020 panel certificate: ") {
 			t.Fatalf("want SQS-C020 for an unreadable key, got %v", err)
 		}
 		if m, _ := filepath.Glob(panelCertPath(cfg) + ".replaced-*"); len(m) != 1 {
@@ -386,6 +521,97 @@ func TestIdentityNotStoredWhenTheCatalogCannotBeRead(t *testing.T) {
 	// A different cluster holds.
 	if a.applyIdentity(ctx, "7000000000000000003") || !strings.Contains(a.PGIdentityProblem(), "SQS-S020") {
 		t.Fatal("a different cluster did not hold")
+	}
+}
+
+// The event postgres.cluster_accepted says the variable can be removed. It
+// was emitted even when the transaction that stores the new identifier with
+// its audit entry failed, so it announced an acceptance that the next start
+// still had to make.
+func TestClusterAcceptedIsAnnouncedOnlyOnceStored(t *testing.T) {
+	const oldID, newID = "7000000000000000001", "7000000000000000002"
+	for _, tc := range []struct{ name, fault, logged string }{
+		{"audit entry", `CREATE TRIGGER fault BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`, "SQS-X040"},
+		{"setting", `CREATE TRIGGER fault BEFORE INSERT ON settings WHEN NEW.key = 'pg_system_identifier' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`, "disk I/O error"},
+		// Both statements succeed and the COMMIT fails: the trigger leaves a
+		// row that breaks a deferred foreign key, which SQLite checks at the
+		// commit.
+		{"commit", `CREATE TABLE fault_rows(id INTEGER PRIMARY KEY, parent INTEGER REFERENCES fault_rows(id) DEFERRABLE INITIALLY DEFERRED);
+			CREATE TRIGGER fault AFTER INSERT ON audit_log BEGIN INSERT INTO fault_rows(parent) VALUES (-1); END`, "FOREIGN KEY constraint failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cfg := testConfig(t)
+			cfg.PGAcceptSystemID = newID
+			a := openApp(t, ctx, cfg)
+			defer a.Close()
+			if err := a.DB.SetSetting(ctx, pgSystemIDSetting, oldID, "test"); err != nil {
+				t.Fatal(err)
+			}
+			var logged bytes.Buffer
+			a.Log = slog.New(slog.NewTextHandler(&logged, nil))
+			heard := 0
+			a.Events.Listen(func(e events.Event) {
+				if e.Type == "postgres.cluster_accepted" {
+					heard++
+				}
+			})
+			stored := func() (id string) {
+				a.DB.GetSetting(ctx, pgSystemIDSetting, &id)
+				return id
+			}
+			entries := func() (n int) {
+				list, err := a.Audit.List(ctx, 0, 50, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, e := range list {
+					if e.Action == "postgres.cluster_accepted" {
+						n++
+					}
+				}
+				return n
+			}
+
+			// The transaction fails: nothing stored, no entry, no event. The
+			// start goes on and the next one accepts again.
+			if _, err := a.DB.ExecContext(ctx, tc.fault); err != nil {
+				t.Fatal(err)
+			}
+			if !a.applyIdentity(ctx, newID) || a.PGIdentityProblem() != "" {
+				t.Fatal("an acceptance that could not be stored held the start")
+			}
+			if stored() != oldID || entries() != 0 {
+				t.Fatalf("half an acceptance: stored %q, %d audit entries", stored(), entries())
+			}
+			if heard != 0 || hasEvent(ctx, a, "postgres.cluster_accepted", events.Warning) {
+				t.Fatal("the event announced an acceptance that was not stored")
+			}
+			if line := logged.String(); !strings.Contains(line, "could not store the accepted PostgreSQL system identifier") || !strings.Contains(line, tc.logged) {
+				t.Fatalf("the failure is not logged: %s", line)
+			}
+
+			// The next start, with the control plane writable again.
+			if _, err := a.DB.ExecContext(ctx, `DROP TRIGGER fault`); err != nil {
+				t.Fatal(err)
+			}
+			if !a.applyIdentity(ctx, newID) {
+				t.Fatal("the accepted cluster held the start")
+			}
+			if stored() != newID || entries() != 1 || heard != 1 {
+				t.Fatalf("stored %q, %d audit entries, %d events heard", stored(), entries(), heard)
+			}
+			evs, err := a.Events.List(ctx, events.Filter{TypePrefix: "postgres.cluster_accepted"})
+			if err != nil || len(evs) != 1 || evs[0].Severity != events.Warning ||
+				!strings.Contains(evs[0].Message, "PostgreSQL cluster "+newID+" accepted in place of "+oldID) {
+				t.Fatalf("events %+v: %v", evs, err)
+			}
+			// Once stored it is the known cluster: nothing more is announced.
+			if !a.applyIdentity(ctx, newID) || heard != 1 || entries() != 1 {
+				t.Fatalf("announced again: %d events heard, %d audit entries", heard, entries())
+			}
+		})
 	}
 }
 
@@ -585,6 +811,9 @@ func TestClusterIdentityGuard(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("the acceptance is not in the audit log")
+	}
+	if !hasEvent(ctx, a, "postgres.cluster_accepted", events.Warning) {
+		t.Fatal("the stored acceptance was not announced")
 	}
 	if a.PGIdentityProblem() != "" || len(a.Monitor.Notices()) != 0 {
 		t.Fatal("the problem is still shown after accepting")

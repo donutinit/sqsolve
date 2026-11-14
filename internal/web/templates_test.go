@@ -158,3 +158,11 @@ func TestAuditLogShowsAcceptedEntries(t *testing.T) {
 		t.Fatal("the result entry has no OK badge")
 	}
 }
+
+// The step a purge runs before it journals or drops anything has its own
+// name in the job view.
+func TestStepLabelOfThePurgeCheck(t *testing.T) {
+	if got := stepLabel("check_owned"); got != "Check other databases" {
+		t.Fatalf("step label %q", got)
+	}
+}

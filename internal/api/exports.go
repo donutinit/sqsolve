@@ -53,28 +53,35 @@ func schemaDTO(s *drp.Session) SchemaDTO {
 	return SchemaDTO{Fingerprint: s.Fingerprint, Verified: s.KnownOK, Resolve: s.Known.Resolve}
 }
 
-func (a *API) openExport(w http.ResponseWriter, r *http.Request) (*core.Library, *drp.Session) {
+// exportProblem answers an export error: the status comes from err, the
+// detail is what this caller may read (core.Service.ExportError, which
+// already logs it).
+func (a *API) exportProblem(w http.ResponseWriter, r *http.Request, p *auth.Principal, err error) {
+	writeProblem(w, r, core.ExportStatus(err), a.A.Svc.ExportError(err, r.URL.Path, p.Can(auth.ActDiagnostics)))
+}
+
+func (a *API) openExport(w http.ResponseWriter, r *http.Request, p *auth.Principal) (*core.Library, *drp.Session) {
 	l := a.lib(w, r)
 	if l == nil {
 		return nil, nil
 	}
 	s, err := a.A.Svc.OpenExport(r.Context(), l)
 	if err != nil {
-		problem(w, r, core.ExportStatus(err), err)
+		a.exportProblem(w, r, p, err)
 		return nil, nil
 	}
 	return l, s
 }
 
 func (a *API) projects(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
-	_, s := a.openExport(w, r)
+	_, s := a.openExport(w, r, p)
 	if s == nil {
 		return
 	}
 	defer s.Close(r.Context())
 	projects, err := s.Projects(r.Context())
 	if err != nil {
-		problem(w, r, core.ExportStatus(err), err)
+		a.exportProblem(w, r, p, err)
 		return
 	}
 	out := make([]ProjectDTO, 0, len(projects))
@@ -90,14 +97,14 @@ func (a *API) projects(w http.ResponseWriter, r *http.Request, p *auth.Principal
 }
 
 func (a *API) grades(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
-	_, s := a.openExport(w, r)
+	_, s := a.openExport(w, r, p)
 	if s == nil {
 		return
 	}
 	defer s.Close(r.Context())
 	albums, err := s.Albums(r.Context())
 	if err != nil {
-		problem(w, r, core.ExportStatus(err), err)
+		a.exportProblem(w, r, p, err)
 		return
 	}
 	out := make([]AlbumDTO, 0, len(albums))
@@ -125,7 +132,7 @@ func (a *API) exportAlbum(w http.ResponseWriter, r *http.Request, p *auth.Princi
 
 func (a *API) exportDownload(w http.ResponseWriter, r *http.Request, p *auth.Principal, kind, id string) {
 	ctx := r.Context()
-	l, s := a.openExport(w, r)
+	l, s := a.openExport(w, r, p)
 	if s == nil {
 		return
 	}
@@ -133,12 +140,12 @@ func (a *API) exportDownload(w http.ResponseWriter, r *http.Request, p *auth.Pri
 	// Download closes the session before the body is written (docs 22 §9).
 	info, data, err := s.Download(ctx, kind, id)
 	if err != nil {
-		problem(w, r, core.ExportStatus(err), err)
+		a.exportProblem(w, r, p, err)
 		return
 	}
 	name := drp.FileName(kind, l.Slug, id, info)
 	if err := a.A.Svc.AuditExport(ctx, p.Actor(), l, s, kind, strings.ToLower(id), info); err != nil {
-		problem(w, r, core.ExportStatus(err), err)
+		a.exportProblem(w, r, p, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
@@ -170,7 +177,7 @@ func (a *API) backupExportPrepare(w http.ResponseWriter, r *http.Request, p *aut
 	}
 	ws, j, err := a.A.Svc.PrepareBackupExport(r.Context(), p.Actor(), b.ID)
 	if err != nil {
-		problem(w, r, core.ExportStatus(err), err)
+		a.exportProblem(w, r, p, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"workspace": ws, "job": j})
@@ -201,7 +208,7 @@ func (a *API) backupExportStatus(w http.ResponseWriter, r *http.Request, p *auth
 	s, _, err := a.A.Svc.OpenBackupExport(ctx, b.ID)
 	if err != nil {
 		if !errors.Is(err, core.ErrExportNotReady) {
-			problem(w, r, core.ExportStatus(err), err)
+			a.exportProblem(w, r, p, err)
 			return
 		}
 		writeJSON(w, 200, out)
@@ -210,12 +217,12 @@ func (a *API) backupExportStatus(w http.ResponseWriter, r *http.Request, p *auth
 	defer s.Close(ctx)
 	projects, err := s.Projects(ctx)
 	if err != nil {
-		problem(w, r, core.ExportStatus(err), err)
+		a.exportProblem(w, r, p, err)
 		return
 	}
 	albums, err := s.Albums(ctx)
 	if err != nil {
-		problem(w, r, core.ExportStatus(err), err)
+		a.exportProblem(w, r, p, err)
 		return
 	}
 	items := make([]ProjectDTO, 0, len(projects))
@@ -259,7 +266,7 @@ func (a *API) backupExportDownload(w http.ResponseWriter, r *http.Request, p *au
 	}
 	s, _, err := a.A.Svc.OpenBackupExport(ctx, b.ID)
 	if err != nil {
-		problem(w, r, core.ExportStatus(err), err)
+		a.exportProblem(w, r, p, err)
 		return
 	}
 	defer s.Close(ctx)
@@ -270,12 +277,12 @@ func (a *API) backupExportDownload(w http.ResponseWriter, r *http.Request, p *au
 	// Download closes the session before the body is written (docs 22 §9).
 	info, data, err := s.Download(ctx, kind, id)
 	if err != nil {
-		problem(w, r, core.ExportStatus(err), err)
+		a.exportProblem(w, r, p, err)
 		return
 	}
 	name := drp.FileName(kind, slug+"_"+b.StartedAt.UTC().Format("20060102T1504"), id, info)
 	if err := a.A.Svc.AuditBackupExport(ctx, p.Actor(), b, s, kind, strings.ToLower(id), info); err != nil {
-		problem(w, r, core.ExportStatus(err), err)
+		a.exportProblem(w, r, p, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")

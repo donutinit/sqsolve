@@ -236,6 +236,8 @@ func TestConfined(t *testing.T) {
 	os.Symlink(filepath.Join(outside, "secret"), filepath.Join(dir, "a", "link"))
 	os.Symlink(filepath.Join(outside, "gone"), filepath.Join(dir, "a", "dangling"))
 	os.Symlink(filepath.Join(dir, "a", "b", "f"), filepath.Join(dir, "a", "inner"))
+	os.Symlink(filepath.Join(dir, "a", "loop"), filepath.Join(dir, "a", "loop"))
+	os.Symlink(filepath.Join(dir, "a", "b", "f", "x"), filepath.Join(dir, "a", "throughfile"))
 	cases := []struct {
 		path string
 		want bool
@@ -248,6 +250,8 @@ func TestConfined(t *testing.T) {
 		{filepath.Join(dir, "a", "esc", "secret"), false},
 		{filepath.Join(dir, "a", "esc", "missing"), false},
 		{filepath.Join(dir, "a", "dangling"), false},
+		{filepath.Join(dir, "a", "loop"), false},
+		{filepath.Join(dir, "a", "throughfile"), false},
 		{filepath.Join(dir, "..", "x"), false},
 		{outside, false},
 		{dir, false},
@@ -260,5 +264,40 @@ func TestConfined(t *testing.T) {
 		if got != c.want {
 			t.Errorf("Confined(%s) = %v, want %v", c.path, got, c.want)
 		}
+	}
+}
+
+// A symlink whose target cannot be reached because of the disk (here a
+// folder that may not be entered) is a check that could not be made, not a
+// path that leaves dir: Confined returns the error, and once the folder can
+// be entered the same path is confined. A symlink that leaves dir is still
+// not confined while the folder is closed.
+func TestConfinedReturnsTheErrorOfASymlinkItCannotFollow(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root enters a folder without permission")
+	}
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked")
+	os.MkdirAll(locked, 0o700)
+	os.WriteFile(filepath.Join(locked, "f"), nil, 0o600)
+	link := filepath.Join(dir, "link")
+	os.Symlink(filepath.Join(locked, "f"), link)
+	esc := filepath.Join(dir, "esc")
+	os.Symlink(t.TempDir(), esc)
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	if ok, err := Confined(dir, link); ok || !errors.Is(err, os.ErrPermission) || err.Error() != "lstat "+filepath.Join(locked, "f")+": permission denied" {
+		t.Errorf("Confined(%s) = %v, %v; want the permission error", link, ok, err)
+	}
+	if ok, err := Confined(dir, filepath.Join(esc, "x")); ok || err != nil {
+		t.Errorf("a symlink that leaves dir: %v, %v", ok, err)
+	}
+	if err := os.Chmod(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := Confined(dir, link); !ok || err != nil {
+		t.Errorf("once the folder can be entered: %v, %v", ok, err)
 	}
 }

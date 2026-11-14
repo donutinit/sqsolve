@@ -8,3 +8,5 @@ package execx
 func procStart(int) string { return "" }
 
 func killOwn(int, string) {}
+
+func killed(int, string) (bool, string) { return false, "" }
