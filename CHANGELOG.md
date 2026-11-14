@@ -5,6 +5,11 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+- Dependencies: the PostgreSQL image is the rebuild of `postgres:18.6-trixie` published on
+  2026-11-05 (digest `e3d24f69...`, same PostgreSQL 18.6, `18.6-1.pgdg13+2`), in the `Dockerfile`
+  and in `deploy/compose.yaml`; the release workflow uses `softprops/action-gh-release` 3.0.4
+  (Dependabot; both published more than 7 days before).
+
 ## [1.2.4] 2026-11-13
 
 Fixes for the known issues of 1.2.3 (K-01 to K-11) and from the repository audit of 2026-11-12

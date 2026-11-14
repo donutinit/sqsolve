@@ -24,7 +24,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -buildvcs
       -ldflags "-w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
       -o /out/sqsolve ./cmd/sqsolve
 
-FROM postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+FROM postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
 ARG VERSION=dev COMMIT=unknown
 LABEL org.opencontainers.image.title="sqsolve" \
       org.opencontainers.image.description="Free server for DaVinci Resolve project libraries" \
