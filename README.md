@@ -78,7 +78,7 @@ few hundred lines of its own JavaScript and no third-party assets.
 
 ## Status
 
-**1.2.3** ([changes](CHANGELOG.md)). Version 1.0 was tested against PostgreSQL 18 and DaVinci
+**1.2.4** ([changes](CHANGELOG.md)). Version 1.0 was tested against PostgreSQL 18 and DaVinci
 Resolve Studio 21.1.1 on Linux: creating libraries from Resolve, TLS, verified backups, restore as
 a copy and in place with Resolve open, and full recovery of the installation from the backups and
 the kit ([acceptance record](docs/acceptance/1.0.md), [proofs of concept](docs/poc)). Version

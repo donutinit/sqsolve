@@ -5,12 +5,43 @@ from here (`.github/workflows/release.yml`).
 
 ## [Unreleased]
 
+## [1.2.4] 2026-11-13
+
+Fixes for the known issues of 1.2.3 (K-01 to K-11) and from the repository audit of 2026-11-12
+(purge, trash and recovery, retention, blocked backups, the backups volume, `pg_hba.conf`, sessions,
+the API, secrets in output, tests and CI). What is still known to be wrong is in `docs/19-risks.md`
+§5 (K-03 and K-12 to K-20).
+
 - Security: the experimental export no longer shows the PostgreSQL socket path, the
   `sqsolve_admin` role and the database name to every signed-in user when the connection to
   PostgreSQL fails (known issue K-02). The detail of `SQS-E005` now ends in "the connection to
   PostgreSQL failed (the cause is in the sqsolve log)"; the whole error goes to the process log,
   one `WARN` line per failed request, and the panel and the API show it only to whoever has the
   `diagnostics` permission (administrators; with a token, the `admin` scope).
+- Security: the PostgreSQL socket path and the `sqsolve_admin` role of a failed connection no
+  longer reach every signed-in user outside the export either. The Health page with its doctor
+  checks, `GET /api/v1/system/status`, every API problem and the notice of a panel action that
+  failed show the driver's text, and the path of the superuser password file, only to whoever
+  has the `diagnostics` permission; everyone else reads "the connection to PostgreSQL failed
+  (the cause is in the sqsolve log)". The message of `postgres.down`, also in the
+  notifications, and the stored error of a failed export preparation keep that text for
+  everyone. The whole error goes to the process log; the ping and the superuser connection
+  keep the driver's error so it can be recognized. `sqsolve doctor` and the diagnostic bundle
+  are unchanged.
+- Security: the rewrite of `pg_hba.conf` no longer uses the factory defaults when the stored
+  settings cannot be read, which turned "TLS only" off and opened the maintenance database. It
+  writes nothing and fails with `SQS-P044`, which the dashboard and Health report as for any
+  rewrite that did not take effect.
+- Security: when PostgreSQL rejects a new `pg_hba.conf` (`SQS-P042`) and the previous file cannot
+  be put back either, the error, its audit entry and Health say so; that failure was ignored, and
+  the rejected file stayed on disk without a word.
+- Data safety: with the backups disk not mounted (an empty folder at the mount point), the purge
+  of a library in the trash and the drop of a previous state (`__prev`: its expiry, a newer
+  restore, the purge, the orphan sweep) took a backup row as proof although its file could not be
+  seen, since the path of every backup still checks there, and dropped the database. They now
+  check the marker of the volume first: the purge stops at `check_backup` with its error
+  (`SQS-S001` when it is missing) before its journal, and the `__prev` is kept, with that error
+  in place of `SQS-R055`. Also in 1.2.3.
 - A backup whose path cannot be checked because of a disk error (an I/O error, a folder sqsolve
   may not enter, a stale mount, a file where a folder should be) is now blocked while the error
   lasts (`SQS-B045`, 409 in the API, the backup page hides Restore, Download and Export). Before,
@@ -96,22 +127,6 @@ from here (`.github/workflows/release.yml`).
   audit entry are stored. Until now it was also emitted when that transaction failed, and it said
   that `SQSOLVE_PG_ACCEPT_SYSTEM_ID` could be removed while the next start still needed it (known
   issue K-06).
-- Dependencies: a base image that fixes a vulnerability may be taken before the 7 days the
-  project waits, as a Go module already could (`docs/17-ci-cd-and-releases.md` §7). The digest
-  is changed by hand, the change goes through the full CI and the release notes name the
-  vulnerability, as 1.2.3 did for the Go builder image. Dependabot's cooldown stays at 7 days.
-- Tests: `TestCancelKillsTheWholeGroup` (`internal/execx`) failed now and then under load
-  although `Run` had killed the whole process group: PID 1 reaps the killed member at any
-  moment, and the test read it as running when it caught that reaping in progress. The test now
-  checks once, without waiting, that when `Run` returns the member is gone, waits to be reaped
-  or has a SIGKILL pending.
-- Tests: the error codes that had no test of their code and message have one. Failures are
-  simulated for `SQS-B002`, `SQS-B010`, `SQS-B011`, `SQS-B012`, `SQS-P021`, `SQS-P030`,
-  `SQS-P042`, `SQS-P043`, `SQS-R010`, `SQS-R011`, `SQS-R020`, `SQS-R031`, `SQS-X002` and
-  `SQS-X998`, and the tests of `SQS-A024`, `SQS-B041`, `SQS-C020`, `SQS-C063`, `SQS-P050`,
-  `SQS-P051`, `SQS-R060`, `SQS-R061`, `SQS-S004`, `SQS-S010`, `SQS-S015` to `SQS-S017` and
-  `SQS-X011` now check the message too. The backup has one more fault point for tests
-  (`backup.count`); nothing changes in how sqsolve behaves.
 - A blocked backup (`SQS-B043`, or `SQS-B045` while its path cannot be checked) no longer stands for
   data sqsolve cannot read back. The expiry of a previous state, the purge of a library in the trash
   and a replace that supersedes an older previous state accepted it as the backup of a `__prev`
@@ -176,17 +191,6 @@ from here (`.github/workflows/release.yml`).
   ends with SIGKILL to the program's whole process group. When the SIGTERM of the cancel made
   the program exit before sqsolve started waiting for it, that SIGKILL could be skipped, and a
   process of the group that ignores SIGTERM kept running after the job ended.
-- Tests: `TestPanelEndToEnd` (`internal/web`) failed now and then under load with "pg_hba.conf
-  rejects connection": it connected as soon as the new library was waiting for Resolve, a state
-  the creation job sets one step before it rewrites `pg_hba.conf` and reloads PostgreSQL. The
-  panel tests now wait for that job to end and then connect once, without the retries that hid
-  the same race. The reload itself needs no wait: PostgreSQL applies it before it accepts the
-  next connection.
-- Tests: the throwaway cluster of `internal/testpg` starts again on another port when another
-  process took its port first ("Address already in use"), and it stops when its test process is
-  killed. The next start of a cluster removes the folders that killed tests left in
-  `~/.cache/sqsolve-test` (`pg-<pid>-<digits>`, only when that process and the postmaster are
-  gone); folders of earlier versions of the fixture stay.
 - Errors that were dropped before a success no longer are. A delete stops with the error of a
   failed lookup (the database of an initialization window, a role in the lock) or of the removal
   of `CREATEDB`, and a recovery from the trash with that of the lookup of the library's name,
@@ -228,24 +232,6 @@ from here (`.github/workflows/release.yml`).
   `SQS-L058`, pending reconciliation. Reconciliation at start touches no file on a backups volume
   that is not this installation's, and its note says why; it removed the `.partial` files of
   another installation's volume. The retention log no longer names libraries without backups.
-- Tests: `TestAPIExportWithPostgreSQL` (`internal/api`) failed now and then: it looked for the
-  letters `PK` anywhere in the body of a refused download, and the identifier of a backup in the
-  path of the error can contain them. It now looks at the start of the body, where a download
-  begins.
-- Security: the PostgreSQL socket path and the `sqsolve_admin` role of a failed connection no
-  longer reach every signed-in user outside the export either. The Health page with its doctor
-  checks, `GET /api/v1/system/status`, every API problem and the notice of a panel action that
-  failed show the driver's text, and the path of the superuser password file, only to whoever
-  has the `diagnostics` permission; everyone else reads "the connection to PostgreSQL failed
-  (the cause is in the sqsolve log)". The message of `postgres.down`, also in the
-  notifications, and the stored error of a failed export preparation keep that text for
-  everyone. The whole error goes to the process log; the ping and the superuser connection
-  keep the driver's error so it can be recognized. `sqsolve doctor` and the diagnostic bundle
-  are unchanged.
-- Tests: the rule that external programs run only through `internal/execx` is written as a rule
-  for the code that ships (`AGENTS.md`, `docs/16-testing.md` §4): test code, `internal/testpg`
-  included, starts what it needs directly, with an argument array. A new test fails when a file
-  that ships starts a program outside `internal/execx` or imports `internal/testpg`.
 - Panel: while the job that creates a library is queued or running, the Connection tab of the
   library says "Preparing the library" and reloads itself until the job ends. It showed
   "Initialize the library from Resolve" with "Reveal password" (with an empty database, the
@@ -253,28 +239,66 @@ from here (`.github/workflows/release.yml`).
   `pg_hba.conf` lines of the library, and a workstation that connected then was refused once
   ("pg_hba.conf rejects connection"). `docs/10-api.md` says that an API client waits for that
   job to succeed before it connects.
-- Data safety: with the backups disk not mounted (an empty folder at the mount point), the purge
-  of a library in the trash and the drop of a previous state (`__prev`: its expiry, a newer
-  restore, the purge, the orphan sweep) took a backup row as proof although its file could not be
-  seen, since the path of every backup still checks there, and dropped the database. They now
-  check the marker of the volume first: the purge stops at `check_backup` with its error
-  (`SQS-S001` when it is missing) before its journal, and the `__prev` is kept, with that error
-  in place of `SQS-R055`. Also in 1.2.3.
 - Reconciliation: a recovery from the trash pending reconciliation now supersedes an older
   pending purge of the same library. A purge that stopped with its trash database still there,
   followed by a recovery that moved that database back and stopped before reactivating the
   library (`SQS-L058`), made the next start finish the purge first, which refused with
   `SQS-L046` naming the library's own database. Nothing was dropped.
-- Security: the rewrite of `pg_hba.conf` no longer uses the factory defaults when the stored
-  settings cannot be read, which turned "TLS only" off and opened the maintenance database. It
-  writes nothing and fails with `SQS-P044`, which the dashboard and Health report as for any
-  rewrite that did not take effect.
-- Security: when PostgreSQL rejects a new `pg_hba.conf` (`SQS-P042`) and the previous file cannot
-  be put back either, the error, its audit entry and Health say so; that failure was ignored, and
-  the rejected file stayed on disk without a word.
 - Access: the session of a revoked per-person credential that could not be closed (`SQS-L081`)
   can be closed now with "Close" in the Activity tab or with maintenance and "Also close open
   sessions"; both left it out and "Close" answered `SQS-L016`. The revoked role stays `NOLOGIN`.
+- Dependencies: a base image that fixes a vulnerability may be taken before the 7 days the
+  project waits, as a Go module already could (`docs/17-ci-cd-and-releases.md` §7). The digest
+  is changed by hand, the change goes through the full CI and the release notes name the
+  vulnerability, as 1.2.3 did for the Go builder image. Dependabot's cooldown stays at 7 days.
+- Dependencies: the image workflow uses `docker/login-action` 4.8.0 and `sigstore/cosign-installer`
+  4.1.3 (Dependabot; both were published more than 7 days before). The commit of the first one says
+  4.7.0 in its title by mistake: it pins 4.8.0.
+- Tests: `TestCancelKillsTheWholeGroup` (`internal/execx`) failed now and then under load
+  although `Run` had killed the whole process group: PID 1 reaps the killed member at any
+  moment, and the test read it as running when it caught that reaping in progress. The test now
+  checks once, without waiting, that when `Run` returns the member is gone, waits to be reaped
+  or has a SIGKILL pending.
+- Tests: the error codes that had no test of their code and message have one. Failures are
+  simulated for `SQS-B002`, `SQS-B010`, `SQS-B011`, `SQS-B012`, `SQS-P021`, `SQS-P030`,
+  `SQS-P042`, `SQS-P043`, `SQS-R010`, `SQS-R011`, `SQS-R020`, `SQS-R031`, `SQS-X002` and
+  `SQS-X998`, and the tests of `SQS-A024`, `SQS-B041`, `SQS-C020`, `SQS-C063`, `SQS-P050`,
+  `SQS-P051`, `SQS-R060`, `SQS-R061`, `SQS-S004`, `SQS-S010`, `SQS-S015` to `SQS-S017` and
+  `SQS-X011` now check the message too. The backup has one more fault point for tests
+  (`backup.count`); nothing changes in how sqsolve behaves.
+- Tests: `TestPanelEndToEnd` (`internal/web`) failed now and then under load with "pg_hba.conf
+  rejects connection": it connected as soon as the new library was waiting for Resolve, a state
+  the creation job sets one step before it rewrites `pg_hba.conf` and reloads PostgreSQL. The
+  panel tests now wait for that job to end and then connect once, without the retries that hid
+  the same race. The reload itself needs no wait: PostgreSQL applies it before it accepts the
+  next connection.
+- Tests: the throwaway cluster of `internal/testpg` starts again on another port when another
+  process took its port first ("Address already in use"), and it stops when its test process is
+  killed. The next start of a cluster removes the folders that killed tests left in
+  `~/.cache/sqsolve-test` (`pg-<pid>-<digits>`, only when that process and the postmaster are
+  gone); folders of earlier versions of the fixture stay.
+- Tests: `TestAPIExportWithPostgreSQL` (`internal/api`) failed now and then: it looked for the
+  letters `PK` anywhere in the body of a refused download, and the identifier of a backup in the
+  path of the error can contain them. It now looks at the start of the body, where a download
+  begins.
+- Tests: the rule that external programs run only through `internal/execx` is written as a rule
+  for the code that ships (`AGENTS.md`, `docs/16-testing.md` §4): test code, `internal/testpg`
+  included, starts what it needs directly, with an argument array. A new test fails when a file
+  that ships starts a program outside `internal/execx` or imports `internal/testpg`.
+
+Upgrade: with the `1` tag, `docker compose pull` and `docker compose up -d` (TrueNAS: Update). There
+is no SQLite migration, and the PostgreSQL image is the same as in 1.2.3 (`postgres:18.6-trixie`).
+Retention now applies only a policy of the library's own: a library without one (registered by a
+catalog rebuild) keeps every backup until a policy is saved in its Schedule tab, and the retention
+job names it in its log. In Settings, General, choose the schedule mode of the default policy again
+if a cron expression had been typed there while the mode was activity-based. API clients: the
+answers of some error cases changed status (the entries above name each one), and a new library is
+ready for a workstation when its creation job has succeeded.
+
+Rollback: image `1.2.3`; there is no schema change. Before going back, let 1.2.4 settle the jobs
+that are pending reconciliation (a delete that ended with `SQS-L056`, a recovery from the trash that
+ended with `SQS-L058`): 1.2.3 does not finish them. 1.2.3 again applies the default policy of
+Settings to the libraries that have no policy of their own.
 
 ## [1.2.3] 2026-11-10
 

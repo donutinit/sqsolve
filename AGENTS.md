@@ -5,7 +5,7 @@ Read this in full before touching the repo. The global rules in `~/.claude/CLAUD
 
 ## Project status
 
-Version 1.2.3 (2026-11-10); the history is in `CHANGELOG.md` and the architecture in `docs/`.
+Version 1.2.4 (2026-11-13); the history is in `CHANGELOG.md` and the architecture in `docs/`.
 The known issues of the current release are in `docs/19-risks.md` §5 and what comes next in
 `docs/20-roadmap.md`. Resolve was tested with 1.0 on Linux (`docs/acceptance/1.0.md`,
 `docs/poc/`), and replace and revert again with 1.2.2 (`docs/acceptance/1.2.2.md`). Whatever

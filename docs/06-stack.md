@@ -62,7 +62,7 @@ Details and per-version alternatives in ADR 0006.
 | Point-in-time recovery (not implemented) | **pgBackRest** (MIT) | WAL-G (valid; pgBackRest has better verification and documentation); Barman (Python, meant for dedicated servers) |
 | Encryption of individual files (not implemented) | **age** (`filippo.io/age`, BSD-3); not a dependency | GPG (complex to operate) |
 
-Only the first row exists in 1.2.3. The other three are not implemented; restic and pgBackRest
+Only the first row exists in 1.2.4. The other three are not implemented; restic and pgBackRest
 are the tools chosen for directions in `20-roadmap.md`. None of the three is in the image or in
 `go.mod`.
 
@@ -103,7 +103,7 @@ three simple protocols.
 | `github.com/adhocore/gronx` | MIT | Cron expressions |
 | `github.com/klauspost/compress` | BSD-3 | Only its `zstd` package, for the experimental project and grade export (ADR 0019) |
 
-The closed list has six modules since 2026-10-20, the same six in 1.2.3. This was a correction
+The closed list has six modules since 2026-10-20, the same six in 1.2.4. This was a correction
 of the list, not a new dependency: `golang.org/x/sys` and `github.com/klauspost/compress` were already imported by
 the code (the first was missing from this table, the second was marked `// indirect` in `go.mod`
 although `internal/drp/blobs.go` imports it directly). `go.mod` now lists both as direct

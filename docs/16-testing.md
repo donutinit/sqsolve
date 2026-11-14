@@ -5,7 +5,7 @@
 What runs and where. "In CI" means it gates every pull request and every published image
 (`docs/17` §4); "not in place" means there is no such test, whatever the other columns say.
 
-| Level | What it covers | Tool | Where it runs | Status (1.2.3) |
+| Level | What it covers | Tool | Where it runs | Status (1.2.4) |
 |---|---|---|---|---|
 | Unit | Pure functions and services with test doubles | `go test` | Every change, CI | In CI, with `-race`, on Go 1.26 and 1.27 |
 | Properties and fuzzing | Identifier validators, cron parser, retention, encryption, CIDRs, display names | `testing.F` | CI (short fuzz), nightly (long fuzz) | In CI: the seeds with the tests and every target for 10 s (`make fuzz`); nightly 5 min each (`fuzz.yml`). Import paths have table tests, not a fuzz target |

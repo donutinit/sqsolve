@@ -128,7 +128,7 @@ action needed to start, cancel or retry it. The CLI runs inside the container an
 "console" actor of the audit log without a permission check: whoever reaches the console already
 controls the server.
 
-Code layout in 1.2.3 (`cmd/` and `internal/`, one Go module):
+Code layout in 1.2.4 (`cmd/` and `internal/`, one Go module):
 
 ```
 cmd/sqsolve/main.go   subcommands: serve, init, doctor, healthcheck, admin, library, backup, restore, catalog, audit, version; slog with redaction

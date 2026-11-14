@@ -1,7 +1,7 @@
 # 19. Risks
 
 Probability (P) and impact (I): H high, M medium, L low. Reviewed with each release; this review
-is for 1.2.3 (2026-11-10).
+is for 1.2.4 (2026-11-13).
 
 ## 1. Technical and compatibility
 
@@ -56,10 +56,10 @@ is for 1.2.3 (2026-11-10).
 
 ## 5. Known issues
 
-Behavior of 1.2.3 that is known to be wrong or weaker than it should be. None of them affects the
+Behavior of 1.2.4 that is known to be wrong or weaker than it should be. None of them affects the
 safety of backups, restores or recovery. Other documents cite them by ID.
 
-| ID | Behavior in 1.2.3 | Effect |
+| ID | Behavior in 1.2.4 | Effect |
 |---|---|---|
 | K-03 | From the console, a `sqsolve restore --replace` repeated while the server is already running the same replacement queues a second job: a console process does not see the jobs the server is running (ADR 0028, ADR 0029). Repeated while the first is still queued, and always in the panel and the API, the request returns the same job | The second replacement runs after the first and replaces its result |
 | K-12 | The purge of a library in the trash stops with `SQS-L046` at every pass and at every start while the library role owns a database that the purge does not drop: a `__trash` or `__prev` database that an interrupted `DROP DATABASE` left invalid, or an orphan `__prev` of a library in the trash. sqsolve never drops such a database on its own (`07-libraries-and-postgresql.md` §10) | A failed purge job each day, with its audit entries, until an administrator drops the database by hand |
