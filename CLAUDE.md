@@ -78,3 +78,17 @@ No em or en dashes, straight quotes, no invented data: if a datum is missing, "T
 
 One-line, short message, in English. No trailers of any kind. Do not commit or push unless Diego
 asks.
+
+## Visibilidad de repos y paquetes (consolidado el 2026-11-25)
+
+Cambiar la visibilidad de un repo o de un paquete de GHCR lo hace Diego a mano, porque publicar es
+irreversible (cachés, índices). Un hook de lizeth bloquea cualquier comando que parezca cambiarla
+(incluso consultas `gh api` que solo mencionan "visibility") con el mensaje "Diego lo hace a mano. Dile
+qué comando correr".
+
+- Cuando pida algo público, no lo intentes. Dale el comando exacto: `gh repo edit
+  donutinit/<repo> --visibility public --accept-visibility-change-consequences`, y para paquetes de
+  contenedor (no hay API) el enlace `https://github.com/users/donutinit/packages/container/<paquete>/settings`.
+- No escribas "visibility" en otros comandos `gh` para que el hook no los bloquee.
+- Si la imagen es pública y el repo AGPL no, el enlace al código del panel da 404: recomienda hacer
+  públicos ambos.
